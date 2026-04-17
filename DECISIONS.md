@@ -336,6 +336,133 @@ add Google/Apple OAuth (Decision 003) and activate the new event_type value.
 
 ---
 
+### 016 — JSON-LD-First Strategy for HTML Venue Scrapers
+
+**Date:** 2026-04-17
+**Status:** Decided
+
+**Decision:** The `GenericHtmlScraper` and any custom venue scraper under
+`backend/scraper/venues/` parse schema.org Event/MusicEvent JSON-LD blocks
+(`<script type="application/ld+json">`) before attempting any HTML-structure
+parsing. Shared helpers live in `backend/scraper/base/jsonld.py` and
+`backend/scraper/base/http.py` so custom scrapers stay tiny. Added
+`beautifulsoup4` and `lxml` to backend dependencies to support robust HTML
+parsing in both the extractor and custom venue scrapers.
+
+**Rationale:**
+Most modern venue sites publish JSON-LD for Google rich results, and that
+format is stable, documented, and identical across sites. Scraping CSS
+selectors is fragile — a redesign breaks every selector, and every venue's
+markup is different. JSON-LD lets one shared extractor handle arbitrarily
+many venues. When a site does not publish JSON-LD, a dedicated custom
+scraper under `venues/<slug>.py` is easy to drop in (Black Cat is the first
+example) because the shared HTTP and JSON-LD helpers do most of the work.
+
+**Alternatives considered:**
+- CSS-selector-based `GenericHtmlScraper` with per-venue selector maps —
+  rejected because every selector becomes a config entry that needs
+  maintenance and silent breakage is common.
+- Headless-browser scraping (Playwright) — rejected as premature; only
+  justifiable if we encounter SPAs that never server-render their events.
+
+**Consequences:**
+- New venues publishing JSON-LD require only a one-line entry in
+  `scraper/config/venues.py` pointing at `GenericHtmlScraper`.
+- Venues without JSON-LD get a dedicated class under `scraper/venues/`;
+  the runner treats them identically to any other scraper.
+- `BaseScraper.source_platform` is now a class attribute so the runner
+  can attribute ingested events to the correct platform without hardcoding.
+
+---
+
+### 017 — Scraper Ingestion Invariants: Idempotent Re-runs
+
+**Date:** 2026-04-17
+**Status:** Decided
+
+**Decision:** Three invariants govern how scraped events land in the database
+so that every full pipeline run is idempotent — re-running the runner yields
+zero new rows and zero schema changes.
+
+1. **Event slugs are deterministic per-event.** Format:
+   `<title-venue-slug>-<YYYY-MM-DD>-<6-char-sha256-of-external_id>`. Generated
+   in `backend/scraper/runner.py::_generate_slug`.
+2. **External IDs are stable across scrapes.** `_extract_external_id` prefers
+   `raw_data["id" | "@id" | "identifier"]`, falls back to a SHA-256 hash of
+   `source_url|title|starts_at.isoformat()`. The JSON-LD extractor follows the
+   same rule and will never fall back to a page URL that is shared across
+   events (fingerprints on `venue|title|starts_at` instead).
+3. **Datetimes are stored naive in venue-local time.** Every scraper — including
+   Ticketmaster, which reports `localDate`/`localTime` — yields naive datetimes.
+   Timezone attachment happens at the storage/API layer, not at extraction.
+
+**Rationale:**
+Earlier code used `int(time.time())` as the slug suffix, which collided when
+two same-title events landed in the same scrape-second. The JSON-LD extractor
+also fell back to the page URL as external_id when the per-event `url` was
+absent, collapsing every event on a page to a single row (Flash DC). Making
+these three fields deterministic functions of the event's own data — not of
+wall-clock time or page URL — means the dedup key `(external_id, source_platform)`
+is stable and re-runs cleanly update existing rows instead of crashing on
+unique-constraint violations.
+
+**Alternatives considered:**
+- UUID slugs — rejected; hostile to SEO and not human-readable.
+- Timestamp-based slug suffixes — the original approach that this decision
+  reverses. Caused the collisions that motivated the rewrite.
+- Storing UTC datetimes with tzinfo — rejected because not every scraper has
+  a reliable venue timezone, and the storage/API layer is a better place to
+  attach timezone than extraction.
+
+**Consequences:**
+- Rename or rewrite of `_generate_slug` signature requires updating every
+  caller and is considered a breaking change for public URLs.
+- Adding a new scraper does not require any slug or external_id logic — the
+  runner handles it, as long as `RawEvent.raw_data` either contains a stable
+  `id` or the fallback fingerprint is unique.
+- Running `backend.scripts.run_scrapers` twice in a row is a valid smoke test
+  for idempotency: the second run should report `(+0 ~N =0)` for every venue.
+
+---
+
+### 018 — Ticketmaster Venue IDs Are Looked Up Live, Not Hand-Entered
+
+**Date:** 2026-04-17
+**Status:** Decided
+
+**Decision:** All Ticketmaster venue IDs in `backend/scraper/config/venues.py`
+are sourced from the live Discovery API (`GET /discovery/v2/venues.json?keyword=`)
+and verified with `backend/scripts/smoke_ticketmaster.py` before landing in the
+config. Hand-entered or inferred IDs are never trusted.
+
+**Rationale:**
+Ticketmaster venue IDs are opaque strings (e.g. `KovZpZA7knFA`). Our initial
+config had 11 of 12 IDs wrong — they looked plausible but did not match any
+real venue, so every scrape returned zero events. The Discovery API's venue
+keyword-search endpoint returns the canonical venue ID and is the only
+authoritative source. The smoke script probes every TM venue in one command
+and flags any that return zero events, catching drift the moment it happens.
+
+**Alternatives considered:**
+- Derive IDs from venue URLs on Ticketmaster's consumer site — rejected; TM
+  changes their URL structure periodically and consumer URLs do not always
+  contain the API venue ID.
+- Scrape Ticketmaster's JavaScript app to extract IDs — rejected; same fragility
+  as the consumer-URL approach, plus it violates their ToS.
+
+**Consequences:**
+- Adding a new TM venue requires running
+  `curl "app.ticketmaster.com/discovery/v2/venues.json?keyword=<NAME>&countryCode=US"`
+  (or a follow-up helper) and copying the canonical ID.
+- `smoke_ticketmaster.py` is the acceptance gate; CI or a nightly job should
+  call it and alert on any venue that drops to zero.
+- Zero-event status is not always a bug — some venues (e.g. Rams Head Live!)
+  sell through non-TM channels and may legitimately have no events in the
+  Discovery API for long stretches. The validator should track historical
+  event counts per venue to distinguish real drift from expected silence.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
