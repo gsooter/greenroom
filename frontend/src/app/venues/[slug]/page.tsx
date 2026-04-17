@@ -1,4 +1,148 @@
-/** /venues/[slug] — Venue detail page (SSR). */
-export default function VenueDetailPage() {
-  return <div>Venue Detail</div>;
+/**
+ * Venue detail page — `/venues/[slug]` (server-side rendered).
+ *
+ * Shows the venue's core info plus its upcoming event lineup. Emits
+ * `MusicVenue` JSON-LD so search and AI crawlers can index each venue
+ * with address and geo coordinates.
+ */
+
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import type { Metadata } from "next";
+
+import AppShell from "@/components/layout/AppShell";
+import EventCard from "@/components/events/EventCard";
+import EmptyState from "@/components/ui/EmptyState";
+import RegionBadge from "@/components/ui/RegionBadge";
+import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
+import VenueStructuredData from "@/components/seo/VenueStructuredData";
+import { ApiNotFoundError } from "@/lib/api/client";
+import { getVenueBySlug } from "@/lib/api/venues";
+import {
+  absolutePageUrl,
+  buildVenueDetailMetadata,
+} from "@/lib/metadata";
+
+export const revalidate = 600;
+
+interface VenueDetailPageProps {
+  params: { slug: string };
+}
+
+export async function generateMetadata({
+  params,
+}: VenueDetailPageProps): Promise<Metadata> {
+  try {
+    const venue = await getVenueBySlug(params.slug, 600);
+    return buildVenueDetailMetadata(venue);
+  } catch {
+    return {};
+  }
+}
+
+export default async function VenueDetailPage({
+  params,
+}: VenueDetailPageProps) {
+  let venue;
+  try {
+    venue = await getVenueBySlug(params.slug, 600);
+  } catch (err) {
+    if (err instanceof ApiNotFoundError) notFound();
+    throw err;
+  }
+
+  const canonical = absolutePageUrl(`/venues/${venue.slug}`);
+
+  return (
+    <AppShell selectedCitySlug={venue.city?.slug ?? null}>
+      <VenueStructuredData venue={venue} canonicalUrl={canonical} />
+      <BreadcrumbStructuredData
+        items={[
+          { name: "Home", url: absolutePageUrl("/") },
+          { name: "Venues", url: absolutePageUrl("/venues") },
+          { name: venue.name, url: canonical },
+        ]}
+      />
+
+      <article className="flex flex-col gap-8 py-4">
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <div
+            className="aspect-[16/9] w-full rounded-lg bg-border/60 sm:w-1/2"
+            style={
+              venue.image_url
+                ? {
+                    backgroundImage: `url(${venue.image_url})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }
+                : undefined
+            }
+            role="presentation"
+          />
+          <div className="flex flex-1 flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <RegionBadge city={venue.city} />
+              {venue.capacity ? (
+                <span className="text-xs text-muted">
+                  Capacity {venue.capacity.toLocaleString()}
+                </span>
+              ) : null}
+            </div>
+            <h1 className="text-3xl font-bold leading-tight sm:text-4xl">
+              {venue.name}
+            </h1>
+            {venue.address ? (
+              <p className="text-sm text-muted">{venue.address}</p>
+            ) : null}
+            {venue.description ? (
+              <p className="text-sm text-foreground">{venue.description}</p>
+            ) : null}
+            {venue.website_url ? (
+              <a
+                href={venue.website_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block w-fit rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:border-accent hover:text-accent"
+              >
+                Visit website →
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        <section className="flex flex-col gap-4">
+          <div className="flex items-end justify-between">
+            <h2 className="text-xl font-semibold">
+              Upcoming shows
+              {venue.upcoming_event_count > 0
+                ? ` (${venue.upcoming_event_count})`
+                : ""}
+            </h2>
+            <Link
+              href={{
+                pathname: "/events",
+                query: { city: venue.city?.slug ?? "" },
+              }}
+              className="text-sm font-medium text-accent hover:underline"
+            >
+              See more →
+            </Link>
+          </div>
+
+          {venue.upcoming_events.length === 0 ? (
+            <EmptyState
+              title="No shows announced yet"
+              description="Check back later — the overnight scraper refreshes this nightly."
+            />
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {venue.upcoming_events.map((event) => (
+                <EventCard key={event.id} event={event} />
+              ))}
+            </div>
+          )}
+        </section>
+      </article>
+    </AppShell>
+  );
 }

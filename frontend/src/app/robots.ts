@@ -1,7 +1,17 @@
-/** robots.txt generation — explicitly welcomes AI crawlers. */
+/**
+ * robots.txt generation — explicitly welcomes AI crawlers.
+ *
+ * Per CLAUDE.md, the site is designed for AI discoverability. The
+ * sitemap URL is pulled from `config.baseUrl` so the value stays
+ * consistent with metadata and canonical links.
+ */
+
 import type { MetadataRoute } from "next";
 
+import { config } from "@/lib/config";
+
 export default function robots(): MetadataRoute.Robots {
+  const base = config.baseUrl.replace(/\/$/, "");
   return {
     rules: [
       { userAgent: "*", allow: "/" },
@@ -10,6 +20,6 @@ export default function robots(): MetadataRoute.Robots {
       { userAgent: "PerplexityBot", allow: "/" },
       { userAgent: "GoogleBot", allow: "/" },
     ],
-    sitemap: `${process.env.NEXT_PUBLIC_BASE_URL}/sitemap.xml`,
+    sitemap: `${base}/sitemap.xml`,
   };
 }

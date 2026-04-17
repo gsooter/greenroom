@@ -1,28 +1,43 @@
 # Greenroom
 
-> Washington DC's concert calendar with Spotify-powered recommendations.
-> Aggregates shows from all major DC venues nightly.
+> The DMV's concert calendar with Spotify-powered recommendations.
+> Aggregates shows from all major DC, Maryland, and Virginia venues nightly.
 
 ## What this site contains
 
-- Upcoming concerts and live music events in Washington DC
+- Upcoming concerts and live music events across the DMV (Washington DC,
+  Maryland, and Northern Virginia)
 - Full event details: dates, venues, artists, ticket prices, availability
-- Venue directory for DC music venues
+- Venue directory covering the DMV music scene
 - Personalized recommendations via Spotify listening history
 
 ## Key pages
 
-- /events — Full DC concert calendar with filters
-- /venues — Directory of DC music venues
+- /events — Full DMV concert calendar with filters
+- /venues — Directory of DMV music venues
 - /events/[id] — Individual event pages with full details and pricing
 - /api/v1/feed/events — Machine-readable plain text event feed
+- /api/v1/cities — List of cities in the DMV
+- /api/v1/venues?region=DMV — All DMV venues
+- /api/v1/events?region=DMV — All DMV events
 
 ## Data freshness
 
 Event listings updated nightly at 4am ET from venue websites and Ticketmaster.
 Ticket pricing updated every 6 hours from SeatGeek.
 
-## DC Venues Covered
+## DMV Cities Covered
 
-9:30 Club, The Anthem, Black Cat, DC9, Comet Ping Pong,
-Merriweather Post Pavilion, Echostage, Flash, Pie Shop, and more.
+Washington DC, Silver Spring MD, Columbia MD, Baltimore MD,
+Tysons VA, Alexandria VA, Vienna VA.
+
+## DMV Venues Covered
+
+Washington, DC: 9:30 Club, The Anthem, Echostage, Howard Theatre,
+Lincoln Theatre, Union Stage, Black Cat, DC9, Comet Ping Pong, Flash, Pie Shop.
+
+Maryland: Merriweather Post Pavilion (Columbia), The Fillmore Silver Spring
+(Silver Spring), Rams Head Live! (Baltimore).
+
+Virginia: Capital One Hall (Tysons), The Birchmere (Alexandria),
+Wolf Trap (Vienna).

@@ -1,10 +1,18 @@
 import type { Metadata } from "next";
+
+import { config } from "@/lib/config";
 import "@/styles/globals.css";
 
+const DESCRIPTION =
+  "The DMV's concert calendar with Spotify-powered recommendations. Shows across DC, Maryland, and Virginia, updated nightly.";
+
 export const metadata: Metadata = {
-  title: "Greenroom — DC Concert Calendar",
-  description:
-    "Washington DC's concert calendar with Spotify-powered recommendations. Aggregates shows from all major DC venues nightly.",
+  metadataBase: new URL(config.baseUrl),
+  title: {
+    default: "Greenroom — DMV Concert Calendar",
+    template: "%s · Greenroom",
+  },
+  description: DESCRIPTION,
 };
 
 export default function RootLayout({
@@ -14,7 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="min-h-screen antialiased">{children}</body>
     </html>
   );
 }
