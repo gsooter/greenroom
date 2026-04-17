@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { AppProviders } from "@/components/providers/AppProviders";
 import { config } from "@/lib/config";
 import "@/styles/globals.css";
 
@@ -22,7 +23,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen antialiased">{children}</body>
+      <body className="min-h-screen antialiased">
+        <AppProviders>{children}</AppProviders>
+      </body>
     </html>
   );
 }

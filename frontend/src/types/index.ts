@@ -131,3 +131,31 @@ export interface ApiError {
     message: string;
   };
 }
+
+export type DigestFrequency = "daily" | "weekly" | "never";
+
+export interface User {
+  id: string;
+  email: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  city_id: string | null;
+  digest_frequency: DigestFrequency;
+  genre_preferences: string[];
+  notification_settings: Record<string, unknown>;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface UserPatch {
+  display_name?: string | null;
+  city_id?: string | null;
+  digest_frequency?: DigestFrequency;
+  genre_preferences?: string[] | null;
+  notification_settings?: Record<string, unknown> | null;
+}
+
+export interface SavedEvent {
+  saved_at: string;
+  event: EventSummary;
+}

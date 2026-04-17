@@ -145,6 +145,47 @@ def get_last_successful_run(
     return session.execute(stmt).scalar_one_or_none()
 
 
+def list_scraper_runs(
+    session: Session,
+    *,
+    venue_slug: str | None = None,
+    status: ScraperRunStatus | None = None,
+    page: int = 1,
+    per_page: int = 50,
+) -> tuple[list[ScraperRun], int]:
+    """List scraper runs, newest first, with optional filters.
+
+    Used by the admin dashboard to audit scraper health across the
+    fleet or drill into a single venue's history.
+
+    Args:
+        session: Active SQLAlchemy session.
+        venue_slug: Optional venue slug to scope the listing.
+        status: Optional status filter.
+        page: Page number, 1-indexed. Defaults to 1.
+        per_page: Results per page. Defaults to 50.
+
+    Returns:
+        Tuple of (runs list, total count).
+    """
+    base = select(ScraperRun)
+    if venue_slug is not None:
+        base = base.where(ScraperRun.venue_slug == venue_slug)
+    if status is not None:
+        base = base.where(ScraperRun.status == status)
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = session.execute(count_stmt).scalar_one()
+
+    stmt = (
+        base.order_by(ScraperRun.started_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    runs = list(session.execute(stmt).scalars().all())
+    return runs, total
+
+
 def count_failed_runs_since(
     session: Session,
     venue_slug: str,

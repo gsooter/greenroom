@@ -7,7 +7,9 @@
  */
 
 import Link from "next/link";
+import { Suspense } from "react";
 
+import AuthNav from "@/components/layout/AuthNav";
 import CityPicker from "@/components/layout/CityPicker";
 import { listCities } from "@/lib/api/cities";
 import type { City } from "@/types";
@@ -45,14 +47,11 @@ export default async function TopNav({ selectedCitySlug }: TopNavProps) {
 
         <div className="flex items-center gap-3">
           {cities.length > 0 ? (
-            <CityPicker cities={cities} selectedSlug={selectedCitySlug} />
+            <Suspense fallback={null}>
+              <CityPicker cities={cities} selectedSlug={selectedCitySlug} />
+            </Suspense>
           ) : null}
-          <Link
-            href="/login"
-            className="hidden rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:border-accent hover:text-accent sm:inline-block"
-          >
-            Sign in
-          </Link>
+          <AuthNav />
         </div>
       </div>
     </header>

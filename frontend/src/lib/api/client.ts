@@ -31,6 +31,8 @@ export class ApiNotFoundError extends ApiRequestError {
 export interface FetchJsonOptions extends Omit<RequestInit, "body"> {
   query?: Record<string, string | number | boolean | string[] | undefined>;
   revalidateSeconds?: number;
+  token?: string | null;
+  body?: unknown;
 }
 
 function buildUrl(path: string, query?: FetchJsonOptions["query"]): string {
@@ -50,14 +52,39 @@ function buildUrl(path: string, query?: FetchJsonOptions["query"]): string {
 
 export async function fetchJson<T>(
   path: string,
-  { query, revalidateSeconds = 60, ...init }: FetchJsonOptions = {},
+  {
+    query,
+    revalidateSeconds = 60,
+    token,
+    body,
+    method,
+    headers,
+    ...init
+  }: FetchJsonOptions = {},
 ): Promise<T> {
   const url = buildUrl(path, query);
+  const requestHeaders: Record<string, string> = {
+    Accept: "application/json",
+    ...(headers as Record<string, string> | undefined),
+  };
+  if (token) requestHeaders.Authorization = `Bearer ${token}`;
+  if (body !== undefined && !requestHeaders["Content-Type"]) {
+    requestHeaders["Content-Type"] = "application/json";
+  }
+
   const res = await fetch(url, {
     ...init,
-    headers: { Accept: "application/json", ...(init.headers ?? {}) },
-    next: { revalidate: revalidateSeconds },
+    method,
+    headers: requestHeaders,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    // Never cache authenticated requests — each user's response is private.
+    cache: token ? "no-store" : init.cache,
+    next: token ? undefined : { revalidate: revalidateSeconds },
   });
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
 
   if (!res.ok) {
     let code = "HTTP_ERROR";

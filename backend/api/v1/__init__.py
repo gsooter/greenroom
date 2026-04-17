@@ -11,6 +11,9 @@ api_v1 = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 
 # Import route modules to register their routes on the blueprint.
 # These imports must come after api_v1 is defined.
+from backend.api.v1 import admin as _admin  # noqa: F401, E402
 from backend.api.v1 import cities as _cities  # noqa: F401, E402
 from backend.api.v1 import events as _events  # noqa: F401, E402
+from backend.api.v1 import saved_events as _saved_events  # noqa: F401, E402
+from backend.api.v1 import users as _users  # noqa: F401, E402
 from backend.api.v1 import venues as _venues  # noqa: F401, E402

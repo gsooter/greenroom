@@ -14,8 +14,10 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from celery import shared_task
 from sqlalchemy.orm import Session
 
+from backend.core.database import get_session_factory
 from backend.core.logging import get_logger
 from backend.data.models.events import Event, EventType, EventStatus
 from backend.data.models.scraper import ScraperRunStatus
@@ -33,6 +35,75 @@ from backend.scraper.notifier import send_alert
 from backend.scraper.validator import validate_scraper_result
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Celery tasks
+# ---------------------------------------------------------------------------
+
+
+@shared_task(name="backend.scraper.runner.scrape_all_venues")
+def scrape_all_venues() -> dict[str, Any]:
+    """Celery task: run every enabled scraper and commit ingested events.
+
+    Managed session lifecycle — the worker owns its own DB session and
+    commits on success / rolls back on unhandled exception. Per-venue
+    failures are caught inside :func:`run_scraper_for_venue` and logged
+    as FAILED scraper_runs, so one broken venue never takes the whole
+    nightly job down.
+
+    Returns:
+        The per-venue results dict from :func:`run_all_scrapers`,
+        suitable for Flower inspection or Celery result backends.
+    """
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        try:
+            results = run_all_scrapers(session)
+            session.commit()
+            return results
+        except Exception:
+            session.rollback()
+            raise
+
+
+@shared_task(name="backend.scraper.runner.scrape_venue")
+def scrape_venue(venue_slug: str) -> dict[str, Any]:
+    """Celery task: run the scraper for a single venue.
+
+    Useful as an ops primitive — an admin endpoint or on-call human
+    can queue a single-venue re-scrape without triggering the full
+    nightly job.
+
+    Args:
+        venue_slug: Slug of the venue to scrape.
+
+    Returns:
+        The run result dict from :func:`run_scraper_for_venue`.
+
+    Raises:
+        ValueError: If no venue config exists for ``venue_slug``, or the
+            venue is present but disabled.
+    """
+    config = get_venue_config(venue_slug)
+    if config is None:
+        raise ValueError(
+            f"No scraper config for venue '{venue_slug}'"
+        )
+    if not config.enabled:
+        raise ValueError(
+            f"Scraper for venue '{venue_slug}' is disabled."
+        )
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        try:
+            result = run_scraper_for_venue(session, config)
+            session.commit()
+            return result
+        except Exception:
+            session.rollback()
+            raise
 
 
 def run_all_scrapers(session: Session) -> dict[str, Any]:
