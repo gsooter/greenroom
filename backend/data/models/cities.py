@@ -18,9 +18,12 @@ class City(TimestampMixin, Base):
 
     Attributes:
         id: Unique identifier for the city.
-        name: Display name of the city (e.g., "Washington DC").
+        name: Display name of the city (e.g., "Washington").
         slug: URL-safe identifier (e.g., "washington-dc").
         state: US state abbreviation (e.g., "DC").
+        region: Marketing region grouping (e.g., "DMV" for DC/MD/VA).
+            Multiple cities can share a region. Used to organize
+            scraper configs and group cities in the UI.
         timezone: IANA timezone string (e.g., "America/New_York").
         description: Optional description for SEO and display.
         is_active: Whether this city is live on the platform.
@@ -39,6 +42,9 @@ class City(TimestampMixin, Base):
         String(100), unique=True, nullable=False, index=True
     )
     state: Mapped[str] = mapped_column(String(2), nullable=False)
+    region: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="DMV", index=True
+    )
     timezone: Mapped[str] = mapped_column(
         String(50), nullable=False, default="America/New_York"
     )

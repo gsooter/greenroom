@@ -21,6 +21,8 @@ dependencies = [
     "celery[redis]>=5.3,<6",
     "redis>=5.0,<6",
     "requests>=2.31,<3",
+    "beautifulsoup4>=4.12,<5",
+    "lxml>=5.0,<6",
     "PyJWT>=2.8,<3",
     "sendgrid>=6.11,<7",
     "gunicorn>=21.2,<23",
@@ -34,6 +36,8 @@ dev = [
     "ruff>=0.4,<1",
     "mypy>=1.9,<2",
     "types-requests>=2.31,<3",
+    "types-beautifulsoup4>=4.12,<5",
+    "responses>=0.25,<1",
 ]
 
 [tool.black]

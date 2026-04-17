@@ -7,6 +7,7 @@ All database sessions should be obtained through this module.
 from datetime import datetime
 from uuid import uuid4
 
+from flask import Flask, g
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -73,3 +74,61 @@ def get_session_factory() -> sessionmaker[Session]:
     """
     engine = get_engine()
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+# Module-level session factory, initialized once by init_db()
+_session_factory: sessionmaker[Session] | None = None
+
+
+def init_db(app: Flask) -> None:
+    """Initialize the database for the Flask app.
+
+    Creates the session factory and registers a teardown handler
+    that closes the request-scoped session after each request.
+
+    Args:
+        app: The Flask application instance.
+    """
+    global _session_factory  # noqa: PLW0603
+    _session_factory = get_session_factory()
+    app.teardown_appcontext(_teardown_session)
+
+
+def _teardown_session(exception: BaseException | None) -> None:
+    """Close the request-scoped DB session.
+
+    Called automatically by Flask at the end of each request.
+    Rolls back on exception, commits otherwise.
+
+    Args:
+        exception: The exception that occurred, if any.
+    """
+    session: Session | None = g.pop("db_session", None)
+    if session is not None:
+        if exception is not None:
+            session.rollback()
+        else:
+            session.commit()
+        session.close()
+
+
+def get_db() -> Session:
+    """Get the request-scoped database session.
+
+    Creates a new session on first call within a request context
+    and stores it on Flask's g object. Subsequent calls within the
+    same request return the same session.
+
+    Returns:
+        An active SQLAlchemy Session for the current request.
+
+    Raises:
+        RuntimeError: If init_db() has not been called.
+    """
+    if "db_session" not in g:
+        if _session_factory is None:
+            raise RuntimeError(
+                "Database not initialized. Call init_db(app) first."
+            )
+        g.db_session = _session_factory()
+    return g.db_session

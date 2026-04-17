@@ -60,7 +60,50 @@ def list_venues_by_city(
     Returns:
         Tuple of (venues list, total count for pagination).
     """
-    base = select(Venue).where(Venue.city_id == city_id)
+    return list_venues(
+        session,
+        city_id=city_id,
+        active_only=active_only,
+        page=page,
+        per_page=per_page,
+    )
+
+
+def list_venues(
+    session: Session,
+    *,
+    city_id: uuid.UUID | None = None,
+    region: str | None = None,
+    active_only: bool = True,
+    page: int = 1,
+    per_page: int = 50,
+) -> tuple[list[Venue], int]:
+    """Fetch venues with optional city and region filters.
+
+    Args:
+        session: Active SQLAlchemy session.
+        city_id: Filter to venues in a specific city.
+        region: Filter to venues in cities matching this region
+            (e.g., "DMV"). Joins cities on the fly when provided.
+        active_only: If True, only return active venues. Defaults to True.
+        page: Page number, 1-indexed. Defaults to 1.
+        per_page: Results per page. Defaults to 50.
+
+    Returns:
+        Tuple of (venues list, total count for pagination).
+    """
+    from backend.data.models.cities import City
+
+    base = select(Venue)
+
+    if region is not None:
+        base = base.join(City, Venue.city_id == City.id).where(
+            City.region == region
+        )
+
+    if city_id is not None:
+        base = base.where(Venue.city_id == city_id)
+
     if active_only:
         base = base.where(Venue.is_active.is_(True))
 

@@ -33,6 +33,8 @@ Personalization (recommendations, saved shows, digests) requires login.
 
 3. **Every function has a Google-style docstring and full type hints.**
    No exceptions, including private helpers and one-liners that aren't obvious.
+   See the Docstrings & Type Hints section below for the required format
+   and examples. This is one of the most important rules in this file.
 
 4. **Every public API endpoint has a corresponding pytest test.**
    Every React component with logic has a corresponding Vitest test.
@@ -62,6 +64,179 @@ Personalization (recommendations, saved shows, digests) requires login.
 
 10. **No `any` type in TypeScript. No untyped Python function signatures.**
     Fix the type, don't suppress the error.
+
+11. **Never use raw hex values in component files.**
+    All colors must reference a CSS token from `globals.css`. See the
+    Design System & Color Palette section below.
+
+---
+
+## Docstrings & Type Hints
+
+This deserves its own section because it is non-negotiable and applies to
+every single function, method, and class in the codebase — no exceptions.
+
+### Python
+
+Every Python function must have:
+- Full type hints on all parameters and return values
+- A Google-style docstring with Args, Returns, and Raises sections
+- Raises section only needed if the function raises exceptions
+
+**This applies to:** public functions, private functions, class methods,
+static methods, property getters, Celery tasks, and scraper methods.
+There are no exempt functions. A one-liner that seems obvious still needs
+a docstring if its purpose isn't immediately clear from its name alone.
+
+```python
+def get_upcoming_events(
+    city_id: UUID,
+    date_from: date,
+    date_to: date | None = None,
+    venue_ids: list[UUID] | None = None,
+    genres: list[str] | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> tuple[list[Event], int]:
+    """Fetch upcoming events for a city with optional filters.
+
+    Args:
+        city_id: UUID of the city to fetch events for.
+        date_from: Start of the date range. Defaults to today.
+        date_to: End of the date range. None means no upper bound.
+        venue_ids: Filter to specific venues. None means all venues.
+        genres: Filter to specific genres. None means all genres.
+        page: Page number for pagination, 1-indexed.
+        per_page: Number of results per page. Maximum 100.
+
+    Returns:
+        Tuple of (events list, total count for pagination).
+
+    Raises:
+        CityNotFoundError: If city_id does not exist.
+        ValidationError: If per_page exceeds 100.
+    """
+
+
+def _normalize_artist_name(raw: str) -> str:
+    """Strip whitespace and normalize unicode in a raw artist name string.
+
+    Args:
+        raw: The unprocessed artist name string from a scraper or API.
+
+    Returns:
+        Cleaned artist name with normalized unicode and stripped whitespace.
+    """
+```
+
+### TypeScript
+
+Every TypeScript function must have:
+- Explicit parameter types — never rely on inference for function signatures
+- Explicit return types — never omit the return type annotation
+- A JSDoc comment for any non-trivial function
+
+```typescript
+/**
+ * Formats an event date for display in the event card.
+ * Returns short format for dates within the current week,
+ * full format for dates further out.
+ */
+function formatEventDate(startsAt: Date, now: Date = new Date()): string {
+  ...
+}
+
+/**
+ * Fetches upcoming events for a city with optional filters.
+ * Handles pagination and returns both the event list and total count.
+ */
+async function getEvents(
+  params: EventsQueryParams
+): Promise<PaginatedResponse<Event>> {
+  ...
+}
+```
+
+### Classes
+
+All classes need a class-level docstring describing purpose and usage.
+All TypeScript interfaces need JSDoc comments on non-obvious fields.
+
+```python
+class ArtistMatchScorer(BaseScorer):
+    """Scores events based on exact artist matches in the user's Spotify history.
+
+    Checks whether the event's headliner or any supporting act appears
+    in the user's top artists or recently played artists. Returns a
+    score between 0.0 and 1.0 based on match strength and recency.
+    """
+```
+
+---
+
+## Design System & Color Palette
+
+GREENROOM uses a blush and forest green palette. These are the only colors
+used in the UI. Do not introduce new colors without updating this section
+and `globals.css`.
+
+### Named Tokens
+
+All colors are defined as CSS custom properties in `globals.css` and
+referenced by name throughout the codebase. Never use raw hex values
+in component files — always use the token name.
+
+```css
+/* styles/globals.css */
+:root {
+  /* Backgrounds */
+  --color-bg-base:        #F7F0EE;  /* Petal Mist — page background */
+  --color-bg-surface:     #EFE6E2;  /* Warm Linen — card surfaces, inputs */
+  --color-bg-white:       #FFFFFF;  /* Pure white — raised cards */
+
+  /* Text */
+  --color-text-primary:   #1A2820;  /* Deep Canopy — headings and body */
+  --color-text-secondary: #7A6A65;  /* Dusty Rose — metadata, captions */
+  --color-text-inverse:   #F7F0EE;  /* On dark backgrounds */
+
+  /* Borders */
+  --color-border:         #E0D4D0;  /* Default card and input borders */
+
+  /* Forest Green — primary actions */
+  --color-green-dark:     #1E3D2A;  /* Nav bar, image placeholders */
+  --color-green-primary:  #2D5A3D;  /* Buttons, CTAs, active states */
+  --color-green-soft:     #C8DDD0;  /* Sage Mist — genre chips only */
+
+  /* Blush — recommendations only */
+  --color-blush-soft:     #F5D5D0;  /* Petal Pink — For You bg, saved state */
+  --color-blush-accent:   #C4524A;  /* Dried Rose — save active, alerts */
+
+  /* Navy — accent pop, used sparingly */
+  --color-navy-dark:      #1E3A5A;  /* Midnight Ink — date highlights */
+  --color-navy-soft:      #C8D0DC;  /* Haze Slate — secondary chips */
+}
+```
+
+### Badge & Chip Rules
+
+Color is used intentionally. Misusing badge colors is a bug, not a style choice.
+
+| Badge type | Background token | Text color | When to use |
+|---|---|---|---|
+| For You | `--color-blush-soft` | `#7A3028` | Spotify recommendation match **only** |
+| Genre | `--color-green-soft` | `#1A3D28` | Genre labels **only** |
+| Neutral | `--color-bg-surface` | `--color-text-secondary` | Everything else |
+
+**The rule in plain English:**
+- Blush means "Spotify matched this for you." Use it nowhere else.
+- Green means genre. Use it nowhere else.
+- Everything else — sold out, going fast, available, venue name — gets neutral.
+
+### Tailwind Config
+
+The palette is mapped in `tailwind.config.ts` so tokens are available as
+utility classes (`bg-green-primary`, `text-blush-accent`, etc.).
+Never use Tailwind's default color palette — only the custom tokens.
 
 ---
 
@@ -151,37 +326,7 @@ Violating the import hierarchy is never acceptable.
 - **Test framework:** pytest with pytest-cov
 - **Minimum test coverage:** 80% across all backend modules
 - **Python version:** 3.12+
-- **Docstring style:** Google
-
-```python
-def get_upcoming_events(
-    city_id: UUID,
-    date_from: date,
-    date_to: date | None = None,
-    venue_ids: list[UUID] | None = None,
-    genres: list[str] | None = None,
-    page: int = 1,
-    per_page: int = 20,
-) -> tuple[list[Event], int]:
-    """Fetch upcoming events for a city with optional filters.
-
-    Args:
-        city_id: UUID of the city to fetch events for.
-        date_from: Start of the date range. Defaults to today.
-        date_to: End of the date range. None means no upper bound.
-        venue_ids: Filter to specific venues. None means all venues.
-        genres: Filter to specific genres. None means all genres.
-        page: Page number for pagination, 1-indexed.
-        per_page: Number of results per page. Maximum 100.
-
-    Returns:
-        Tuple of (events list, total count for pagination).
-
-    Raises:
-        CityNotFoundError: If city_id does not exist.
-        ValidationError: If per_page exceeds 100.
-    """
-```
+- **Docstring style:** Google — see Docstrings & Type Hints section above
 
 ---
 
@@ -247,7 +392,7 @@ frontend/
 │   ├── hooks/                   # Custom React hooks
 │   ├── types/                   # Shared TypeScript types
 │   └── styles/
-│       └── globals.css
+│       └── globals.css          # All color tokens defined here
 │
 ├── public/
 │   └── llms.txt                 # AI crawler discoverability file
@@ -257,7 +402,7 @@ frontend/
 
 - **Framework:** Next.js 14+ with App Router
 - **Language:** TypeScript strict mode, no `any`
-- **Styling:** Tailwind CSS utility classes only
+- **Styling:** Tailwind CSS — custom tokens only, never default palette
 - **Data fetching:** TanStack Query for client-side, native fetch in server components
 - **State:** AuthContext for auth, local useState for UI, TanStack Query for server state
 - **Test framework:** Vitest + React Testing Library
@@ -602,7 +747,9 @@ Never return raw exception messages to the client.
 - Run the linter and tests before considering a task complete
 - Ask before introducing a new dependency
 - Never modify the database schema without a migration file
-- Never skip docstrings or type hints to save time
+- Never skip docstrings or type hints — see the Docstrings & Type Hints
+  section above, this is a hard rule not a suggestion
+- Never use raw hex values in component files — always use color tokens
 - When adding a new venue scraper, update `llms.txt` too
 - When adding a new page, ensure SSR, metadata, and structured data are in place
 
@@ -620,6 +767,7 @@ no documentation.
 - A rule or convention changes
 - A new environment variable is required
 - The build, test, or deployment process changes
+- A new color token is introduced to the palette
 
 **Update `DECISIONS.md` when:**
 - A significant architectural choice is made during implementation

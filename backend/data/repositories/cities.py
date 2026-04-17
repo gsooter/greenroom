@@ -39,21 +39,39 @@ def get_city_by_slug(session: Session, slug: str) -> City | None:
     return session.execute(stmt).scalar_one_or_none()
 
 
-def list_active_cities(session: Session) -> list[City]:
+def list_active_cities(
+    session: Session, *, region: str | None = None
+) -> list[City]:
     """Fetch all active cities ordered by name.
+
+    Args:
+        session: Active SQLAlchemy session.
+        region: Optional region filter (e.g., "DMV").
+
+    Returns:
+        List of active City instances.
+    """
+    stmt = select(City).where(City.is_active.is_(True))
+    if region is not None:
+        stmt = stmt.where(City.region == region)
+    stmt = stmt.order_by(City.name)
+    return list(session.execute(stmt).scalars().all())
+
+
+def list_cities_by_region(session: Session) -> dict[str, list[City]]:
+    """Group all active cities by region.
 
     Args:
         session: Active SQLAlchemy session.
 
     Returns:
-        List of active City instances.
+        Dictionary mapping region names to lists of cities.
     """
-    stmt = (
-        select(City)
-        .where(City.is_active.is_(True))
-        .order_by(City.name)
-    )
-    return list(session.execute(stmt).scalars().all())
+    cities = list_active_cities(session)
+    by_region: dict[str, list[City]] = {}
+    for city in cities:
+        by_region.setdefault(city.region, []).append(city)
+    return by_region
 
 
 def create_city(
@@ -62,6 +80,7 @@ def create_city(
     name: str,
     slug: str,
     state: str,
+    region: str = "DMV",
     timezone: str = "America/New_York",
     description: str | None = None,
 ) -> City:
@@ -72,6 +91,7 @@ def create_city(
         name: Display name of the city.
         slug: URL-safe slug identifier.
         state: US state abbreviation.
+        region: Marketing region grouping. Defaults to "DMV".
         timezone: IANA timezone string. Defaults to America/New_York.
         description: Optional description for SEO.
 
@@ -82,6 +102,7 @@ def create_city(
         name=name,
         slug=slug,
         state=state,
+        region=region,
         timezone=timezone,
         description=description,
     )
