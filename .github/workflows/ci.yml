@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [main, staging]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (lint + types + tests)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: greenroom_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/greenroom_test
+      REDIS_URL: redis://localhost:6379/0
+      SPOTIFY_CLIENT_ID: test-spotify-id
+      SPOTIFY_CLIENT_SECRET: test-spotify-secret
+      SPOTIFY_REDIRECT_URI: http://localhost/callback
+      JWT_SECRET_KEY: test-jwt-secret
+      JWT_EXPIRY_SECONDS: "3600"
+      SENDGRID_API_KEY: test
+      SENDGRID_FROM_EMAIL: test@example.com
+      TICKETMASTER_API_KEY: test
+      SEATGEEK_CLIENT_ID: test
+      SEATGEEK_CLIENT_SECRET: test
+      ADMIN_SECRET_KEY: test
+      SLACK_WEBHOOK_URL: http://example.com/slack
+      ALERT_EMAIL: alerts@example.com
+      POSTHOG_API_KEY: test
+      POSTHOG_HOST: http://example.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install backend (with dev extras)
+        run: pip install -e ./backend[dev]
+      - name: Ruff
+        run: ruff check .
+        working-directory: backend
+      - name: Mypy
+        run: mypy .
+        working-directory: backend
+      - name: Alembic upgrade (prime test DB)
+        run: alembic upgrade head
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+      - name: Pytest
+        run: pytest --cov=backend --cov-report=term-missing --cov-fail-under=80
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+
+  frontend:
+    name: frontend (lint + build + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      NEXT_PUBLIC_API_URL: http://localhost:5001
+      NEXT_PUBLIC_BASE_URL: http://localhost:3000
+      NEXT_PUBLIC_POSTHOG_KEY: ""
+      NEXT_PUBLIC_SPOTIFY_LOGIN_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test -- --coverage
+      - run: npm run build
