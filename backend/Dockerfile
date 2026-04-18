@@ -48,11 +48,8 @@ CMD ["flask", "--app", "backend.app:create_app", "run", \
      "--host", "0.0.0.0", "--port", "5001", "--debug"]
 
 # ---- prod ----------------------------------------------------------------
+# Shell form so ${PORT} expands — Railway injects PORT per web service and
+# the fallback keeps local `docker run` working without env plumbing.
 FROM base AS prod
 
-CMD ["gunicorn", \
-     "--bind", "0.0.0.0:5001", \
-     "--workers", "2", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "backend.app:create_app()"]
+CMD gunicorn --bind 0.0.0.0:${PORT:-5001} --workers 2 --access-logfile - --error-logfile - "backend.app:create_app()"
