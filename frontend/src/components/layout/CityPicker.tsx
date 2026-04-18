@@ -16,14 +16,14 @@ import type { City } from "@/types";
 
 interface CityPickerProps {
   cities: City[];
-  selectedSlug: string | null;
 }
 
-export default function CityPicker({ cities, selectedSlug }: CityPickerProps) {
+export default function CityPicker({ cities }: CityPickerProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const selectId = useId();
+  const selectedSlug = searchParams.get("city");
 
   const onChange = useCallback(
     (event: React.ChangeEvent<HTMLSelectElement>) => {

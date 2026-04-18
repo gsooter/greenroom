@@ -10,7 +10,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
-import AppShell from "@/components/layout/AppShell";
 import EventCard from "@/components/events/EventCard";
 import EmptyState from "@/components/ui/EmptyState";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
@@ -39,7 +38,7 @@ export default async function HomePage() {
   }
 
   return (
-    <AppShell>
+    <>
       <SiteStructuredData />
       <BreadcrumbStructuredData
         items={[{ name: "Home", url: absolutePageUrl("/") }]}
@@ -54,8 +53,7 @@ export default async function HomePage() {
         </h1>
         <p className="max-w-2xl text-base text-muted sm:text-lg">
           Greenroom aggregates shows from every major venue in Washington DC,
-          Maryland, and Virginia — updated nightly. Sign in with Spotify for
-          recommendations tuned to what you already listen to.
+          Maryland, and Virginia — updated nightly.
         </p>
         <div className="flex flex-wrap gap-3 pt-2">
           <Link
@@ -71,6 +69,10 @@ export default async function HomePage() {
             Explore venues
           </Link>
         </div>
+        <p className="inline-flex w-fit items-center gap-2 rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent">
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-blush-accent" />
+          Spotify-powered recommendations — coming soon
+        </p>
       </section>
 
       <section className="flex flex-col gap-4 pb-10">
@@ -97,6 +99,6 @@ export default async function HomePage() {
           </div>
         )}
       </section>
-    </AppShell>
+    </>
   );
 }

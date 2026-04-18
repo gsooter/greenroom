@@ -13,6 +13,7 @@ from backend.api.v1 import api_v1
 from backend.core.auth import get_current_user, require_auth
 from backend.core.database import get_db
 from backend.core.exceptions import ValidationError
+from backend.services import spotify as spotify_service
 from backend.services import users as users_service
 
 
@@ -53,6 +54,40 @@ def update_me() -> tuple[dict, int]:
     user = get_current_user()
     updated = users_service.update_user_profile(session, user, payload)
     return {"data": users_service.serialize_user(updated)}, 200
+
+
+@api_v1.route("/me/spotify/top-artists", methods=["GET"])
+@require_auth
+def get_my_top_artists() -> tuple[dict, int]:
+    """Return the authenticated user's cached Spotify top-artists snapshot.
+
+    If the user has no snapshot yet (unusual — inline sync runs on
+    login), attempts a live refresh before giving up. On Spotify
+    errors returns an empty list so the UI can degrade gracefully.
+
+    Returns:
+        Tuple of JSON body (``{data: {artists: [...], synced_at}}``)
+        and HTTP 200 status code.
+    """
+    session = get_db()
+    user = get_current_user()
+
+    if not user.spotify_top_artists:
+        try:
+            spotify_service.sync_top_artists(session, user)
+        except Exception:  # noqa: BLE001 — degrade, don't blow up UI
+            pass
+
+    return {
+        "data": {
+            "artists": user.spotify_top_artists or [],
+            "synced_at": (
+                user.spotify_synced_at.isoformat()
+                if user.spotify_synced_at
+                else None
+            ),
+        }
+    }, 200
 
 
 @api_v1.route("/me", methods=["DELETE"])

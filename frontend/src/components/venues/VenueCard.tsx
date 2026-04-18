@@ -22,19 +22,26 @@ export default function VenueCard({ venue }: VenueCardProps) {
       href={`/venues/${venue.slug}`}
       className="group flex flex-col overflow-hidden rounded-lg border border-border bg-surface transition hover:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
     >
-      <div
-        className="aspect-[16/9] w-full bg-border/60"
-        style={
-          venue.image_url
-            ? {
-                backgroundImage: `url(${venue.image_url})`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-              }
-            : undefined
-        }
-        role="presentation"
-      />
+      {venue.image_url ? (
+        <div
+          className="aspect-[16/9] w-full bg-border/60"
+          style={{
+            backgroundImage: `url(${venue.image_url})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+          role="presentation"
+        />
+      ) : (
+        <div
+          className="flex aspect-[16/9] w-full items-center justify-center bg-green-dark px-4"
+          role="presentation"
+        >
+          <span className="text-center text-lg font-semibold leading-tight text-text-inverse">
+            {venue.name}
+          </span>
+        </div>
+      )}
 
       <div className="flex flex-1 flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-2">

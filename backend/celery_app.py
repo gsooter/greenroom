@@ -33,7 +33,11 @@ def _build_app() -> Celery:
         "greenroom",
         broker=settings.redis_url,
         backend=settings.redis_url,
-        include=["backend.scraper.runner"],
+        include=[
+            "backend.scraper.runner",
+            "backend.scraper.watchdogs.dc9_dice_widget",
+            "backend.services.spotify_tasks",
+        ],
     )
 
     app.conf.update(
@@ -71,6 +75,14 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "task": "backend.scraper.runner.scrape_all_venues",
             "schedule": crontab(hour=4, minute=0),
             "options": {"expires": 60 * 60 * 3},
+        },
+        "watch-dc9-dice-widget-weekly": {
+            "task": (
+                "backend.scraper.watchdogs.dc9_dice_widget"
+                ".check_dc9_dice_widget"
+            ),
+            "schedule": crontab(hour=5, minute=0, day_of_week=1),
+            "options": {"expires": 60 * 60},
         },
     }
 

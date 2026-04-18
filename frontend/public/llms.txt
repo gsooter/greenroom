@@ -14,8 +14,11 @@
 ## Key pages
 
 - /events — Full DMV concert calendar with filters
+- /events?view=calendar — Month-grid calendar view
+- /events?window=tonight|weekend|week — Date-window filters
 - /venues — Directory of DMV music venues
 - /events/[id] — Individual event pages with full details and pricing
+- /about — What this site is and how the data is refreshed
 - /api/v1/feed/events — Machine-readable plain text event feed
 - /api/v1/cities — List of cities in the DMV
 - /api/v1/venues?region=DMV — All DMV venues

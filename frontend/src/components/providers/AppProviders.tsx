@@ -11,8 +11,16 @@
 
 import type { ReactNode } from "react";
 
+import { ToastProvider } from "@/components/ui/Toast";
 import { AuthProvider } from "@/lib/auth";
+import { SavedEventsProvider } from "@/lib/saved-events-context";
 
 export function AppProviders({ children }: { children: ReactNode }): JSX.Element {
-  return <AuthProvider>{children}</AuthProvider>;
+  return (
+    <AuthProvider>
+      <SavedEventsProvider>
+        <ToastProvider>{children}</ToastProvider>
+      </SavedEventsProvider>
+    </AuthProvider>
+  );
 }

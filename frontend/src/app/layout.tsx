@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import AppShell from "@/components/layout/AppShell";
 import { AppProviders } from "@/components/providers/AppProviders";
 import { config } from "@/lib/config";
 import "@/styles/globals.css";
@@ -24,7 +25,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen antialiased">
-        <AppProviders>{children}</AppProviders>
+        <AppProviders>
+          <AppShell>{children}</AppShell>
+        </AppProviders>
       </body>
     </html>
   );

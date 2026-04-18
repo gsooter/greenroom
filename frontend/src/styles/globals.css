@@ -2,26 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Greenroom palette — blush + forest green + navy, per CLAUDE.md.
+ * Two layers defined here:
+ *   1. Named tokens (--color-*) — the source of truth, mapped into
+ *      tailwind.config.ts so classes like `bg-blush-soft` resolve.
+ *   2. Semantic aliases (--background, --foreground, --accent, etc.) —
+ *      preserved so pre-existing component classes keep working.
+ */
 :root {
-  --background: #fafaf7;
-  --foreground: #101418;
-  --surface: #ffffff;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --accent: #047857;
-  --accent-foreground: #ecfdf5;
-}
+  /* Backgrounds */
+  --color-bg-base: #f7f0ee;        /* Petal Mist — page background */
+  --color-bg-surface: #efe6e2;     /* Warm Linen — card surfaces, inputs */
+  --color-bg-white: #ffffff;       /* Pure white — raised cards */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0b0f0d;
-    --foreground: #f3f4f6;
-    --surface: #111816;
-    --muted: #9ca3af;
-    --border: #1f2937;
-    --accent: #34d399;
-    --accent-foreground: #052e1f;
-  }
+  /* Text */
+  --color-text-primary: #1a2820;   /* Deep Canopy — headings, body */
+  --color-text-secondary: #7a6a65; /* Dusty Rose — metadata, captions */
+  --color-text-inverse: #f7f0ee;   /* On dark backgrounds */
+
+  /* Borders */
+  --color-border: #e0d4d0;
+
+  /* Forest Green — primary actions */
+  --color-green-dark: #1e3d2a;
+  --color-green-primary: #2d5a3d;
+  --color-green-soft: #c8ddd0;
+
+  /* Blush — recommendations, save state, brand moments only */
+  --color-blush-soft: #f5d5d0;
+  --color-blush-accent: #c4524a;
+
+  /* Navy — accent pop, sparingly */
+  --color-navy-dark: #1e3a5a;
+  --color-navy-soft: #c8d0dc;
+
+  /* Semantic aliases — used by legacy components */
+  --background: var(--color-bg-base);
+  --foreground: var(--color-text-primary);
+  --surface: var(--color-bg-white);
+  --muted: var(--color-text-secondary);
+  --border: var(--color-border);
+  --accent: var(--color-green-primary);
+  --accent-foreground: var(--color-bg-base);
 }
 
 body {

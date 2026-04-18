@@ -18,6 +18,29 @@ const config: Config = {
           DEFAULT: "var(--accent)",
           foreground: "var(--accent-foreground)",
         },
+        bg: {
+          base: "var(--color-bg-base)",
+          surface: "var(--color-bg-surface)",
+          white: "var(--color-bg-white)",
+        },
+        text: {
+          primary: "var(--color-text-primary)",
+          secondary: "var(--color-text-secondary)",
+          inverse: "var(--color-text-inverse)",
+        },
+        green: {
+          dark: "var(--color-green-dark)",
+          primary: "var(--color-green-primary)",
+          soft: "var(--color-green-soft)",
+        },
+        blush: {
+          soft: "var(--color-blush-soft)",
+          accent: "var(--color-blush-accent)",
+        },
+        navy: {
+          dark: "var(--color-navy-dark)",
+          soft: "var(--color-navy-soft)",
+        },
       },
       fontFamily: {
         sans: [

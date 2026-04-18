@@ -11,17 +11,22 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { config } from "@/lib/config";
+
 interface NavItem {
   href: string;
   label: string;
 }
 
-const ITEMS: NavItem[] = [
+const BASE_ITEMS: NavItem[] = [
   { href: "/", label: "Home" },
   { href: "/events", label: "Events" },
   { href: "/venues", label: "Venues" },
-  { href: "/login", label: "Sign in" },
 ];
+
+const ITEMS: NavItem[] = config.spotifyLoginEnabled
+  ? [...BASE_ITEMS, { href: "/login", label: "Sign in" }]
+  : [...BASE_ITEMS, { href: "/about", label: "About" }];
 
 export default function MobileBottomNav() {
   const pathname = usePathname();

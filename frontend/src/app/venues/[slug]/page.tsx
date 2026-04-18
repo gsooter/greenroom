@@ -10,7 +10,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
-import AppShell from "@/components/layout/AppShell";
 import EventCard from "@/components/events/EventCard";
 import EmptyState from "@/components/ui/EmptyState";
 import RegionBadge from "@/components/ui/RegionBadge";
@@ -54,7 +53,7 @@ export default async function VenueDetailPage({
   const canonical = absolutePageUrl(`/venues/${venue.slug}`);
 
   return (
-    <AppShell selectedCitySlug={venue.city?.slug ?? null}>
+    <>
       <VenueStructuredData venue={venue} canonicalUrl={canonical} />
       <BreadcrumbStructuredData
         items={[
@@ -66,19 +65,26 @@ export default async function VenueDetailPage({
 
       <article className="flex flex-col gap-8 py-4">
         <div className="flex flex-col gap-4 sm:flex-row">
-          <div
-            className="aspect-[16/9] w-full rounded-lg bg-border/60 sm:w-1/2"
-            style={
-              venue.image_url
-                ? {
-                    backgroundImage: `url(${venue.image_url})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }
-                : undefined
-            }
-            role="presentation"
-          />
+          {venue.image_url ? (
+            <div
+              className="aspect-[16/9] w-full rounded-lg bg-border/60 sm:w-1/2"
+              style={{
+                backgroundImage: `url(${venue.image_url})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+              role="presentation"
+            />
+          ) : (
+            <div
+              className="flex aspect-[16/9] w-full items-center justify-center rounded-lg bg-green-dark px-6 sm:w-1/2"
+              role="presentation"
+            >
+              <span className="text-center text-2xl font-semibold leading-tight text-text-inverse">
+                {venue.name}
+              </span>
+            </div>
+          )}
           <div className="flex flex-1 flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <RegionBadge city={venue.city} />
@@ -92,7 +98,16 @@ export default async function VenueDetailPage({
               {venue.name}
             </h1>
             {venue.address ? (
-              <p className="text-sm text-muted">{venue.address}</p>
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                  `${venue.name} ${venue.address}`,
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-muted hover:text-accent hover:underline"
+              >
+                {venue.address}
+              </a>
             ) : null}
             {venue.description ? (
               <p className="text-sm text-foreground">{venue.description}</p>
@@ -143,6 +158,6 @@ export default async function VenueDetailPage({
           )}
         </section>
       </article>
-    </AppShell>
+    </>
   );
 }

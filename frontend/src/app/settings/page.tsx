@@ -14,8 +14,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiRequestError } from "@/lib/api/client";
 import { listCities } from "@/lib/api/cities";
 import { deleteMe, updateMe } from "@/lib/api/me";
+import { getMyTopArtists } from "@/lib/api/recommendations";
 import { useRequireAuth } from "@/lib/auth";
-import type { City, DigestFrequency, UserPatch } from "@/types";
+import type {
+  City,
+  DigestFrequency,
+  SpotifyTopArtist,
+  UserPatch,
+} from "@/types";
 
 const DIGEST_OPTIONS: DigestFrequency[] = ["daily", "weekly", "never"];
 
@@ -34,9 +40,26 @@ export default function SettingsPage(): JSX.Element {
   );
   const [error, setError] = useState<string | null>(null);
 
+  const [topArtists, setTopArtists] = useState<SpotifyTopArtist[]>([]);
+  const [topArtistsSyncedAt, setTopArtistsSyncedAt] = useState<string | null>(
+    null,
+  );
+
   useEffect(() => {
     void listCities().then((list) => setCities(list));
   }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    void getMyTopArtists(token)
+      .then((res) => {
+        setTopArtists(res.artists);
+        setTopArtistsSyncedAt(res.synced_at);
+      })
+      .catch(() => {
+        /* top-artists is a best-effort read; do nothing on failure */
+      });
+  }, [token]);
 
   useEffect(() => {
     if (!user) return;
@@ -194,6 +217,37 @@ export default function SettingsPage(): JSX.Element {
 
       <section>
         <h2 className="text-base font-semibold text-text-primary">
+          Your Spotify rotation
+        </h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          These are the artists currently driving your recommendations.
+          {topArtistsSyncedAt
+            ? ` Last synced ${formatSyncedAt(topArtistsSyncedAt)}.`
+            : ""}
+        </p>
+        {topArtists.length === 0 ? (
+          <p className="mt-4 text-sm text-text-secondary">
+            We haven&apos;t synced your Spotify listening history yet. Sign in with
+            Spotify again or check back after our nightly sync.
+          </p>
+        ) : (
+          <ul className="mt-4 flex flex-wrap gap-2">
+            {topArtists.slice(0, 24).map((artist) => (
+              <li
+                key={`${artist.id ?? artist.name}`}
+                className="rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent"
+              >
+                {artist.name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <hr className="my-10 border-border" />
+
+      <section>
+        <h2 className="text-base font-semibold text-text-primary">
           Danger zone
         </h2>
         <p className="mt-1 text-sm text-text-secondary">
@@ -231,4 +285,18 @@ function Field({
 
 function PageShell({ children }: { children: React.ReactNode }): JSX.Element {
   return <main className="mx-auto max-w-2xl px-6 py-12">{children}</main>;
+}
+
+function formatSyncedAt(iso: string): string {
+  try {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "recently";
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return "recently";
+  }
 }

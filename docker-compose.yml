@@ -1,3 +1,36 @@
+# Dev-mode Docker stack for Greenroom.
+#
+# Services: Postgres, Redis, Alembic (one-shot), Flask API, Celery worker,
+# Celery beat, Next.js dev server. Source dirs are bind-mounted so edits
+# on the host hot-reload inside the containers.
+#
+# Usage:
+#   docker compose up --build                 # bring everything up
+#   docker compose run --rm seed              # populate cities + venues
+#   docker compose down                       # stop (data preserved)
+#   docker compose down -v                    # stop + wipe DB volume
+#
+# Ports on the host:
+#   3000  Next.js frontend
+#   5001  Flask API
+#   5432  Postgres  (kept for host-side tooling / running Flask natively)
+#   6379  Redis     (same reason)
+#
+# Inside the compose network, services reach each other by service name
+# (`postgres`, `redis`). The DATABASE_URL / REDIS_URL from .env are
+# overridden for containers so host-vs-container DNS stays right.
+
+name: greenroom
+
+x-backend-build: &backend_build
+  context: .
+  dockerfile: backend/Dockerfile
+  target: dev
+
+x-backend-env: &backend_env
+  DATABASE_URL: postgresql://greenroom:greenroom@postgres:5432/greenroom
+  REDIS_URL: redis://redis:6379/0
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -14,7 +47,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U greenroom"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -27,7 +60,94 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  migrate:
+    build: *backend_build
+    env_file: .env
+    environment: *backend_env
+    working_dir: /app/backend
+    command: ["alembic", "upgrade", "head"]
+    volumes:
+      - ./backend:/app/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed:
+    build: *backend_build
+    env_file: .env
+    environment: *backend_env
+    command: ["python", "-m", "backend.scripts.seed_dmv"]
+    volumes:
+      - ./backend:/app/backend
+    profiles: ["tools"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  backend:
+    build: *backend_build
+    env_file: .env
+    environment: *backend_env
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./backend:/app/backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:5001/api/v1/events?per_page=1' >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  worker:
+    build: *backend_build
+    env_file: .env
+    environment: *backend_env
+    command: ["celery", "-A", "backend.celery_app:celery_app", "worker", "--loglevel=info"]
+    volumes:
+      - ./backend:/app/backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  beat:
+    build: *backend_build
+    env_file: .env
+    environment: *backend_env
+    command: ["celery", "-A", "backend.celery_app:celery_app", "beat", "--loglevel=info"]
+    volumes:
+      - ./backend:/app/backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    env_file: ./frontend/.env.local
+    environment:
+      SERVER_API_URL: http://backend:5001
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
 
 volumes:
   pgdata:

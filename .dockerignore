@@ -1,0 +1,39 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+.venv
+venv
+*.egg-info
+
+# Node / Next.js
+**/node_modules
+**/.next
+**/out
+
+# Env files — the compose file passes secrets via env_file at runtime,
+# bundling them into the image would leak them into any published layer.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Editor / OS
+.idea
+.vscode
+.DS_Store
+
+# Docs / dev-only
+plans/
+*.md
+!README.md

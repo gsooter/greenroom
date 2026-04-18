@@ -14,11 +14,7 @@ import CityPicker from "@/components/layout/CityPicker";
 import { listCities } from "@/lib/api/cities";
 import type { City } from "@/types";
 
-interface TopNavProps {
-  selectedCitySlug: string | null;
-}
-
-export default async function TopNav({ selectedCitySlug }: TopNavProps) {
+export default async function TopNav() {
   let cities: City[] = [];
   try {
     cities = await listCities({ region: "DMV", revalidateSeconds: 300 });
@@ -48,7 +44,7 @@ export default async function TopNav({ selectedCitySlug }: TopNavProps) {
         <div className="flex items-center gap-3">
           {cities.length > 0 ? (
             <Suspense fallback={null}>
-              <CityPicker cities={cities} selectedSlug={selectedCitySlug} />
+              <CityPicker cities={cities} />
             </Suspense>
           ) : null}
           <AuthNav />

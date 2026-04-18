@@ -159,3 +159,32 @@ export interface SavedEvent {
   saved_at: string;
   event: EventSummary;
 }
+
+export interface RecommendationMatchReason {
+  scorer: "artist_match" | (string & {});
+  kind: "spotify_id" | "artist_name" | (string & {});
+  label: string;
+  artist_name: string;
+}
+
+export interface Recommendation {
+  id: string;
+  score: number;
+  generated_at: string | null;
+  is_dismissed: boolean;
+  match_reasons: RecommendationMatchReason[];
+  score_breakdown: Record<string, unknown>;
+  event: EventSummary;
+}
+
+export interface SpotifyTopArtist {
+  id: string | null;
+  name: string;
+  genres: string[];
+  image_url: string | null;
+}
+
+export interface SpotifyTopArtistsResponse {
+  artists: SpotifyTopArtist[];
+  synced_at: string | null;
+}

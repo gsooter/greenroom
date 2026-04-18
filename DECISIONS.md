@@ -463,6 +463,276 @@ and flags any that return zero events, catching drift the moment it happens.
 
 ---
 
+### 019 — DC9 DICE Widget Watchdog Instead of a DICE Scraper
+
+**Date:** 2026-04-18
+**Status:** Decided
+
+**Decision:** DC9 ships with `enabled=False` in `backend/scraper/config/venues.py`
+and a weekly Celery watchdog (`backend.scraper.watchdogs.dc9_dice_widget.check_dc9_dice_widget`)
+pings `dc9.club/events` every Monday 05:00 ET. When DC9's DICE event-list
+widget is no longer HTML-commented out, the watchdog Slacks an alert so we can
+re-enable the venue. No `DiceScraper` implementation is written until either
+that alert fires or a DICE Partner API key lands.
+
+**Rationale:**
+As of 2026-04-18 the DICE widget on `dc9.club/events` is wrapped in
+`<!-- ... -->` — there is literally nothing to scrape. The two ways to get DC9
+events are both blocked: (1) direct scraping of `dice.fm/venue/...` returns 403
+from Cloudflare bot-protection, and (2) `partners-endpoint.dice.fm` requires an
+`x-api-key` header that DICE only issues under a Partner agreement. Writing a
+stub `DiceScraper` that runs nightly against a commented-out widget would emit
+pointless validator alerts for a venue we knowingly can't scrape. A weekly
+watchdog trades zero ongoing noise for a one-time "time to turn DC9 back on"
+ping when the source becomes tractable.
+
+**Alternatives considered:**
+- Ship a full `DiceScraper` against `partners-endpoint.dice.fm` now — rejected;
+  blocked on business paperwork, not engineering.
+- Scrape `dice.fm` venue pages directly — rejected; Cloudflare-blocked and
+  fragile even if accessible.
+- Leave DC9 silently disabled with no monitoring — rejected; means we'd only
+  notice the widget came back when a user complained.
+- Run the watchdog daily — rejected; venue-page HTML changes slowly and weekly
+  cadence is enough signal without spamming the DC9 site or Slack.
+
+**Consequences:**
+- `backend/scraper/watchdogs/` is a new package parallel to `validator` —
+  its job is to watch *external sources we don't yet scrape*, not validate
+  completed scrapes. Future blocked venues (DICE-only rooms, ToS-restricted
+  sites waiting on API access) belong here.
+- The DC9 venue row stays in the database and in `VENUE_CONFIGS` so when the
+  widget returns we only flip `enabled=True` — no re-seeding required.
+- Acceptance when re-enabling DC9: wire up the real `DiceScraper`, flip
+  `enabled=True`, and remove the beat entry for the watchdog in one PR.
+
+---
+
+### 020 — Ticketmaster `priceRanges` Is Not a Reliable Pricing Source
+
+**Date:** 2026-04-18
+**Status:** Decided
+
+**Decision:** The Ticketmaster Discovery API's `priceRanges` field is treated
+as best-effort metadata, not a guaranteed pricing source. We persist it when
+present (`TicketmasterScraper._extract_prices`) but do not alert, retry, or
+fall back when it is absent. Cross-venue ticket pricing is an explicit
+responsibility of the SeatGeek integration once that credential lands
+(Decision 010), not of the TM scraper.
+
+**Rationale:**
+Inspection on 2026-04-18 of 473 upcoming TM-sourced events showed only 47 have
+a populated `min_price`, and all 47 are Howard Theatre. 9:30 Club (93 events),
+The Anthem (45), Fillmore (47), and every other TM venue in the database
+return zero events with `priceRanges` in their raw payloads. The field is
+literally absent from the API response, not dropped by the scraper — the
+extractor code is correct, the upstream data is sparse. Ticketmaster surfaces
+`priceRanges` only for events that sell through their retail inventory
+channel; venues on TM's presentation-only tier (most independent DC rooms)
+never populate it. This is documented TM behavior, not a bug to chase.
+
+**Alternatives considered:**
+- Fall back to scraping the consumer event page for price copy — rejected;
+  Ticketmaster's consumer pages are client-rendered (`curl` returns a 23-byte
+  shell) so no meaningful server-side HTML exists to parse.
+- Use TM's offers/inventory endpoints — rejected; those endpoints require a
+  separate commerce partnership we don't have and are scoped to affiliate
+  sellers, not aggregators.
+- Alert when a TM venue's `min_price` coverage drops — rejected; the coverage
+  is already effectively zero for 16 of 17 TM venues, so there's nothing to
+  drift away from.
+
+**Consequences:**
+- `events.min_price` and `events.max_price` are understood to be nullable in
+  the UI; event cards and detail pages must degrade gracefully when pricing is
+  absent rather than render `$—` or `$0`.
+- SeatGeek is the single source of truth for pricing breadth. When that
+  integration ships, it populates `ticket_pricing_snapshots` for TM venues
+  too, and the event API serializer should prefer the freshest snapshot
+  across sources rather than the value extracted at scrape time.
+- No code change to `TicketmasterScraper._extract_prices` — it already handles
+  the present/absent cases correctly.
+
+---
+
+### 021 — Email Digest Deferred Out of MVP
+
+**Date:** 2026-04-18
+**Status:** Decided
+
+**Decision:** SendGrid-powered weekly email digests (`backend/services/notifications.py`,
+digest Celery beat entry, `/api/v1/users/me/digest-preview` endpoint) are
+explicitly excluded from the MVP launch. `services/notifications.py` stays as a
+one-line stub. Users can still set `digest_frequency` on their profile in
+`/settings` — the field persists to the database so no data migration is needed
+when the feature ships — but no email actually sends until after launch.
+
+**Rationale:**
+A transactional-email pipeline is four separate workstreams (SendGrid account
+provisioning, HTML template, Celery schedule + job, unsubscribe flow) and each
+one has its own failure surface. Shipping it poorly — stale data, broken
+unsubscribe, bad template — actively damages the retention story it's supposed
+to support. With zero real users at launch, there is no retention problem to
+solve; the right moment for a digest is after the first 50 users have
+self-selected the venues/genres they care about, which is data the digest can
+then actually use. Launching without it also lets us validate whether users
+come back organically (a signal that the calendar itself is sticky) before
+layering email on top.
+
+**Alternatives considered:**
+- Ship a minimal "top shows this week" digest in MVP — rejected; without user
+  preferences, the content is a shuffled top-20 that's worse than just
+  browsing `/events`. No information gain per click.
+- Use a weekly newsletter service (Mailchimp, Buttondown) with manual curation
+  — rejected; breaks the "aggregator with Spotify personalization" story and
+  adds an operational chore we'd have to un-do later.
+- Ship transactional emails for saves/recs but skip the digest — rejected;
+  same pipeline work, smaller payoff.
+
+**Consequences:**
+- `/settings` still shows the digest-frequency dropdown so the field is
+  exercised end-to-end before the feature lights up. The dropdown does not
+  need a warning label; users never see a "we don't actually send these yet"
+  state because nobody is promised an email.
+- `SENDGRID_API_KEY` is still listed in env vars but is allowed to be a
+  placeholder at launch; production can leave it unset until the digest
+  ships.
+- v1.1 trigger: 50 active users OR a week of observed return-rate data,
+  whichever comes first. At that point implement `services/notifications.py`,
+  wire a Celery beat entry, and write the HTML template in a single PR.
+
+---
+
+### 022 — SeatGeek Integration Deferred Out of MVP
+
+**Date:** 2026-04-18
+**Status:** Decided
+
+**Decision:** The SeatGeek scraper (`backend/scraper/platforms/seatgeek.py`) and
+pricing service (`backend/services/tickets.py`) remain one-line stubs at
+launch. Event cards and detail pages render without pricing for the ~93% of
+events that lack a Ticketmaster `priceRanges` payload (per Decision 020), and
+the UI degrades to "Tickets →" without a dollar figure in those cases.
+
+**Rationale:**
+SeatGeek's value is filling the pricing gap Decision 020 documents for TM
+venues that don't use TM retail inventory. But: (1) SeatGeek's own inventory
+heavily overlaps TM, so for many indie DC rooms (Black Cat, DC9, Pie Shop,
+Comet) it has no useful data either — those venues sell directly through
+their own ticket platforms (Eventbrite, Shopify, native). (2) Secondary-market
+pricing on SeatGeek for small rooms is noisy and often absent. (3) The MVP
+browse story doesn't require pricing — the "Tickets →" outbound link is the
+actual conversion path; the price is ornamentation. Spending launch
+engineering budget on a second pricing source whose marginal coverage is
+unclear is poor prioritization.
+
+**Alternatives considered:**
+- Ship SeatGeek for TM venues only, skip it for indie rooms — rejected;
+  halves the work but still needs the full scraper + snapshot pipeline for
+  ~10 venues worth of marginal coverage, when Ticketmaster `priceRanges`
+  already covers Howard Theatre reliably.
+- Scrape Eventbrite pricing directly for the indie venues — rejected; the
+  Eventbrite scraper is itself unbuilt, and scraping pricing is brittle
+  (event-level price overrides, sold-out states, pre-sales).
+- Hide "Tickets" buttons when no price is known — rejected; the outbound
+  link has standalone value even without a number.
+
+**Consequences:**
+- `ticket_pricing_snapshots` table exists in the schema but stays empty at
+  launch. The table is not dropped because migrating it back is worse than
+  leaving it.
+- `EventCard.tsx` already handles null `min_price` gracefully — no frontend
+  change needed when SeatGeek ships later.
+- v1.1 trigger: TM `priceRanges` coverage stays below 20% across active
+  venues for 30+ days AND users are observed bouncing off "Tickets →" at
+  high rates (PostHog funnel). Then implement SeatGeek + wire into
+  `services/tickets.py` + add a nightly snapshot Celery task.
+
+---
+
+### 023 — Backend `/track` Endpoint Deferred; Frontend PostHog Only at Launch
+
+**Date:** 2026-04-18
+**Status:** Decided
+
+**Decision:** `backend/api/v1/track.py` remains a one-line stub at MVP launch.
+Analytics is entirely client-side via the PostHog JS SDK in the Next.js app,
+capturing page views and core funnel events (sign-in clicked, event card
+clicked, save tapped, "Tickets →" clicked) from the browser directly. No
+server-side events are forwarded through the Flask API.
+
+**Rationale:**
+The PostHog JS SDK handles auto-captured page views, identifies, and custom
+events end-to-end without a backend proxy. A server-side `/track` endpoint is
+useful for two reasons — (1) tracking events the backend knows about but the
+frontend doesn't (e.g. a scraper run completed), and (2) avoiding ad-blocker
+loss by proxying through first-party DNS. Neither is load-bearing at MVP:
+(1) scraper-run telemetry belongs in structured logs, not product analytics,
+and (2) ad-blocker evasion is a concern for paid-acquisition funnels, not
+organic DMV music discovery.
+
+**Alternatives considered:**
+- Build `/track` as a thin proxy to PostHog — rejected; duplicates work the
+  client already does well, and adds a failure mode (backend down → analytics
+  black hole) to a system the frontend can handle autonomously.
+- Self-host PostHog proxy domain behind Next.js rewrites — deferred; not
+  needed until ad-blocker loss is measurable in our own data.
+- Skip PostHog entirely for MVP — rejected; we need *some* funnel data to
+  calibrate the digest/SeatGeek v1.1 triggers above.
+
+**Consequences:**
+- `POSTHOG_API_KEY` is a backend env var but is unused at launch; that's
+  acceptable. `NEXT_PUBLIC_POSTHOG_KEY` is the only variable that actually
+  drives tracking.
+- When `/track` is eventually implemented, the client-side SDK stays — the
+  backend endpoint supplements rather than replaces it.
+- v1.1 trigger: either (a) we add a feature that emits events only the
+  backend observes (scraper-derived "X new events tonight at $venue"), or
+  (b) ad-blocker loss becomes measurable and motivates a first-party proxy.
+
+---
+
+### 024 — User Feedback Endpoint Deferred Out of MVP
+
+**Date:** 2026-04-18
+**Status:** Decided
+
+**Decision:** `backend/api/v1/feedback.py` stays a one-line stub. No
+"not interested" / "more like this" buttons on recommendation cards at
+launch, and no feedback-driven adjustment of the recommendation engine.
+
+**Rationale:**
+The feedback endpoint is designed to collect explicit user signals on
+individual recommendations so the engine can deprioritize artists the user
+has dismissed. That only has value once (a) there are enough users and
+recommendations served that the feedback volume is meaningful, and (b) the
+scorer fleet is rich enough that a per-user negative-signal layer would
+actually change the ranking. Today, the engine is `ArtistMatchScorer` alone
+(Decision 007 Phase 1) — explicit feedback changes nothing because the
+signal is already binary ("matches an artist you listen to" or not). The
+button would be UX theatre.
+
+**Alternatives considered:**
+- Ship the endpoint but route to `/dev/null` — rejected; the button implies
+  a promise ("your input shapes your recs") we don't keep, which is worse
+  than no button.
+- Collect feedback but only show it in admin, not use it for ranking —
+  rejected; same UX-theatre problem plus operational overhead.
+- Ship explicit feedback and implicit feedback (save/unsave as signal) —
+  implicit signal already exists via `user_saved_events`. Explicit can wait.
+
+**Consequences:**
+- Recommendation cards on `/for-you` have no dismissal UI at launch. The
+  `ReasonChips` component shows *why* something was recommended; that's
+  the transparency loop for MVP.
+- `UserFeedback` model in `backend/data/models/` stays for schema
+  compatibility but has no writes.
+- v1.1 trigger: `SimilarArtistScorer` ships (Decision 007 Phase 2) AND
+  active users exceed 50. At that point implicit + explicit signal
+  together become worth weighting in the engine.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

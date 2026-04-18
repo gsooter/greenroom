@@ -11,7 +11,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
-import AppShell from "@/components/layout/AppShell";
+import SaveEventButton from "@/components/events/SaveEventButton";
 import EmptyState from "@/components/ui/EmptyState";
 import RegionBadge from "@/components/ui/RegionBadge";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
@@ -69,7 +69,7 @@ export default async function EventDetailPage({
   const canonical = absolutePageUrl(`/events/${event.slug}`);
 
   return (
-    <AppShell selectedCitySlug={event.venue?.city?.slug ?? null}>
+    <>
       {venue ? (
         <EventStructuredData
           event={event}
@@ -133,6 +133,7 @@ export default async function EventDetailPage({
                   Get tickets
                 </a>
               ) : null}
+              <SaveEventButton eventId={event.id} variant="pill" />
               {priceRange ? (
                 <span className="text-sm text-foreground">{priceRange}</span>
               ) : null}
@@ -187,7 +188,7 @@ export default async function EventDetailPage({
           />
         ) : null}
       </article>
-    </AppShell>
+    </>
   );
 }
 

@@ -49,6 +49,140 @@ class CitySeed:
 # Cities referenced by VENUE_CONFIGS.city_slug values.
 # ----------------------------------------------------------------------------
 
+# ----------------------------------------------------------------------------
+# Venue metadata — hand-curated address/lat/lng/website/capacity for every
+# DMV venue. Kept here (not in scraper config) because these fields describe
+# the venue for display, not for scraping. Re-running the seed backfills
+# these columns on existing rows; any venue without an entry here gets no
+# metadata and the VenueCard falls back to a tinted name block.
+#
+# image_url is intentionally left unset for all venues: stable, rights-clean
+# marquee photos are hard to source, and the card degrades to a green name
+# block, which reads better than a broken <img>.
+# ----------------------------------------------------------------------------
+VENUE_METADATA: dict[str, dict[str, object]] = {
+    "930-club": {
+        "address": "815 V St NW, Washington, DC 20001",
+        "latitude": 38.9178,
+        "longitude": -77.0277,
+        "website_url": "https://www.930.com/",
+        "capacity": 1200,
+    },
+    "the-anthem": {
+        "address": "901 Wharf St SW, Washington, DC 20024",
+        "latitude": 38.8771,
+        "longitude": -77.0249,
+        "website_url": "https://theanthemdc.com/",
+        "capacity": 6000,
+    },
+    "echostage": {
+        "address": "2135 Queens Chapel Rd NE, Washington, DC 20018",
+        "latitude": 38.9292,
+        "longitude": -76.9763,
+        "website_url": "https://echostage.com/",
+        "capacity": 3000,
+    },
+    "howard-theatre": {
+        "address": "620 T St NW, Washington, DC 20001",
+        "latitude": 38.9150,
+        "longitude": -77.0221,
+        "website_url": "https://thehowardtheatre.com/",
+        "capacity": 1100,
+    },
+    "lincoln-theatre": {
+        "address": "1215 U St NW, Washington, DC 20009",
+        "latitude": 38.9170,
+        "longitude": -77.0285,
+        "website_url": "https://thelincolndc.com/",
+        "capacity": 1200,
+    },
+    "union-stage": {
+        "address": "740 Water St SW, Washington, DC 20024",
+        "latitude": 38.8775,
+        "longitude": -77.0231,
+        "website_url": "https://www.unionstage.com/",
+        "capacity": 450,
+    },
+    "black-cat": {
+        "address": "1811 14th St NW, Washington, DC 20009",
+        "latitude": 38.9155,
+        "longitude": -77.0319,
+        "website_url": "https://blackcatdc.com/",
+        "capacity": 700,
+    },
+    "dc9": {
+        "address": "1940 9th St NW, Washington, DC 20001",
+        "latitude": 38.9182,
+        "longitude": -77.0236,
+        "website_url": "https://dc9.club/",
+        "capacity": 250,
+    },
+    "comet-ping-pong": {
+        "address": "5037 Connecticut Ave NW, Washington, DC 20008",
+        "latitude": 38.9567,
+        "longitude": -77.0670,
+        "website_url": "https://cometpingpong.com/",
+        "capacity": 120,
+    },
+    "flash": {
+        "address": "645 Florida Ave NW, Washington, DC 20001",
+        "latitude": 38.9182,
+        "longitude": -77.0215,
+        "website_url": "https://www.flashdc.com/",
+        "capacity": 500,
+    },
+    "pie-shop": {
+        "address": "1339 H St NE, Washington, DC 20002",
+        "latitude": 38.9002,
+        "longitude": -76.9872,
+        "website_url": "https://www.pieshopdc.com/",
+        "capacity": 150,
+    },
+    "merriweather-post-pavilion": {
+        "address": "10475 Little Patuxent Pkwy, Columbia, MD 21044",
+        "latitude": 39.2149,
+        "longitude": -76.8594,
+        "website_url": "https://www.merriweathermusic.com/",
+        "capacity": 19000,
+    },
+    "the-fillmore-silver-spring": {
+        "address": "8656 Colesville Rd, Silver Spring, MD 20910",
+        "latitude": 38.9959,
+        "longitude": -77.0285,
+        "website_url": "https://www.fillmoresilverspring.com/",
+        "capacity": 2000,
+    },
+    "rams-head-live": {
+        "address": "20 Market Pl, Baltimore, MD 21202",
+        "latitude": 39.2867,
+        "longitude": -76.6089,
+        "website_url": "https://ramsheadlive.com/",
+        "capacity": 1500,
+    },
+    "capital-one-hall": {
+        "address": "7750 Capital One Tower Rd, Tysons, VA 22102",
+        "latitude": 38.9242,
+        "longitude": -77.2225,
+        "website_url": "https://capitalonehall.com/",
+        "capacity": 1600,
+    },
+    "the-birchmere": {
+        "address": "3701 Mt Vernon Ave, Alexandria, VA 22305",
+        "latitude": 38.8392,
+        "longitude": -77.0583,
+        "website_url": "https://www.birchmere.com/",
+        "capacity": 500,
+    },
+    "wolf-trap": {
+        "address": "1551 Trap Rd, Vienna, VA 22182",
+        "latitude": 38.9372,
+        "longitude": -77.2630,
+        "website_url": "https://www.wolftrap.org/",
+        "capacity": 7000,
+    },
+}
+
+
 DMV_CITY_SEEDS: list[CitySeed] = [
     CitySeed(
         name="Washington",
@@ -176,6 +310,8 @@ def _upsert_venue(
     if config.scraper_class.endswith("TicketmasterScraper") and tm_id:
         external_ids["ticketmaster"] = tm_id
 
+    metadata = VENUE_METADATA.get(config.venue_slug, {})
+
     existing = venues_repo.get_venue_by_slug(session, config.venue_slug)
     if existing is not None:
         updates: dict[str, object] = {}
@@ -183,6 +319,9 @@ def _upsert_venue(
             updates["name"] = config.display_name
         if external_ids and existing.external_ids != external_ids:
             updates["external_ids"] = external_ids
+        for field_name, new_value in metadata.items():
+            if getattr(existing, field_name) != new_value:
+                updates[field_name] = new_value
         if updates:
             venues_repo.update_venue(session, existing, **updates)
             return existing, "updated"
@@ -194,6 +333,7 @@ def _upsert_venue(
         name=config.display_name or config.venue_slug,
         slug=config.venue_slug,
         external_ids=external_ids,
+        **metadata,  # type: ignore[arg-type]
     )
     return venue, "created"
 

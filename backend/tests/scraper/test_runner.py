@@ -1,0 +1,545 @@
+"""Unit tests for :mod:`backend.scraper.runner`.
+
+The runner orchestrates scrapers, commits to DB, logs ScraperRun rows,
+and dispatches alerts on failure. Tests replace the scraper class,
+repository calls, and the notifier at the module boundary so no DB
+or network is touched.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from backend.data.models.scraper import ScraperRunStatus
+from backend.scraper import runner
+from backend.scraper.base.models import RawEvent
+from backend.scraper.base.scraper import BaseScraper
+from backend.scraper.config.venues import VenueScraperConfig
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _raw(
+    *,
+    title: str = "Show",
+    starts_at: datetime | None = None,
+    raw_data: dict[str, Any] | None = None,
+    source_url: str = "https://src.test/e/1",
+    artists: list[str] | None = None,
+) -> RawEvent:
+    """Build a RawEvent with sensible defaults for ingestion tests."""
+    return RawEvent(
+        title=title,
+        venue_external_id="v1",
+        starts_at=starts_at or datetime(2026, 5, 1, 20, tzinfo=timezone.utc),
+        source_url=source_url,
+        raw_data=raw_data if raw_data is not None else {"id": "ext-1"},
+        artists=artists or ["A"],
+    )
+
+
+class _FakeScraper(BaseScraper):
+    """BaseScraper subclass that yields a caller-supplied list of RawEvents."""
+
+    source_platform = "fake"
+
+    def __init__(self, events: list[RawEvent] | None = None, **_k: Any) -> None:
+        self._events = events or []
+
+    def scrape(self) -> Iterator[RawEvent]:
+        yield from self._events
+
+
+class _ExplodingScraper(BaseScraper):
+    """BaseScraper subclass whose ``scrape`` raises."""
+
+    source_platform = "fake"
+
+    def __init__(self, **_k: Any) -> None:
+        pass
+
+    def scrape(self) -> Iterator[RawEvent]:
+        raise RuntimeError("scrape blew up")
+        yield  # pragma: no cover - unreachable
+
+
+@dataclass
+class _FakeVenue:
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+    slug: str = "fake-venue"
+
+
+@dataclass
+class _FakeEvent:
+    title: str = "old"
+    description: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    on_sale_at: datetime | None = None
+    artists: list[str] = field(default_factory=list)
+    image_url: str | None = None
+    ticket_url: str | None = None
+    min_price: float | None = None
+    max_price: float | None = None
+    source_url: str | None = None
+    raw_data: dict[str, Any] | None = None
+
+
+def _cfg(
+    *,
+    scraper_class: str = "backend.scraper.runner._FakeScraperStub",
+    venue_slug: str = "fake-venue",
+    enabled: bool = True,
+) -> VenueScraperConfig:
+    return VenueScraperConfig(
+        venue_slug=venue_slug,
+        display_name="Fake",
+        scraper_class=scraper_class,
+        platform_config={},
+        enabled=enabled,
+    )
+
+
+# ---------------------------------------------------------------------------
+# _extract_external_id
+# ---------------------------------------------------------------------------
+
+
+def test_extract_external_id_prefers_id_field() -> None:
+    raw = _raw(raw_data={"id": "tm-123"})
+    assert runner._extract_external_id(raw) == "tm-123"
+
+
+def test_extract_external_id_trims_whitespace() -> None:
+    raw = _raw(raw_data={"id": "  tm-123  "})
+    assert runner._extract_external_id(raw) == "tm-123"
+
+
+def test_extract_external_id_falls_back_to_at_id() -> None:
+    raw = _raw(raw_data={"@id": "https://ld.test/event/42"})
+    assert runner._extract_external_id(raw) == "https://ld.test/event/42"
+
+
+def test_extract_external_id_handles_int_id() -> None:
+    """Numeric ids are coerced to string (TM sometimes returns ints)."""
+    raw = _raw(raw_data={"id": 12345})
+    assert runner._extract_external_id(raw) == "12345"
+
+
+def test_extract_external_id_hashes_when_no_id() -> None:
+    """Absent id: deterministic 32-char hash of url|title|starts_at."""
+    raw = _raw(raw_data={})
+    eid = runner._extract_external_id(raw)
+    assert len(eid) == 32
+    # Deterministic: same inputs → same hash.
+    assert runner._extract_external_id(raw) == eid
+
+
+def test_extract_external_id_ignores_empty_string_id() -> None:
+    """Empty or whitespace id is skipped; falls through to hash path."""
+    raw = _raw(raw_data={"id": "   "})
+    eid = runner._extract_external_id(raw)
+    assert len(eid) == 32
+
+
+# ---------------------------------------------------------------------------
+# _generate_slug
+# ---------------------------------------------------------------------------
+
+
+def test_generate_slug_is_deterministic() -> None:
+    starts = datetime(2026, 5, 1, 20, tzinfo=timezone.utc)
+    s1 = runner._generate_slug("Phoebe Bridgers", "930-club", starts, "ext-1")
+    s2 = runner._generate_slug("Phoebe Bridgers", "930-club", starts, "ext-1")
+    assert s1 == s2
+    assert "phoebe-bridgers" in s1
+    assert "930-club" in s1
+    assert "2026-05-01" in s1
+
+
+def test_generate_slug_strips_punctuation_and_normalizes_whitespace() -> None:
+    starts = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    slug = runner._generate_slug("Foo!! / Bar  Baz", "x", starts, "id")
+    assert "!" not in slug
+    assert "/" not in slug
+    assert "--" not in slug
+
+
+def test_generate_slug_differentiates_by_external_id() -> None:
+    """Colliding title+date still produce different slugs via hash suffix."""
+    starts = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    a = runner._generate_slug("Same", "v", starts, "id-a")
+    b = runner._generate_slug("Same", "v", starts, "id-b")
+    assert a != b
+
+
+# ---------------------------------------------------------------------------
+# _update_event_from_raw
+# ---------------------------------------------------------------------------
+
+
+def test_update_event_from_raw_reports_changes() -> None:
+    event = _FakeEvent(title="old", starts_at=datetime(2026, 1, 1))
+    raw = _raw(
+        title="new",
+        starts_at=datetime(2026, 5, 1, 20, tzinfo=timezone.utc),
+    )
+    changed = runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    assert changed is True
+    assert event.title == "new"
+
+
+def test_update_event_from_raw_no_change_returns_false() -> None:
+    starts = datetime(2026, 5, 1, 20, tzinfo=timezone.utc)
+    event = _FakeEvent(
+        title="Show",
+        starts_at=starts,
+        artists=["A"],
+        raw_data={"id": "ext-1"},
+        source_url="https://src.test/e/1",
+    )
+    raw = _raw(title="Show", starts_at=starts)
+    changed = runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    assert changed is False
+
+
+def test_update_event_from_raw_ignores_none_fields() -> None:
+    """A ``None`` in raw never clobbers a populated field on the event."""
+    event = _FakeEvent(title="keep", description="existing")
+    raw = _raw(title="keep")
+    raw.description = None
+    runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    assert event.description == "existing"
+
+
+# ---------------------------------------------------------------------------
+# _instantiate_scraper
+# ---------------------------------------------------------------------------
+
+
+def test_instantiate_scraper_returns_basescraper() -> None:
+    cfg = _cfg(
+        scraper_class="backend.tests.scraper.test_runner._FakeScraper"
+    )
+    instance = runner._instantiate_scraper(cfg)
+    assert isinstance(instance, BaseScraper)
+
+
+def test_instantiate_scraper_rejects_non_basescraper() -> None:
+    cfg = _cfg(scraper_class="backend.tests.scraper.test_runner._NotAScraper")
+    with pytest.raises(TypeError):
+        runner._instantiate_scraper(cfg)
+
+
+class _NotAScraper:  # noqa: N801 - test fixture class name
+    """Stand-in used to prove _instantiate_scraper rejects non-subclasses."""
+
+
+# ---------------------------------------------------------------------------
+# _ingest_events
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_events_skips_everything_when_venue_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the venue isn't in the DB, all events are skipped with a log."""
+    monkeypatch.setattr(
+        runner.venues_repo, "get_venue_by_slug", lambda _s, _slug: None
+    )
+    created, updated, skipped = runner._ingest_events(
+        MagicMock(), "ghost", [_raw(), _raw()], source_platform="fake"
+    )
+    assert (created, updated, skipped) == (0, 0, 2)
+
+
+def test_ingest_events_creates_new_and_updates_existing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mixed path: one id has no row (create), another matches (update)."""
+    venue = _FakeVenue()
+    monkeypatch.setattr(
+        runner.venues_repo, "get_venue_by_slug", lambda _s, _slug: venue
+    )
+
+    existing = _FakeEvent(title="old")
+
+    lookup = {"ext-new": None, "ext-old": existing}
+
+    def fake_get_by_ext(
+        _s: Any, external_id: str, _plat: str
+    ) -> _FakeEvent | None:
+        return lookup.get(external_id)
+
+    monkeypatch.setattr(
+        runner.events_repo, "get_event_by_external_id", fake_get_by_ext
+    )
+
+    create_mock = MagicMock()
+    monkeypatch.setattr(runner.events_repo, "create_event", create_mock)
+
+    session = MagicMock()
+    raws = [
+        _raw(title="New", raw_data={"id": "ext-new"}),
+        _raw(title="Fresh", raw_data={"id": "ext-old"}),
+    ]
+    created, updated, skipped = runner._ingest_events(
+        session, venue.slug, raws, source_platform="fake"
+    )
+
+    assert created == 1
+    assert updated == 1
+    assert skipped == 0
+    create_mock.assert_called_once()
+    session.flush.assert_called_once()
+
+
+def test_ingest_events_skips_unchanged_existing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing row with identical fields is skipped (no flush)."""
+    venue = _FakeVenue()
+    starts = datetime(2026, 5, 1, 20, tzinfo=timezone.utc)
+    existing = _FakeEvent(
+        title="Same",
+        starts_at=starts,
+        artists=["A"],
+        raw_data={"id": "ext-1"},
+        source_url="https://src.test/e/1",
+    )
+
+    monkeypatch.setattr(
+        runner.venues_repo, "get_venue_by_slug", lambda _s, _slug: venue
+    )
+    monkeypatch.setattr(
+        runner.events_repo,
+        "get_event_by_external_id",
+        lambda _s, _eid, _plat: existing,
+    )
+    create_mock = MagicMock()
+    monkeypatch.setattr(runner.events_repo, "create_event", create_mock)
+
+    raws = [_raw(title="Same", starts_at=starts)]
+    session = MagicMock()
+
+    created, updated, skipped = runner._ingest_events(
+        session, venue.slug, raws, source_platform="fake"
+    )
+    assert (created, updated, skipped) == (0, 0, 1)
+    create_mock.assert_not_called()
+    session.flush.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# run_scraper_for_venue
+# ---------------------------------------------------------------------------
+
+
+def test_run_scraper_for_venue_happy_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end happy path: scrape → ingest → log → validate → return."""
+    raws = [_raw(raw_data={"id": "ext-1"})]
+
+    def fake_instantiate(_cfg: VenueScraperConfig) -> BaseScraper:
+        return _FakeScraper(raws)
+
+    monkeypatch.setattr(runner, "_instantiate_scraper", fake_instantiate)
+    monkeypatch.setattr(
+        runner,
+        "_ingest_events",
+        lambda _s, _slug, events, source_platform: (len(events), 0, 0),
+    )
+    create_run_mock = MagicMock()
+    monkeypatch.setattr(runner.runs_repo, "create_scraper_run", create_run_mock)
+    validate_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(runner, "validate_scraper_result", validate_mock)
+
+    result = runner.run_scraper_for_venue(MagicMock(), _cfg())
+
+    assert result["status"] == "success"
+    assert result["event_count"] == 1
+    assert result["created"] == 1
+    create_run_mock.assert_called_once()
+    assert (
+        create_run_mock.call_args.kwargs["status"] is ScraperRunStatus.SUCCESS
+    )
+    validate_mock.assert_called_once()
+
+
+def test_run_scraper_for_venue_logs_failure_and_alerts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scraper exception → FAILED run row + send_alert; result has 'failed'."""
+    monkeypatch.setattr(
+        runner,
+        "_instantiate_scraper",
+        lambda _c: _ExplodingScraper(),
+    )
+    create_run_mock = MagicMock()
+    monkeypatch.setattr(runner.runs_repo, "create_scraper_run", create_run_mock)
+    alert_mock = MagicMock()
+    monkeypatch.setattr(runner, "send_alert", alert_mock)
+    validate_mock = MagicMock()
+    monkeypatch.setattr(runner, "validate_scraper_result", validate_mock)
+
+    result = runner.run_scraper_for_venue(MagicMock(), _cfg())
+
+    assert result["status"] == "failed"
+    assert "scrape blew up" in result["error"]
+    create_run_mock.assert_called_once()
+    assert (
+        create_run_mock.call_args.kwargs["status"] is ScraperRunStatus.FAILED
+    )
+    alert_mock.assert_called_once()
+    assert alert_mock.call_args.kwargs["severity"] == "error"
+    validate_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# run_all_scrapers
+# ---------------------------------------------------------------------------
+
+
+def test_run_all_scrapers_iterates_enabled_configs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every enabled config goes through run_scraper_for_venue."""
+    configs = [_cfg(venue_slug="a"), _cfg(venue_slug="b")]
+    monkeypatch.setattr(runner, "get_enabled_configs", lambda: configs)
+
+    seen: list[str] = []
+
+    def fake_run(
+        _session: Any, config: VenueScraperConfig
+    ) -> dict[str, Any]:
+        seen.append(config.venue_slug)
+        return {"status": "success", "event_count": 0}
+
+    monkeypatch.setattr(runner, "run_scraper_for_venue", fake_run)
+
+    results = runner.run_all_scrapers(MagicMock())
+
+    assert seen == ["a", "b"]
+    assert set(results.keys()) == {"a", "b"}
+
+
+# ---------------------------------------------------------------------------
+# Celery task wrappers
+# ---------------------------------------------------------------------------
+
+
+class _CtxSession:
+    """Minimal session supporting the ``with`` protocol + commit/rollback."""
+
+    def __init__(self) -> None:
+        self.commit = MagicMock()
+        self.rollback = MagicMock()
+
+    def __enter__(self) -> "_CtxSession":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+def test_scrape_all_venues_commits_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _CtxSession()
+    monkeypatch.setattr(
+        runner, "get_session_factory", lambda: lambda: session
+    )
+    monkeypatch.setattr(
+        runner, "run_all_scrapers", lambda _s: {"ok": True}
+    )
+    result = runner.scrape_all_venues()
+    assert result == {"ok": True}
+    session.commit.assert_called_once()
+    session.rollback.assert_not_called()
+
+
+def test_scrape_all_venues_rolls_back_on_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _CtxSession()
+    monkeypatch.setattr(
+        runner, "get_session_factory", lambda: lambda: session
+    )
+
+    def boom(_s: Any) -> None:
+        raise RuntimeError("ingest failed")
+
+    monkeypatch.setattr(runner, "run_all_scrapers", boom)
+    with pytest.raises(RuntimeError):
+        runner.scrape_all_venues()
+    session.rollback.assert_called_once()
+    session.commit.assert_not_called()
+
+
+def test_scrape_venue_raises_for_unknown_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "get_venue_config", lambda _s: None)
+    with pytest.raises(ValueError):
+        runner.scrape_venue("ghost")
+
+
+def test_scrape_venue_raises_for_disabled_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner,
+        "get_venue_config",
+        lambda _s: _cfg(venue_slug="off", enabled=False),
+    )
+    with pytest.raises(ValueError):
+        runner.scrape_venue("off")
+
+
+def test_scrape_venue_commits_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _cfg(venue_slug="ok")
+    monkeypatch.setattr(runner, "get_venue_config", lambda _s: cfg)
+    session = _CtxSession()
+    monkeypatch.setattr(
+        runner, "get_session_factory", lambda: lambda: session
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_scraper_for_venue",
+        lambda _s, _c: {"status": "success"},
+    )
+    result = runner.scrape_venue("ok")
+    assert result == {"status": "success"}
+    session.commit.assert_called_once()
+
+
+def test_scrape_venue_rolls_back_on_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _cfg(venue_slug="ok")
+    monkeypatch.setattr(runner, "get_venue_config", lambda _s: cfg)
+    session = _CtxSession()
+    monkeypatch.setattr(
+        runner, "get_session_factory", lambda: lambda: session
+    )
+
+    def boom(_s: Any, _c: VenueScraperConfig) -> None:
+        raise RuntimeError("bad")
+
+    monkeypatch.setattr(runner, "run_scraper_for_venue", boom)
+    with pytest.raises(RuntimeError):
+        runner.scrape_venue("ok")
+    session.rollback.assert_called_once()

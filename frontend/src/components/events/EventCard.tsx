@@ -1,13 +1,15 @@
 /**
  * Event card used in browse and list views.
  *
- * Server component — renders an `EventSummary` as a clickable tile
- * that links to the event detail page. Shows headline, artists, date,
- * venue, and (when available) price range and status.
+ * Renders an `EventSummary` as a tile. A full-card `<Link>` sits on top
+ * of the visual content to capture clicks and jump to the detail page;
+ * the save button sits above the link at a higher z-index so it can
+ * intercept its own click without navigating away.
  */
 
 import Link from "next/link";
 
+import SaveEventButton from "@/components/events/SaveEventButton";
 import RegionBadge from "@/components/ui/RegionBadge";
 import {
   formatEventDate,
@@ -35,8 +37,8 @@ const STATUS_CLASS: Record<EventStatus, string> = {
   on_sale: "bg-accent/15 text-accent",
   confirmed: "bg-accent/15 text-accent",
   sold_out: "bg-border text-foreground",
-  cancelled: "bg-red-500/10 text-red-700 dark:text-red-300",
-  postponed: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  cancelled: "bg-blush-soft text-blush-accent",
+  postponed: "bg-navy-soft text-navy-dark",
 };
 
 export default function EventCard({ event }: EventCardProps) {
@@ -47,10 +49,7 @@ export default function EventCard({ event }: EventCardProps) {
   const venue = event.venue;
 
   return (
-    <Link
-      href={`/events/${event.slug}`}
-      className="group flex flex-col overflow-hidden rounded-lg border border-border bg-surface transition hover:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-    >
+    <div className="group relative flex flex-col overflow-hidden rounded-lg border border-border bg-surface transition hover:border-accent focus-within:ring-2 focus-within:ring-accent">
       <div
         className="aspect-[16/9] w-full bg-border/60"
         style={
@@ -99,6 +98,16 @@ export default function EventCard({ event }: EventCardProps) {
           ) : null}
         </div>
       </div>
-    </Link>
+
+      <Link
+        href={`/events/${event.slug}`}
+        className="absolute inset-0 z-10 focus:outline-none"
+        aria-label={event.title}
+      />
+
+      <div className="absolute right-3 top-3 z-20">
+        <SaveEventButton eventId={event.id} variant="icon" />
+      </div>
+    </div>
   );
 }

@@ -8,7 +8,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
-import AppShell from "@/components/layout/AppShell";
 import VenueCard from "@/components/venues/VenueCard";
 import EmptyState from "@/components/ui/EmptyState";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
@@ -76,7 +75,7 @@ export default async function VenuesPage({ searchParams }: VenuesPageProps) {
   const heading = city ? `Venues in ${city.name}` : "Venues across the DMV";
 
   return (
-    <AppShell selectedCitySlug={city?.slug ?? null}>
+    <>
       <BreadcrumbStructuredData
         items={[
           { name: "Home", url: absolutePageUrl("/") },
@@ -112,6 +111,6 @@ export default async function VenuesPage({ searchParams }: VenuesPageProps) {
           ))}
         </div>
       )}
-    </AppShell>
+    </>
   );
 }

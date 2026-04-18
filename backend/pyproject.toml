@@ -90,7 +90,13 @@ addopts = "--strict-markers -v"
 
 [tool.coverage.run]
 source = ["backend"]
-omit = ["backend/tests/*"]
+omit = [
+    "*/tests/*",
+    "*/scripts/*",
+    "*/migrations/*",
+    "*/celery_app.py",
+    "*/app.py",
+]
 
 [tool.coverage.report]
 fail_under = 80

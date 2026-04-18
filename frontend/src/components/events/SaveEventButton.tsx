@@ -1,0 +1,110 @@
+/**
+ * Save / unsave toggle button — client component.
+ *
+ * Reads the saved state from `SavedEventsContext` so every instance of
+ * the button for the same event stays in sync via one shared source of
+ * truth. Anonymous visitors get a toast prompt instead of a forced
+ * redirect — clicking the heart logged-out preserves scroll position
+ * and lets the user keep browsing.
+ *
+ * Two variants:
+ *  - "icon"    — compact circular button designed to overlay EventCard
+ *  - "pill"    — full-width pill for the event detail page
+ */
+
+"use client";
+
+import { useCallback, type MouseEvent } from "react";
+
+import { useToast } from "@/components/ui/Toast";
+import { useAuth } from "@/lib/auth";
+import { useSavedEvents } from "@/lib/saved-events-context";
+
+interface SaveEventButtonProps {
+  eventId: string;
+  variant?: "icon" | "pill";
+}
+
+export default function SaveEventButton({
+  eventId,
+  variant = "icon",
+}: SaveEventButtonProps): JSX.Element {
+  const { show: showToast } = useToast();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isSaved, toggle } = useSavedEvents();
+
+  const saved = isAuthenticated && isSaved(eventId);
+
+  const handleClick = useCallback(
+    (event: MouseEvent<HTMLButtonElement>): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!isAuthenticated) {
+        showToast("Sign in with Spotify to save shows.");
+        return;
+      }
+      void toggle(eventId);
+    },
+    [isAuthenticated, showToast, toggle, eventId],
+  );
+
+  const label = saved ? "Remove from saved shows" : "Save this show";
+
+  if (variant === "pill") {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={authLoading}
+        aria-label={label}
+        aria-pressed={saved}
+        className={
+          "inline-flex items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm font-semibold transition disabled:opacity-50 " +
+          (saved
+            ? "border-blush-accent bg-blush-soft text-blush-accent hover:bg-blush-soft/80"
+            : "border-border bg-bg-surface text-text-primary hover:border-blush-accent hover:text-blush-accent")
+        }
+      >
+        <HeartIcon filled={saved} />
+        {saved ? "Saved" : "Save show"}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={authLoading}
+      aria-label={label}
+      aria-pressed={saved}
+      className={
+        "inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-sm backdrop-blur transition disabled:opacity-50 " +
+        (saved
+          ? "border-blush-accent bg-blush-soft text-blush-accent"
+          : "border-border bg-bg-white/90 text-text-secondary hover:border-blush-accent hover:text-blush-accent")
+      }
+    >
+      <HeartIcon filled={saved} />
+    </button>
+  );
+}
+
+function HeartIcon({ filled }: { filled: boolean }): JSX.Element {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={18}
+      height={18}
+      aria-hidden
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  );
+}

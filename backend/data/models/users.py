@@ -60,6 +60,22 @@ class User(TimestampMixin, Base):
         notification_settings: JSONB of notification preferences.
         is_active: Whether this account is active.
         last_login_at: Timestamp of the user's last login.
+        spotify_top_artist_ids: Array of Spotify artist IDs cached from
+            the user's /me/top/artists call. Used by the artist-match
+            scorer against ``events.spotify_artist_ids`` — stored as
+            an indexed array so matching can use array-overlap SQL.
+        spotify_top_artists: JSONB snapshot of full artist records
+            (id, name, genres, image) so the UI can render the
+            top-artists grid without another Spotify API call.
+        spotify_recent_artist_ids: Array of Spotify artist IDs derived
+            from the user's recently-played tracks. Consumed by the
+            artist-match scorer alongside the top-artist list so a user
+            picking up a new artist this week still gets matched.
+        spotify_recent_artists: JSONB snapshot of the recently-played
+            artist records (id, name, genres, image), same shape as
+            ``spotify_top_artists``.
+        spotify_synced_at: Last time spotify_top_* / spotify_recent_*
+            fields were refreshed.
         oauth_providers: Relationship to linked OAuth providers.
         saved_events: Relationship to user's saved events.
         recommendations: Relationship to user's recommendations.
@@ -100,6 +116,21 @@ class User(TimestampMixin, Base):
     )
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    spotify_top_artist_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(100)), nullable=True
+    )
+    spotify_top_artists: Mapped[list[dict] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    spotify_recent_artist_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(100)), nullable=True
+    )
+    spotify_recent_artists: Mapped[list[dict] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    spotify_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
