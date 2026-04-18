@@ -733,6 +733,46 @@ button would be UX theatre.
 
 ---
 
+### 025 — Railway Pre-Deploy Migrations (Deferred)
+
+**Date:** 2026-04-18
+**Status:** Deferred
+
+**Decision:** Alembic migrations are run manually via `railway run alembic upgrade head`
+(or via Railway web-service shell) at MVP launch. Wiring them into a Railway
+Pre-Deploy Command so every deploy runs `alembic upgrade head` automatically
+is deferred until the first attempt — configured as
+`cd /app/backend && alembic upgrade head` on the `web` service — can be
+diagnosed (it failed on first attempt with an opaque "Pre-deploy command
+failed" message that needs log inspection).
+
+**Rationale:**
+At current cadence (one developer, low migration frequency) the manual step
+is acceptable and arguably safer — the migration output is read directly
+before the new image goes live. Automating it is still the right long-term
+call (it protects against "forgot to migrate" bugs that only surface in
+runtime), but shipping it broken adds more risk than it removes. Revisit
+once we have a minute to look at the actual failure log.
+
+**Alternatives considered:**
+- Ship a broken pre-deploy command and debug under pressure — rejected.
+- Put the migration in the `web` service's start command — rejected; every
+  replica would race on startup, and Railway scales web independently.
+- Run migrations from CI on merge-to-main — rejected; the `DATABASE_URL`
+  would need to be exposed to GitHub Actions, enlarging the secrets blast
+  radius for marginal value over pre-deploy.
+
+**Consequences:**
+- Every new migration requires one manual `railway run` invocation before
+  (or immediately after) the deploy that depends on it. Forgetting this
+  results in a 500-ing web service on the new schema references — bad but
+  obvious and quick to fix.
+- When picked up: debug the pre-deploy failure log, wire the command on
+  `web` only (not `worker`/`beat`), and verify with an empty smoke-test
+  migration. Once stable, this entry moves to **Decided**.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
@@ -746,3 +786,4 @@ These are known future choices that do not need to be made yet.
 | Social features (friend activity) | Community size makes it valuable |
 | Affiliate ticket links | If monetization becomes desirable |
 | Full-text search engine (Elasticsearch) | PostgreSQL text search becomes a bottleneck |
+| Automated Railway pre-deploy migrations | Once pre-deploy failure log (2026-04-18) is diagnosed — see Decision 025 |
