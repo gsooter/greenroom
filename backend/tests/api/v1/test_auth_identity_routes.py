@@ -460,3 +460,133 @@ def test_exchange_session_rejects_missing_access_token() -> None:
     with pytest.raises(AppError) as excinfo:
         route._exchange_session({"data": {}})
     assert excinfo.value.status_code == 502
+
+
+def test_exchange_session_envelope_exposes_refresh_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    knuckles_test_key: rsa.RSAPrivateKey,
+    stub_knuckles_jwks: str,
+) -> None:
+    """Sign-in envelope carries refresh token + both expiries verbatim."""
+    user_id = uuid.uuid4()
+    existing = User(id=user_id, email="p@example.test", is_active=True)
+    monkeypatch.setattr(route, "get_db", lambda: MagicMock())
+    monkeypatch.setattr(route.users_repo, "get_user_by_id", lambda _s, _uid: existing)
+    monkeypatch.setattr(route.users_repo, "update_last_login", MagicMock())
+    monkeypatch.setattr(
+        route.users_service, "serialize_user", lambda u: {"id": str(u.id)}
+    )
+    token = mint_knuckles_token(
+        signing_key=knuckles_test_key,
+        kid=stub_knuckles_jwks,
+        user_id=user_id,
+        email="p@example.test",
+    )
+    result = route._exchange_session(
+        {
+            "data": {
+                "access_token": token,
+                "access_token_expires_at": "2030-01-01T00:00:00+00:00",
+                "refresh_token": "r-xyz",
+                "refresh_token_expires_at": "2030-02-01T00:00:00+00:00",
+            }
+        }
+    )
+    assert result["token"] == token
+    assert result["token_expires_at"] == "2030-01-01T00:00:00+00:00"
+    assert result["refresh_token"] == "r-xyz"
+    assert result["refresh_token_expires_at"] == "2030-02-01T00:00:00+00:00"
+
+
+# ---------------------------------------------------------------------------
+# /auth/refresh
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_rejects_missing_token(client: FlaskClient) -> None:
+    """No refresh_token → 422 without contacting Knuckles."""
+    resp = client.post("/api/v1/auth/refresh", json={})
+    assert resp.status_code == 422
+
+
+def test_refresh_forwards_token_and_skips_last_login_bump(
+    client: FlaskClient,
+    monkeypatch: pytest.MonkeyPatch,
+    knuckles_test_key: rsa.RSAPrivateKey,
+    stub_knuckles_jwks: str,
+) -> None:
+    """Refresh proxies through to Knuckles and does not bump last_login_at."""
+    user_id = uuid.uuid4()
+    existing = User(id=user_id, email="p@example.test", is_active=True)
+    monkeypatch.setattr(route.users_repo, "get_user_by_id", lambda _s, _uid: existing)
+    last_login = MagicMock()
+    monkeypatch.setattr(route.users_repo, "update_last_login", last_login)
+    monkeypatch.setattr(
+        route.users_service, "serialize_user", lambda u: {"id": str(u.id)}
+    )
+
+    new_token = mint_knuckles_token(
+        signing_key=knuckles_test_key,
+        kid=stub_knuckles_jwks,
+        user_id=user_id,
+        email="p@example.test",
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_post(
+        path: str, *, json: dict[str, Any] | None = None, **_: Any
+    ) -> dict[str, Any]:
+        """Record the Knuckles path and body, return a rotated pair.
+
+        Args:
+            path: Knuckles path being called.
+            json: Forwarded body.
+
+        Returns:
+            A stand-in Knuckles refresh response.
+        """
+        captured["path"] = path
+        captured["json"] = json
+        return {
+            "data": {
+                "access_token": new_token,
+                "access_token_expires_at": "2030-01-01T00:00:00+00:00",
+                "refresh_token": "r-new",
+                "refresh_token_expires_at": "2030-02-01T00:00:00+00:00",
+            }
+        }
+
+    monkeypatch.setattr(route, "knuckles_post", fake_post)
+
+    resp = client.post("/api/v1/auth/refresh", json={"refresh_token": "r-old"})
+    assert resp.status_code == 200
+    body = resp.get_json()["data"]
+    assert body["token"] == new_token
+    assert body["refresh_token"] == "r-new"
+    assert body["user"]["id"] == str(user_id)
+    assert captured["path"] == "/v1/token/refresh"
+    assert captured["json"] == {"refresh_token": "r-old"}
+    last_login.assert_not_called()
+
+
+def test_refresh_bubbles_knuckles_errors(
+    client: FlaskClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Knuckles rejecting the refresh token surfaces as the same status."""
+    from backend.core.knuckles_client import KnucklesHTTPError
+
+    def fake_post(*_a: Any, **_k: Any) -> dict[str, Any]:
+        """Always raise a 401 from Knuckles.
+
+        Returns:
+            Never — raises.
+
+        Raises:
+            KnucklesHTTPError: Simulating an expired/revoked token.
+        """
+        raise KnucklesHTTPError(message="invalid", status_code=401)
+
+    monkeypatch.setattr(route, "knuckles_post", fake_post)
+    resp = client.post("/api/v1/auth/refresh", json={"refresh_token": "dead"})
+    assert resp.status_code == 401

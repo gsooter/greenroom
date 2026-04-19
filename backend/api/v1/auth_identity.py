@@ -19,7 +19,7 @@ lazily provision the Greenroom ``users`` row and return a normalized
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from flask import request
 
@@ -38,6 +38,9 @@ from backend.core.knuckles_client import verify_knuckles_token
 from backend.core.logging import get_logger
 from backend.data.repositories import users as users_repo
 from backend.services import users as users_service
+
+if TYPE_CHECKING:
+    from backend.data.models.users import User
 
 logger = get_logger(__name__)
 
@@ -272,6 +275,38 @@ def passkey_authenticate_complete() -> tuple[dict[str, Any], int]:
 
 
 # ---------------------------------------------------------------------------
+# Refresh
+# ---------------------------------------------------------------------------
+
+
+@api_v1.route("/auth/refresh", methods=["POST"])
+def refresh_session() -> tuple[dict[str, Any], int]:
+    """Rotate a refresh token into a fresh access+refresh pair.
+
+    The Knuckles refresh endpoint rotates the refresh token (single-use
+    by design), so the frontend must replace both stored tokens from
+    this response. This path does not bump ``last_login_at`` — refresh
+    is a silent renewal, not a fresh sign-in.
+
+    Returns:
+        Tuple of JSON body (``token``, ``token_expires_at``,
+        ``refresh_token``, ``refresh_token_expires_at``, ``user``) and
+        HTTP 200.
+
+    Raises:
+        ValidationError: If the body is missing ``refresh_token``.
+        AppError: Propagated from Knuckles if the token is invalid,
+            expired, reused, or belongs to a different client.
+    """
+    refresh_token = _require_string(request.get_json(silent=True), "refresh_token")
+    response = knuckles_post(
+        "/v1/token/refresh",
+        json={"refresh_token": refresh_token},
+    )
+    return {"data": _session_envelope(response, bump_last_login=False)}, 200
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -366,26 +401,49 @@ def _passthrough_data(response: dict[str, Any]) -> dict[str, Any]:
 
 
 def _exchange_session(response: dict[str, Any]) -> dict[str, Any]:
-    """Turn a Knuckles token-pair response into ``{token, user}``.
+    """Turn a Knuckles sign-in response into a fresh-login session envelope.
 
-    Verifies the returned access token against the Knuckles JWKS (the
-    same path :func:`require_auth` uses for every subsequent request),
-    then loads or lazily provisions the Greenroom user row keyed by
-    the ``sub`` claim, and returns the normalized envelope the
-    frontend's AuthContext already consumes.
+    Used by the ceremony-completing proxies (magic-link verify,
+    Google/Apple complete, passkey authenticate complete). Bumps
+    ``last_login_at`` because these paths represent a user actively
+    signing in rather than a background refresh.
 
     Args:
         response: Full Knuckles response body (``{"data": {...}}``).
 
     Returns:
-        Dict with ``token`` (the Knuckles access token) and ``user``
-        (the serialized Greenroom profile).
+        Dict with ``token``, ``token_expires_at``, ``refresh_token``,
+        ``refresh_token_expires_at``, and ``user``.
 
     Raises:
         AppError: ``INVALID_TOKEN`` (502) if Knuckles returns a
-            malformed or unverifiable response. ``INVALID_TOKEN`` (401)
-            if the token's claims are missing the fields Greenroom
-            needs to provision a user.
+            malformed response. ``INVALID_TOKEN`` (401) if the token's
+            claims are missing fields Greenroom needs to provision.
+        UnauthorizedError: If the resolved user has been deactivated.
+    """
+    return _session_envelope(response, bump_last_login=True)
+
+
+def _session_envelope(
+    response: dict[str, Any], *, bump_last_login: bool
+) -> dict[str, Any]:
+    """Build the normalized ``{token, refresh_token, user, ...}`` envelope.
+
+    Args:
+        response: Full Knuckles response body (``{"data": {...}}``).
+        bump_last_login: If True, stamp ``users.last_login_at`` with
+            now. Sign-in ceremonies set this; token refresh does not
+            (refresh is a silent renewal, not an activity signal).
+
+    Returns:
+        Dict with ``token``, ``token_expires_at``, ``refresh_token``,
+        ``refresh_token_expires_at``, and ``user``. Expiry fields
+        pass through whatever Knuckles sent (``None`` when absent).
+
+    Raises:
+        AppError: ``INVALID_TOKEN`` (502) if Knuckles returned no
+            access token. ``INVALID_TOKEN`` (401) on claim-validation
+            failures.
         UnauthorizedError: If the resolved user has been deactivated.
     """
     data = _passthrough_data(response)
@@ -396,6 +454,37 @@ def _exchange_session(response: dict[str, Any]) -> dict[str, Any]:
             message="Identity service returned no access token.",
             status_code=502,
         )
+    user = _resolve_user(access_token)
+    if bump_last_login:
+        users_repo.update_last_login(get_db(), user)
+    return {
+        "token": access_token,
+        "token_expires_at": data.get("access_token_expires_at"),
+        "refresh_token": data.get("refresh_token"),
+        "refresh_token_expires_at": data.get("refresh_token_expires_at"),
+        "user": users_service.serialize_user(user),
+    }
+
+
+def _resolve_user(access_token: str) -> User:
+    """Verify a Knuckles access token and return the Greenroom user.
+
+    Decodes claims against the cached JWKS, loads the user by ``sub``,
+    or lazily creates a Greenroom ``users`` row from the token claims
+    when this is the user's first authenticated hit.
+
+    Args:
+        access_token: The Knuckles-issued access token to verify.
+
+    Returns:
+        The resolved :class:`User` — either freshly looked up or
+        freshly provisioned from claims.
+
+    Raises:
+        AppError: ``INVALID_TOKEN`` (401) if the token is unverifiable
+            or the claim shape is unusable for provisioning.
+        UnauthorizedError: If the resolved user has been deactivated.
+    """
     claims = verify_knuckles_token(access_token)
     sub = claims.get("sub")
     if not isinstance(sub, str):
@@ -424,17 +513,12 @@ def _exchange_session(response: dict[str, Any]) -> dict[str, Any]:
                 status_code=401,
             )
         display_name = claims.get("name")
-        user = users_repo.create_user(
+        return users_repo.create_user(
             session,
             user_id=user_id,
             email=email,
             display_name=display_name if isinstance(display_name, str) else None,
         )
-    elif not user.is_active:
+    if not user.is_active:
         raise UnauthorizedError(message="Authenticated user is deactivated.")
-
-    users_repo.update_last_login(session, user)
-    return {
-        "token": access_token,
-        "user": users_service.serialize_user(user),
-    }
+    return user
