@@ -2,8 +2,7 @@
  * Tests for AuthNav.
  *
  * AuthNav returns null while the auth context is hydrating (no flash),
- * returns null for anonymous visitors when Spotify login is disabled,
- * shows a "Sign in" link when the flag is on, and renders the
+ * renders a "Sign in" link for anonymous visitors, and renders the
  * authenticated cluster with logout wired to router.replace("/").
  */
 
@@ -30,8 +29,6 @@ let mockAuth: MockAuthState = {
   token: null,
 };
 
-let mockConfig = { spotifyLoginEnabled: false };
-
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockReplace, push: vi.fn(), back: vi.fn() }),
 }));
@@ -56,15 +53,6 @@ vi.mock("@/lib/auth", () => ({
   useAuth: () => ({ ...mockAuth, logout: mockLogout }),
 }));
 
-vi.mock("@/lib/config", () => ({
-  config: new Proxy(
-    {},
-    {
-      get: (_t, key) => (mockConfig as Record<string, unknown>)[key as string],
-    },
-  ),
-}));
-
 function userFixture(overrides: Partial<User> = {}): User {
   return {
     id: "u-1",
@@ -85,7 +73,6 @@ describe("AuthNav", () => {
       isLoading: true,
       token: null,
     };
-    mockConfig = { spotifyLoginEnabled: false };
   });
 
   it("renders nothing while auth is hydrating", () => {
@@ -93,15 +80,8 @@ describe("AuthNav", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("renders nothing for anon visitors when the login flag is off", () => {
+  it("renders a Sign-in link for anon visitors once hydration settles", () => {
     mockAuth = { ...mockAuth, isLoading: false };
-    const { container } = render(<AuthNav />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("renders a Sign-in link for anon visitors when the login flag is on", () => {
-    mockAuth = { ...mockAuth, isLoading: false };
-    mockConfig = { spotifyLoginEnabled: true };
     render(<AuthNav />);
     const link = screen.getByRole("link", { name: "Sign in" });
     expect(link.getAttribute("href")).toBe("/login");

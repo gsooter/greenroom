@@ -14,7 +14,6 @@ import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 
 import { useAuth } from "@/lib/auth";
-import { config } from "@/lib/config";
 
 export default function AuthNav(): JSX.Element | null {
   const router = useRouter();
@@ -28,7 +27,6 @@ export default function AuthNav(): JSX.Element | null {
   if (isLoading) return null;
 
   if (!isAuthenticated || !user) {
-    if (!config.spotifyLoginEnabled) return null;
     return (
       <Link
         href="/login"

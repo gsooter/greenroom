@@ -11,7 +11,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { config } from "@/lib/config";
+import { useAuth } from "@/lib/auth";
 
 interface NavItem {
   href: string;
@@ -24,16 +24,18 @@ const BASE_ITEMS: NavItem[] = [
   { href: "/venues", label: "Venues" },
 ];
 
-const ITEMS: NavItem[] = config.spotifyLoginEnabled
-  ? [...BASE_ITEMS, { href: "/login", label: "Sign in" }]
-  : [...BASE_ITEMS, { href: "/about", label: "About" }];
-
-export default function MobileBottomNav() {
+export default function MobileBottomNav(): JSX.Element {
   const pathname = usePathname();
+  const { isAuthenticated, isLoading } = useAuth();
+  const trailingItem: NavItem =
+    !isLoading && isAuthenticated
+      ? { href: "/for-you", label: "For you" }
+      : { href: "/login", label: "Sign in" };
+  const items: NavItem[] = [...BASE_ITEMS, trailingItem];
   return (
     <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 backdrop-blur sm:hidden">
       <ul className="mx-auto grid max-w-6xl grid-cols-4">
-        {ITEMS.map((item) => {
+        {items.map((item) => {
           const active =
             item.href === "/"
               ? pathname === "/"
