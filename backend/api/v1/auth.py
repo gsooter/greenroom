@@ -22,7 +22,7 @@ forge a JWT signed with our secret.
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
@@ -116,9 +116,7 @@ def spotify_complete() -> tuple[dict[str, Any], int]:
             session, user, access_token=tokens.access_token
         )
     except AppError as exc:
-        logger.warning(
-            "Inline top-artists sync failed for user %s: %s", user.id, exc
-        )
+        logger.warning("Inline top-artists sync failed for user %s: %s", user.id, exc)
 
     jwt_token = issue_token(user.id)
     return {
@@ -141,7 +139,7 @@ def _issue_state_token() -> str:
         Encoded JWT valid for ``_STATE_TTL_SECONDS``.
     """
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     claims = {
         "purpose": _STATE_PURPOSE,
         "nonce": secrets.token_urlsafe(16),
@@ -225,8 +223,8 @@ def _upsert_spotify_user(
         users_repo.update_last_login(session, user)
         return user
 
-    user = users_repo.get_user_by_email(session, profile.email)
-    if user is None:
+    existing = users_repo.get_user_by_email(session, profile.email)
+    if existing is None:
         user = users_repo.create_user(
             session,
             email=profile.email,
@@ -234,6 +232,7 @@ def _upsert_spotify_user(
             avatar_url=profile.avatar_url,
         )
     else:
+        user = existing
         users_repo.update_user(
             session,
             user,

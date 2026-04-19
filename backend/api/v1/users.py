@@ -7,6 +7,9 @@ admin-style "fetch another user by ID" endpoint is exposed from v1.
 
 from __future__ import annotations
 
+import contextlib
+from typing import Any
+
 from flask import request
 
 from backend.api.v1 import api_v1
@@ -19,7 +22,7 @@ from backend.services import users as users_service
 
 @api_v1.route("/me", methods=["GET"])
 @require_auth
-def get_me() -> tuple[dict, int]:
+def get_me() -> tuple[dict[str, Any], int]:
     """Return the authenticated user's profile.
 
     Returns:
@@ -31,7 +34,7 @@ def get_me() -> tuple[dict, int]:
 
 @api_v1.route("/me", methods=["PATCH"])
 @require_auth
-def update_me() -> tuple[dict, int]:
+def update_me() -> tuple[dict[str, Any], int]:
     """Apply a partial update to the authenticated user's profile.
 
     Patchable fields: ``display_name``, ``city_id``, ``digest_frequency``,
@@ -58,7 +61,7 @@ def update_me() -> tuple[dict, int]:
 
 @api_v1.route("/me/spotify/top-artists", methods=["GET"])
 @require_auth
-def get_my_top_artists() -> tuple[dict, int]:
+def get_my_top_artists() -> tuple[dict[str, Any], int]:
     """Return the authenticated user's cached Spotify top-artists snapshot.
 
     If the user has no snapshot yet (unusual — inline sync runs on
@@ -73,18 +76,15 @@ def get_my_top_artists() -> tuple[dict, int]:
     user = get_current_user()
 
     if not user.spotify_top_artists:
-        try:
+        # Degrade, don't blow up UI if Spotify sync fails.
+        with contextlib.suppress(Exception):
             spotify_service.sync_top_artists(session, user)
-        except Exception:  # noqa: BLE001 — degrade, don't blow up UI
-            pass
 
     return {
         "data": {
             "artists": user.spotify_top_artists or [],
             "synced_at": (
-                user.spotify_synced_at.isoformat()
-                if user.spotify_synced_at
-                else None
+                user.spotify_synced_at.isoformat() if user.spotify_synced_at else None
             ),
         }
     }, 200
@@ -92,7 +92,7 @@ def get_my_top_artists() -> tuple[dict, int]:
 
 @api_v1.route("/me", methods=["DELETE"])
 @require_auth
-def delete_me() -> tuple[dict, int]:
+def delete_me() -> tuple[dict[str, Any], int]:
     """Soft-delete the authenticated user's account.
 
     Sets ``is_active=False`` so downstream ``@require_auth`` requests

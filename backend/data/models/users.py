@@ -9,6 +9,7 @@ a new provider type in user_oauth_providers.
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     DateTime,
@@ -22,8 +23,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base, TimestampMixin
 
+if TYPE_CHECKING:
+    from backend.data.models.events import Event
+    from backend.data.models.recommendations import Recommendation
 
-class OAuthProvider(str, enum.Enum):
+
+class OAuthProvider(enum.StrEnum):
     """Supported OAuth provider types.
 
     Only SPOTIFY is active at launch. Others defined for future
@@ -35,7 +40,7 @@ class OAuthProvider(str, enum.Enum):
     APPLE = "apple"
 
 
-class DigestFrequency(str, enum.Enum):
+class DigestFrequency(enum.StrEnum):
     """Email digest frequency preferences."""
 
     DAILY = "daily"
@@ -91,12 +96,8 @@ class User(TimestampMixin, Base):
     email: Mapped[str] = mapped_column(
         String(320), unique=True, nullable=False, index=True
     )
-    display_name: Mapped[str | None] = mapped_column(
-        String(200), nullable=True
-    )
-    avatar_url: Mapped[str | None] = mapped_column(
-        String(500), nullable=True
-    )
+    display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     city_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cities.id", ondelete="SET NULL"),
@@ -111,7 +112,7 @@ class User(TimestampMixin, Base):
     genre_preferences: Mapped[list[str] | None] = mapped_column(
         ARRAY(String(50)), nullable=True
     )
-    notification_settings: Mapped[dict | None] = mapped_column(
+    notification_settings: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, default=dict
     )
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -121,13 +122,13 @@ class User(TimestampMixin, Base):
     spotify_top_artist_ids: Mapped[list[str] | None] = mapped_column(
         ARRAY(String(100)), nullable=True
     )
-    spotify_top_artists: Mapped[list[dict] | None] = mapped_column(
+    spotify_top_artists: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSONB, nullable=True
     )
     spotify_recent_artist_ids: Mapped[list[str] | None] = mapped_column(
         ARRAY(String(100)), nullable=True
     )
-    spotify_recent_artists: Mapped[list[dict] | None] = mapped_column(
+    spotify_recent_artists: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSONB, nullable=True
     )
     spotify_synced_at: Mapped[datetime | None] = mapped_column(
@@ -205,9 +206,7 @@ class UserOAuthProvider(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_data: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True
-    )
+    provider_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship(
@@ -220,10 +219,7 @@ class UserOAuthProvider(TimestampMixin, Base):
         Returns:
             String representation with provider type and user ID.
         """
-        return (
-            f"<UserOAuthProvider {self.provider.value} "
-            f"user={self.user_id}>"
-        )
+        return f"<UserOAuthProvider {self.provider.value} user={self.user_id}>"
 
 
 class SavedEvent(TimestampMixin, Base):
@@ -261,7 +257,7 @@ class SavedEvent(TimestampMixin, Base):
     user: Mapped["User"] = relationship(
         back_populates="saved_events",
     )
-    event: Mapped["Event"] = relationship()  # noqa: F821
+    event: Mapped["Event"] = relationship()
 
     def __repr__(self) -> str:
         """Return a string representation of the SavedEvent.
@@ -269,6 +265,4 @@ class SavedEvent(TimestampMixin, Base):
         Returns:
             String representation with user and event IDs.
         """
-        return (
-            f"<SavedEvent user={self.user_id} event={self.event_id}>"
-        )
+        return f"<SavedEvent user={self.user_id} event={self.event_id}>"

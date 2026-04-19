@@ -8,7 +8,7 @@ still returns events from the Discovery API.
 
 Safe to run manually whenever you suspect a venue ID has drifted or
 the TM schema has changed. Burns one API call per page per venue, so
-roughly 12–24 calls against the daily quota.
+roughly 12-24 calls against the daily quota.
 
 Usage:
     python -m backend.scripts.smoke_ticketmaster
@@ -25,7 +25,6 @@ from backend.core.config import get_settings
 from backend.scraper.config.venues import VENUE_CONFIGS, VenueScraperConfig
 from backend.scraper.platforms.ticketmaster import TicketmasterScraper
 
-
 _TM_CLASS_PATH = "backend.scraper.platforms.ticketmaster.TicketmasterScraper"
 
 
@@ -35,11 +34,7 @@ def _ticketmaster_configs() -> list[VenueScraperConfig]:
     Returns:
         List of configs whose ``scraper_class`` points at the TM platform.
     """
-    return [
-        c
-        for c in VENUE_CONFIGS
-        if c.scraper_class == _TM_CLASS_PATH and c.enabled
-    ]
+    return [c for c in VENUE_CONFIGS if c.scraper_class == _TM_CLASS_PATH and c.enabled]
 
 
 def _probe_venue(
@@ -89,9 +84,9 @@ def main() -> int:
     if not args.verbose:
         # Suppress the scraper module's per-retry ERROR logs; the summary
         # already surfaces zero-event venues and exceptions.
-        logging.getLogger(
-            "backend.scraper.platforms.ticketmaster"
-        ).setLevel(logging.CRITICAL)
+        logging.getLogger("backend.scraper.platforms.ticketmaster").setLevel(
+            logging.CRITICAL
+        )
 
     api_key = get_settings().ticketmaster_api_key
     if api_key in {"", "dev-placeholder"}:

@@ -13,9 +13,7 @@ once today's reference date has passed them.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
@@ -29,6 +27,10 @@ from backend.scraper.base.dates import (
 from backend.scraper.base.http import fetch_html
 from backend.scraper.base.models import RawEvent
 from backend.scraper.base.scraper import BaseScraper
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from datetime import date
 
 logger = get_logger(__name__)
 

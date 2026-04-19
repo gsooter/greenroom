@@ -97,9 +97,7 @@ def list_venues(
     base = select(Venue)
 
     if region is not None:
-        base = base.join(City, Venue.city_id == City.id).where(
-            City.region == region
-        )
+        base = base.join(City, Venue.city_id == City.id).where(City.region == region)
 
     if city_id is not None:
         base = base.where(Venue.city_id == city_id)
@@ -110,12 +108,7 @@ def list_venues(
     count_stmt = select(func.count()).select_from(base.subquery())
     total = session.execute(count_stmt).scalar_one()
 
-    stmt = (
-        base
-        .order_by(Venue.name)
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    )
+    stmt = base.order_by(Venue.name).offset((page - 1) * per_page).limit(per_page)
     venues = list(session.execute(stmt).scalars().all())
     return venues, total
 
@@ -138,9 +131,7 @@ def get_venue_by_external_id(
     Returns:
         The Venue if found, otherwise None.
     """
-    stmt = select(Venue).where(
-        Venue.external_ids[platform].astext == external_id
-    )
+    stmt = select(Venue).where(Venue.external_ids[platform].astext == external_id)
     return session.execute(stmt).scalar_one_or_none()
 
 

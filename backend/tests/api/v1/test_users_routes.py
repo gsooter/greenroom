@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from flask.testing import FlaskClient
 
 from backend.api.v1 import users as users_route
 from backend.data.models.users import User
-
 
 # ---------------------------------------------------------------------------
 # Auth enforcement
@@ -65,17 +65,14 @@ def test_patch_me_calls_service_and_returns_updated(
 
     def fake_update(_s: Any, _u: Any, payload: dict[str, Any]) -> User:
         captured["payload"] = payload
-        return _u
+        user: User = _u
+        return user
 
-    monkeypatch.setattr(
-        users_route.users_service, "update_user_profile", fake_update
-    )
+    monkeypatch.setattr(users_route.users_service, "update_user_profile", fake_update)
     monkeypatch.setattr(
         users_route.users_service, "serialize_user", lambda u: {"id": str(u.id)}
     )
-    resp = client.patch(
-        "/api/v1/me", json={"display_name": "New"}, headers=hdrs()
-    )
+    resp = client.patch("/api/v1/me", json={"display_name": "New"}, headers=hdrs())
     assert resp.status_code == 200
     assert captured["payload"] == {"display_name": "New"}
 
@@ -90,7 +87,7 @@ def test_top_artists_returns_cached(
 ) -> None:
     client, user, hdrs = authed_client
     user.spotify_top_artists = [{"id": "a", "name": "A"}]
-    user.spotify_synced_at = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    user.spotify_synced_at = datetime(2026, 5, 1, tzinfo=UTC)
     resp = client.get("/api/v1/me/spotify/top-artists", headers=hdrs())
     assert resp.status_code == 200
     body = resp.get_json()["data"]
@@ -112,9 +109,7 @@ def test_top_artists_triggers_sync_when_empty(
         sync_hits.append(True)
         return 0
 
-    monkeypatch.setattr(
-        users_route.spotify_service, "sync_top_artists", fake_sync
-    )
+    monkeypatch.setattr(users_route.spotify_service, "sync_top_artists", fake_sync)
     resp = client.get("/api/v1/me/spotify/top-artists", headers=hdrs())
     assert resp.status_code == 200
     assert sync_hits == [True]

@@ -14,7 +14,6 @@ import pytest
 from backend.scraper.base.http import HttpFetchError
 from backend.scraper.watchdogs import dc9_dice_widget
 
-
 # ---------------------------------------------------------------------------
 # is_widget_live
 # ---------------------------------------------------------------------------
@@ -28,20 +27,14 @@ def test_is_widget_live_detects_uncommented_widget() -> None:
 
 def test_is_widget_live_returns_false_when_commented() -> None:
     """A widget div inside an HTML comment does NOT count as live."""
-    html = (
-        '<html><body><!-- <div id="dice-event-list-widget"></div> -->'
-        "</body></html>"
-    )
+    html = '<html><body><!-- <div id="dice-event-list-widget"></div> --></body></html>'
     assert dc9_dice_widget.is_widget_live(html) is False
 
 
 def test_is_widget_live_handles_multiline_comment() -> None:
     """A multi-line comment wrapping the widget still strips it out."""
     html = (
-        "<html><body><!--\n"
-        '<div id="dice-event-list-widget"></div>\n'
-        "-->\n"
-        "</body></html>"
+        '<html><body><!--\n<div id="dice-event-list-widget"></div>\n-->\n</body></html>'
     )
     assert dc9_dice_widget.is_widget_live(html) is False
 

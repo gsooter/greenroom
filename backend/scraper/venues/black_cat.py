@@ -15,9 +15,7 @@ single source of truth for the full calendar.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
-from datetime import date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
@@ -32,15 +30,17 @@ from backend.scraper.base.http import fetch_html
 from backend.scraper.base.models import RawEvent
 from backend.scraper.base.scraper import BaseScraper
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from datetime import date, datetime
+
 logger = get_logger(__name__)
 
 BLACK_CAT_URL = "https://www.blackcatdc.com/schedule.html"
 VENUE_EXTERNAL_ID = "black-cat"
 
 # Examples:  "Thursday April 16"  "Monday April 20"  "Friday May 2"
-_DATE_PATTERN = re.compile(
-    r"(?:[A-Za-z]+\s+)?(?P<month>[A-Za-z]+)\s+(?P<day>\d{1,2})"
-)
+_DATE_PATTERN = re.compile(r"(?:[A-Za-z]+\s+)?(?P<month>[A-Za-z]+)\s+(?P<day>\d{1,2})")
 # "Doors at 7:30", "Doors 8:00 pm", "DOORS AT 7 PM"
 _DOORS_PATTERN = re.compile(
     r"doors?\s*(?:at)?\s*(?P<time>\d{1,2}(?::\d{2})?\s*(?:[ap]m?)?)",

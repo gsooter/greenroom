@@ -10,8 +10,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from backend.core.exceptions import NotFoundError, ValidationError
-from backend.core.exceptions import EVENT_NOT_FOUND
+from backend.core.exceptions import EVENT_NOT_FOUND, NotFoundError, ValidationError
 from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.repositories import events as events_repo
 
@@ -102,21 +101,21 @@ def list_events(
     if event_type is not None:
         try:
             parsed_type = EventType(event_type.lower())
-        except ValueError:
+        except ValueError as err:
             raise ValidationError(
                 f"Invalid event_type: '{event_type}'. "
                 f"Valid values: {[e.value for e in EventType]}"
-            )
+            ) from err
 
     parsed_status: EventStatus | None = None
     if status is not None:
         try:
             parsed_status = EventStatus(status.lower())
-        except ValueError:
+        except ValueError as err:
             raise ValidationError(
                 f"Invalid status: '{status}'. "
                 f"Valid values: {[s.value for s in EventStatus]}"
-            )
+            ) from err
 
     return events_repo.list_events(
         session,
@@ -216,7 +215,9 @@ def _serialize_venue_with_city(event: Event) -> dict[str, Any] | None:
             "slug": city.slug,
             "state": city.state,
             "region": city.region,
-        } if city is not None else None,
+        }
+        if city is not None
+        else None,
     }
 
 
@@ -241,14 +242,8 @@ def format_event_feed(events: list[Event], generated_at: datetime) -> str:
 
     today = generated_at.date()
 
-    tonight_events = [
-        e for e in events
-        if e.starts_at and e.starts_at.date() == today
-    ]
-    upcoming_events = [
-        e for e in events
-        if e.starts_at and e.starts_at.date() > today
-    ]
+    tonight_events = [e for e in events if e.starts_at and e.starts_at.date() == today]
+    upcoming_events = [e for e in events if e.starts_at and e.starts_at.date() > today]
 
     if tonight_events:
         lines.append("TONIGHT")

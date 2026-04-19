@@ -33,9 +33,7 @@ def test_list_cities_forwards_region_filter(
         captured["region"] = region
         return [_FakeCity()]
 
-    monkeypatch.setattr(
-        cities_service.cities_repo, "list_active_cities", fake_list
-    )
+    monkeypatch.setattr(cities_service.cities_repo, "list_active_cities", fake_list)
     result = cities_service.list_cities(MagicMock(), region="DMV")
     assert captured["region"] == "DMV"
     assert len(result) == 1

@@ -9,8 +9,9 @@ terminal without a real user session.
 from __future__ import annotations
 
 import hmac
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, cast
 
 from flask import request
 
@@ -21,10 +22,7 @@ from backend.core.exceptions import ForbiddenError, UnauthorizedError
 from backend.services import admin as admin_service
 
 
-F = TypeVar("F", bound=Callable[..., Any])
-
-
-def require_admin(func: F) -> F:
+def require_admin[F: Callable[..., Any]](func: F) -> F:
     """Gate a route behind the shared admin secret.
 
     Uses :func:`hmac.compare_digest` to avoid timing attacks when the
@@ -56,20 +54,18 @@ def require_admin(func: F) -> F:
         """
         provided = request.headers.get("X-Admin-Key", "")
         if not provided:
-            raise UnauthorizedError(
-                message="Missing X-Admin-Key header."
-            )
+            raise UnauthorizedError(message="Missing X-Admin-Key header.")
         expected = get_settings().admin_secret_key
         if not hmac.compare_digest(provided, expected):
             raise ForbiddenError(message="Invalid admin key.")
         return func(*args, **kwargs)
 
-    return cast(F, wrapper)
+    return cast("F", wrapper)
 
 
 @api_v1.route("/admin/scrapers", methods=["GET"])
 @require_admin
-def list_scrapers() -> tuple[dict, int]:
+def list_scrapers() -> tuple[dict[str, Any], int]:
     """Return a static summary of the configured scraper fleet.
 
     Does not touch the database. Useful for an ops dashboard header
@@ -83,7 +79,7 @@ def list_scrapers() -> tuple[dict, int]:
 
 @api_v1.route("/admin/scraper-runs", methods=["GET"])
 @require_admin
-def list_scraper_runs() -> tuple[dict, int]:
+def list_scraper_runs() -> tuple[dict[str, Any], int]:
     """List scraper runs, newest first, with optional filters.
 
     Query parameters:
@@ -120,11 +116,9 @@ def list_scraper_runs() -> tuple[dict, int]:
     }, 200
 
 
-@api_v1.route(
-    "/admin/scrapers/<venue_slug>/run", methods=["POST"]
-)
+@api_v1.route("/admin/scrapers/<venue_slug>/run", methods=["POST"])
 @require_admin
-def trigger_scraper_run(venue_slug: str) -> tuple[dict, int]:
+def trigger_scraper_run(venue_slug: str) -> tuple[dict[str, Any], int]:
     """Synchronously run the scraper for a single venue.
 
     Blocks until the scraper finishes and returns the same dict shape

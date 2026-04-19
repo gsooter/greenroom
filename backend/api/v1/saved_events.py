@@ -8,6 +8,7 @@ save/unsave paths are namespaced under ``/events`` rather than ``/me``.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from flask import request
 
@@ -21,7 +22,7 @@ from backend.services import saved_events as saved_events_service
 
 @api_v1.route("/events/<event_id>/save", methods=["POST"])
 @require_auth
-def save_event(event_id: str) -> tuple[dict, int]:
+def save_event(event_id: str) -> tuple[dict[str, Any], int]:
     """Save an event for the authenticated user.
 
     Idempotent — returns 200 with the existing saved-event record if
@@ -54,7 +55,7 @@ def save_event(event_id: str) -> tuple[dict, int]:
 
 @api_v1.route("/events/<event_id>/save", methods=["DELETE"])
 @require_auth
-def unsave_event(event_id: str) -> tuple[dict, int]:
+def unsave_event(event_id: str) -> tuple[dict[str, Any], int]:
     """Remove an event from the authenticated user's saved list.
 
     Idempotent — returns 204 whether a record was deleted or the event
@@ -78,7 +79,7 @@ def unsave_event(event_id: str) -> tuple[dict, int]:
 
 @api_v1.route("/me/saved-events", methods=["GET"])
 @require_auth
-def list_saved_events() -> tuple[dict, int]:
+def list_saved_events() -> tuple[dict[str, Any], int]:
     """List the authenticated user's saved events.
 
     Query parameters:
@@ -103,9 +104,7 @@ def list_saved_events() -> tuple[dict, int]:
     )
 
     return {
-        "data": [
-            saved_events_service.serialize_saved_event(s) for s in saved
-        ],
+        "data": [saved_events_service.serialize_saved_event(s) for s in saved],
         "meta": {
             "total": total,
             "page": page,
@@ -130,6 +129,4 @@ def _parse_event_id(value: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
     except ValueError as exc:
-        raise ValidationError(
-            f"event_id is not a valid UUID: '{value}'"
-        ) from exc
+        raise ValidationError(f"event_id is not a valid UUID: '{value}'") from exc

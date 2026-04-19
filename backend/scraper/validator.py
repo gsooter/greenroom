@@ -52,9 +52,7 @@ def validate_scraper_result(
     average = runs_repo.get_average_event_count(session, venue_slug)
 
     if average is None:
-        logger.info(
-            "No historical data for '%s', skipping drop check.", venue_slug
-        )
+        logger.info("No historical data for '%s', skipping drop check.", venue_slug)
         return True
 
     if average == 0:

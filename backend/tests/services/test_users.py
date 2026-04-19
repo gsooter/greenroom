@@ -9,8 +9,9 @@ surface is covered without a Postgres connection.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,7 +19,6 @@ import pytest
 from backend.core.exceptions import NotFoundError, ValidationError
 from backend.data.models.users import DigestFrequency
 from backend.services import users as users_service
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -40,7 +40,7 @@ class _FakeUser:
     city_id: uuid.UUID | None
     digest_frequency: DigestFrequency
     genre_preferences: list[str] | None
-    notification_settings: dict | None
+    notification_settings: dict[str, Any] | None
     last_login_at: object | None
     created_at: object
 
@@ -104,9 +104,7 @@ def test_validated_updates_allows_display_name_null(
     fake_session: MagicMock,
 ) -> None:
     """Explicit null ``display_name`` is allowed (clears the field)."""
-    updates = users_service._validated_updates(
-        fake_session, {"display_name": None}
-    )
+    updates = users_service._validated_updates(fake_session, {"display_name": None})
     assert updates == {"display_name": None}
 
 
@@ -115,9 +113,7 @@ def test_validated_updates_rejects_non_string_display_name(
 ) -> None:
     """Non-string ``display_name`` is a ValidationError."""
     with pytest.raises(ValidationError):
-        users_service._validated_updates(
-            fake_session, {"display_name": 42}
-        )
+        users_service._validated_updates(fake_session, {"display_name": 42})
 
 
 def test_validated_updates_accepts_existing_city(
@@ -136,9 +132,7 @@ def test_validated_updates_rejects_unknown_city(
     """A well-formed UUID that doesn't resolve is a NotFoundError."""
     del existing_city_id  # fixture only patches the repo
     with pytest.raises(NotFoundError):
-        users_service._validated_updates(
-            fake_session, {"city_id": str(uuid.uuid4())}
-        )
+        users_service._validated_updates(fake_session, {"city_id": str(uuid.uuid4())})
 
 
 def test_validated_updates_rejects_malformed_city(
@@ -146,16 +140,12 @@ def test_validated_updates_rejects_malformed_city(
 ) -> None:
     """A non-UUID ``city_id`` value is a ValidationError."""
     with pytest.raises(ValidationError):
-        users_service._validated_updates(
-            fake_session, {"city_id": "not-a-uuid"}
-        )
+        users_service._validated_updates(fake_session, {"city_id": "not-a-uuid"})
 
 
 def test_validated_updates_accepts_null_city(fake_session: MagicMock) -> None:
     """``city_id`` may be cleared by passing null."""
-    updates = users_service._validated_updates(
-        fake_session, {"city_id": None}
-    )
+    updates = users_service._validated_updates(fake_session, {"city_id": None})
     assert updates == {"city_id": None}
 
 
@@ -174,9 +164,7 @@ def test_validated_updates_rejects_bad_digest_frequency(
 ) -> None:
     """Unknown digest frequency values are rejected."""
     with pytest.raises(ValidationError):
-        users_service._validated_updates(
-            fake_session, {"digest_frequency": "hourly"}
-        )
+        users_service._validated_updates(fake_session, {"digest_frequency": "hourly"})
 
 
 def test_validated_updates_cleans_genre_list(fake_session: MagicMock) -> None:
@@ -202,9 +190,7 @@ def test_validated_updates_rejects_genre_not_a_list(
 ) -> None:
     """``genre_preferences`` must be a list (or null)."""
     with pytest.raises(ValidationError):
-        users_service._validated_updates(
-            fake_session, {"genre_preferences": "rock"}
-        )
+        users_service._validated_updates(fake_session, {"genre_preferences": "rock"})
 
 
 def test_validated_updates_rejects_bad_notification_settings(

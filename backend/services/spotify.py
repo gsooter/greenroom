@@ -13,17 +13,19 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 import requests
-from sqlalchemy.orm import Session
 
 from backend.core.config import get_settings
 from backend.core.exceptions import SPOTIFY_AUTH_FAILED, AppError
 from backend.core.logging import get_logger
 from backend.data.models.users import OAuthProvider, User
 from backend.data.repositories import users as users_repo
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 logger = get_logger(__name__)
 
@@ -98,7 +100,9 @@ def build_authorize_url(*, state: str, scopes: tuple[str, ...] = DEFAULT_SCOPES)
         "state": state,
         "show_dialog": "false",
     }
-    query = "&".join(f"{k}={requests.utils.quote(v, safe='')}" for k, v in params.items())
+    from urllib.parse import quote
+
+    query = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
     return f"{AUTHORIZE_URL}?{query}"
 
 
@@ -230,13 +234,14 @@ def get_top_artists(
     offset = 0
     while len(collected) < limit:
         remaining = limit - len(collected)
+        params: dict[str, str | int] = {
+            "limit": min(page_size, remaining),
+            "offset": offset,
+            "time_range": time_range,
+        }
         response = requests.get(
             f"{API_BASE}/me/top/artists",
-            params={
-                "limit": min(page_size, remaining),
-                "offset": offset,
-                "time_range": time_range,
-            },
+            params=params,
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=_HTTP_TIMEOUT,
         )
@@ -383,9 +388,7 @@ def _simplify_artist(artist: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _ensure_fresh_access_token(
-    session: Session, user: User
-) -> tuple[str, Any] | None:
+def _ensure_fresh_access_token(session: Session, user: User) -> tuple[str, Any] | None:
     """Return a valid Spotify access token for a user, refreshing if stale.
 
     Looks up the user's Spotify OAuth row, refreshes the access token
@@ -404,17 +407,13 @@ def _ensure_fresh_access_token(
         AppError: ``SPOTIFY_AUTH_FAILED`` if a refresh attempt fails.
     """
     oauth = next(
-        (
-            p
-            for p in user.oauth_providers
-            if p.provider == OAuthProvider.SPOTIFY
-        ),
+        (p for p in user.oauth_providers if p.provider == OAuthProvider.SPOTIFY),
         None,
     )
     if oauth is None or not oauth.access_token:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires_at = oauth.token_expires_at
     is_expired = expires_at is None or expires_at <= now + timedelta(seconds=30)
     if is_expired:
@@ -498,19 +497,13 @@ def sync_top_artists(
             extra={"user_id": str(user.id)},
         )
         raw_recent = []
-    simplified_recent = [
-        _simplify_artist(a) for a in raw_recent if isinstance(a, dict)
-    ]
+    simplified_recent = [_simplify_artist(a) for a in raw_recent if isinstance(a, dict)]
 
-    user.spotify_top_artist_ids = [
-        a["id"] for a in simplified_top if a.get("id")
-    ]
+    user.spotify_top_artist_ids = [a["id"] for a in simplified_top if a.get("id")]
     user.spotify_top_artists = simplified_top
-    user.spotify_recent_artist_ids = [
-        a["id"] for a in simplified_recent if a.get("id")
-    ]
+    user.spotify_recent_artist_ids = [a["id"] for a in simplified_recent if a.get("id")]
     user.spotify_recent_artists = simplified_recent
-    user.spotify_synced_at = datetime.now(timezone.utc)
+    user.spotify_synced_at = datetime.now(UTC)
     session.flush()
     return len(simplified_top)
 
@@ -554,6 +547,6 @@ def _parse_token_response(response: requests.Response) -> SpotifyTokens:
     return SpotifyTokens(
         access_token=access_token,
         refresh_token=refresh_token if isinstance(refresh_token, str) else None,
-        expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+        expires_at=datetime.now(UTC) + timedelta(seconds=expires_in),
         scope=scope if isinstance(scope, str) else "",
     )

@@ -7,9 +7,7 @@ or an on-call terminal without a real user session.
 
 from __future__ import annotations
 
-from typing import Any
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING, Any
 
 from backend.core.exceptions import (
     NotFoundError,
@@ -23,6 +21,9 @@ from backend.scraper.config.venues import (
     get_venue_config,
 )
 from backend.scraper.runner import run_scraper_for_venue
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def list_scraper_runs(
@@ -58,9 +59,7 @@ def list_scraper_runs(
             status_enum = ScraperRunStatus(status)
         except ValueError as exc:
             allowed = ", ".join(s.value for s in ScraperRunStatus)
-            raise ValidationError(
-                f"status must be one of: {allowed}"
-            ) from exc
+            raise ValidationError(f"status must be one of: {allowed}") from exc
 
     return runs_repo.list_scraper_runs(
         session,
@@ -71,9 +70,7 @@ def list_scraper_runs(
     )
 
 
-def trigger_scraper_run(
-    session: Session, venue_slug: str
-) -> dict[str, Any]:
+def trigger_scraper_run(session: Session, venue_slug: str) -> dict[str, Any]:
     """Synchronously run the scraper for a single venue.
 
     Meant for manual ops (backfills, debugging, post-fix verification).
@@ -143,9 +140,7 @@ def serialize_scraper_run(run: ScraperRun) -> dict[str, Any]:
         "status": run.status.value,
         "event_count": run.event_count,
         "started_at": run.started_at.isoformat(),
-        "finished_at": (
-            run.finished_at.isoformat() if run.finished_at else None
-        ),
+        "finished_at": (run.finished_at.isoformat() if run.finished_at else None),
         "duration_seconds": run.duration_seconds,
         "error_message": run.error_message,
         "metadata": run.metadata_json or {},

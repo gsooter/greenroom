@@ -17,13 +17,16 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
 from backend.core.logging import get_logger
 from backend.scraper.base.models import RawEvent
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = get_logger(__name__)
 
@@ -367,19 +370,24 @@ def _extract_offer_details(
 
         for candidate in (price, low):
             if candidate is not None:
-                min_price = candidate if min_price is None else min(min_price, candidate)
+                min_price = (
+                    candidate if min_price is None else min(min_price, candidate)
+                )
 
         for candidate in (price, high):
             if candidate is not None:
-                max_price = candidate if max_price is None else max(max_price, candidate)
+                max_price = (
+                    candidate if max_price is None else max(max_price, candidate)
+                )
 
         if ticket_url is None:
             ticket_url = _coerce_url(offer.get("url"), base=base)
 
         offer_on_sale = _parse_datetime(offer.get("validFrom"))
-        if offer_on_sale is not None:
-            if on_sale_at is None or offer_on_sale < on_sale_at:
-                on_sale_at = offer_on_sale
+        if offer_on_sale is not None and (
+            on_sale_at is None or offer_on_sale < on_sale_at
+        ):
+            on_sale_at = offer_on_sale
 
     return min_price, max_price, ticket_url, on_sale_at
 
@@ -397,7 +405,7 @@ def _coerce_float(value: Any) -> float | None:
         return None
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         stripped = value.strip().replace("$", "").replace(",", "")

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,6 @@ from backend.data.models.cities import City
 from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.models.venues import Venue
 from backend.data.repositories import events as events_repo
-
 
 # ---------------------------------------------------------------------------
 # Event queries
@@ -39,14 +38,10 @@ def test_get_event_by_id_slug_external_id(
     assert events_repo.get_event_by_slug(session, "unique-slug").id == event.id
     assert events_repo.get_event_by_slug(session, "missing") is None
 
-    by_ext = events_repo.get_event_by_external_id(
-        session, "ext-1", "ticketmaster"
-    )
+    by_ext = events_repo.get_event_by_external_id(session, "ext-1", "ticketmaster")
     assert by_ext is not None and by_ext.id == event.id
     # Platform must match too.
-    assert (
-        events_repo.get_event_by_external_id(session, "ext-1", "dice") is None
-    )
+    assert events_repo.get_event_by_external_id(session, "ext-1", "dice") is None
 
 
 def test_get_event_by_id_missing_returns_none(session: Session) -> None:
@@ -82,7 +77,7 @@ def test_list_events_date_range_and_venue_filter(
     city = make_city()
     v1 = make_venue(city=city)
     v2 = make_venue(city=city)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     make_event(venue=v1, starts_at=now + timedelta(days=1), title="Soon")
     make_event(venue=v1, starts_at=now + timedelta(days=30), title="Later")
     make_event(venue=v2, starts_at=now + timedelta(days=2), title="Other V")
@@ -94,9 +89,7 @@ def test_list_events_date_range_and_venue_filter(
 
     # Date bounds.
     date_to = (now + timedelta(days=5)).date()
-    rows, total = events_repo.list_events(
-        session, venue_ids=[v1.id], date_to=date_to
-    )
+    rows, total = events_repo.list_events(session, venue_ids=[v1.id], date_to=date_to)
     assert total == 1 and rows[0].title == "Soon"
 
     date_from = (now + timedelta(days=10)).date()
@@ -133,14 +126,10 @@ def test_list_events_genre_overlap_and_type_and_status(
     assert {e.title for e in rows} == {"Rock", "Cancelled"}
     assert total == 2
 
-    rows, total = events_repo.list_events(
-        session, event_type=EventType.COMEDY
-    )
+    rows, total = events_repo.list_events(session, event_type=EventType.COMEDY)
     assert total == 1 and rows[0].title == "Comedy"
 
-    rows, total = events_repo.list_events(
-        session, status=EventStatus.CANCELLED
-    )
+    rows, total = events_repo.list_events(session, status=EventStatus.CANCELLED)
     assert total == 1 and rows[0].title == "Cancelled"
 
 
@@ -152,7 +141,7 @@ def test_list_events_per_page_cap_and_ordering(
 ) -> None:
     city = make_city()
     venue = make_venue(city=city)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     make_event(venue=venue, starts_at=now + timedelta(days=3), title="C")
     make_event(venue=venue, starts_at=now + timedelta(days=1), title="A")
     make_event(venue=venue, starts_at=now + timedelta(days=2), title="B")
@@ -161,9 +150,7 @@ def test_list_events_per_page_cap_and_ordering(
     assert [e.title for e in rows] == ["A", "B", "C"]
 
     # per_page clamps to 100 — pass an absurd value and it should still run.
-    rows, _ = events_repo.list_events(
-        session, venue_ids=[venue.id], per_page=9999
-    )
+    rows, _ = events_repo.list_events(session, venue_ids=[venue.id], per_page=9999)
     assert len(rows) == 3
 
 
@@ -175,7 +162,7 @@ def test_list_events_by_venue_upcoming_only(
 ) -> None:
     city = make_city()
     venue = make_venue(city=city)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     make_event(venue=venue, starts_at=now - timedelta(days=5), title="Past")
     make_event(venue=venue, starts_at=now + timedelta(days=5), title="Future")
 
@@ -196,7 +183,7 @@ def test_list_events_by_artist_ids_overlap(
 ) -> None:
     city = make_city()
     venue = make_venue(city=city)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     make_event(
         venue=venue,
         title="Match",
@@ -238,7 +225,7 @@ def test_create_and_update_event(
         venue_id=venue.id,
         title="Made",
         slug=f"made-{uuid.uuid4().hex[:6]}",
-        starts_at=datetime.now(timezone.utc) + timedelta(days=1),
+        starts_at=datetime.now(UTC) + timedelta(days=1),
         artists=["Band"],
     )
     assert event.id is not None
@@ -255,15 +242,14 @@ def test_count_events_by_venue(
 ) -> None:
     city = make_city()
     venue = make_venue(city=city)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     make_event(venue=venue, starts_at=now + timedelta(days=1))
     make_event(venue=venue, starts_at=now + timedelta(days=2))
     make_event(venue=venue, starts_at=now - timedelta(days=2))
 
     assert events_repo.count_events_by_venue(session, venue.id) == 2
     assert (
-        events_repo.count_events_by_venue(session, venue.id, upcoming_only=False)
-        == 3
+        events_repo.count_events_by_venue(session, venue.id, upcoming_only=False) == 3
     )
 
 
@@ -308,20 +294,13 @@ def test_ticket_snapshot_crud(
     all_snaps = events_repo.list_ticket_snapshots(session, event.id)
     assert len(all_snaps) == 3
 
-    only_sg = events_repo.list_ticket_snapshots(
-        session, event.id, source="seatgeek"
-    )
+    only_sg = events_repo.list_ticket_snapshots(session, event.id, source="seatgeek")
     assert {s.source for s in only_sg} == {"seatgeek"}
     assert len(only_sg) == 2
 
-    latest = events_repo.get_latest_ticket_snapshot(
-        session, event.id, "seatgeek"
-    )
+    latest = events_repo.get_latest_ticket_snapshot(session, event.id, "seatgeek")
     assert latest is not None
     # The most recently created seatgeek snapshot was s2.
     assert latest.id == s2.id
 
-    assert (
-        events_repo.get_latest_ticket_snapshot(session, event.id, "missing")
-        is None
-    )
+    assert events_repo.get_latest_ticket_snapshot(session, event.id, "missing") is None

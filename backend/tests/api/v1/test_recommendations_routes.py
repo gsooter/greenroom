@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 from flask.testing import FlaskClient
@@ -15,9 +15,7 @@ def test_list_recs_caps_per_page(
     authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
 ) -> None:
     client, _u, hdrs = authed_client
-    resp = client.get(
-        "/api/v1/me/recommendations?per_page=500", headers=hdrs()
-    )
+    resp = client.get("/api/v1/me/recommendations?per_page=500", headers=hdrs())
     assert resp.status_code == 422
 
 
@@ -36,9 +34,7 @@ def test_list_recs_happy_path(
         "serialize_recommendation",
         lambda _r: {"score": 0.9},
     )
-    resp = client.get(
-        "/api/v1/me/recommendations?page=1&per_page=5", headers=hdrs()
-    )
+    resp = client.get("/api/v1/me/recommendations?page=1&per_page=5", headers=hdrs())
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["data"] == [{"score": 0.9}]

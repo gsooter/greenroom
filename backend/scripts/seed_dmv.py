@@ -369,8 +369,8 @@ def seed() -> dict[str, int]:
                 cities_skipped += 1
 
         for config in VENUE_CONFIGS:
-            city = city_by_slug.get(config.city_slug)
-            if city is None:
+            venue_city = city_by_slug.get(config.city_slug)
+            if venue_city is None:
                 logger.error(
                     "Venue '%s' references unknown city_slug '%s'. Skipping.",
                     config.venue_slug,
@@ -379,17 +379,13 @@ def seed() -> dict[str, int]:
                 venues_missing_city += 1
                 continue
 
-            venue, outcome = _upsert_venue(session, config, city)
+            venue, outcome = _upsert_venue(session, config, venue_city)
             if outcome == "created":
                 venues_created += 1
-                logger.info(
-                    "Created venue '%s' in %s.", venue.name, city.slug
-                )
+                logger.info("Created venue '%s' in %s.", venue.name, venue_city.slug)
             elif outcome == "updated":
                 venues_updated += 1
-                logger.info(
-                    "Updated venue '%s' in %s.", venue.name, city.slug
-                )
+                logger.info("Updated venue '%s' in %s.", venue.name, venue_city.slug)
             else:
                 venues_skipped += 1
 

@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -29,7 +30,6 @@ from backend.data.models.cities import City
 from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.models.users import User
 from backend.data.models.venues import Venue
-
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -161,8 +161,7 @@ def make_event(session: Session) -> Callable[..., Event]:
             venue_id=venue.id,
             title=title,
             slug=slug or f"event-{uuid.uuid4().hex[:8]}",
-            starts_at=starts_at
-            or datetime.now(timezone.utc) + timedelta(days=7),
+            starts_at=starts_at or datetime.now(UTC) + timedelta(days=7),
             artists=[],
             genres=genres,
             spotify_artist_ids=spotify_artist_ids,

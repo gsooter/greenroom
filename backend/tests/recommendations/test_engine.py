@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -47,7 +47,7 @@ class _FakeEvent:
     venue_id: uuid.UUID = field(default_factory=uuid.uuid4)
     title: str = "Untitled Show"
     starts_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=1)
+        default_factory=lambda: datetime.now(UTC) + timedelta(days=1)
     )
     artists: list[str] | None = field(default_factory=list)
     spotify_artist_ids: list[str] | None = field(default_factory=list)
@@ -69,9 +69,7 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
         "delete_recommendations_for_user",
         delete_mock,
     )
-    monkeypatch.setattr(
-        engine_module.users_repo, "create_recommendation", create_mock
-    )
+    monkeypatch.setattr(engine_module.users_repo, "create_recommendation", create_mock)
     monkeypatch.setattr(engine_module, "_fetch_scoreable_events", fetch_mock)
     return {"delete": delete_mock, "create": create_mock, "fetch": fetch_mock}
 
@@ -95,9 +93,7 @@ def test_generate_clears_prior_rows_before_writing(
     """Even when nothing matches, the engine deletes prior rows idempotently."""
     session = MagicMock()
     user = _FakeUser(spotify_top_artists=[{"name": "Unknown"}])
-    patched_engine["fetch"].return_value = [
-        _FakeEvent(artists=["Some Other Band"])
-    ]
+    patched_engine["fetch"].return_value = [_FakeEvent(artists=["Some Other Band"])]
     result = generate_for_user(session, user)  # type: ignore[arg-type]
     assert result == 0
     patched_engine["delete"].assert_called_once_with(session, user.id)
@@ -117,11 +113,11 @@ def test_generate_persists_scored_events_in_score_desc_order(
     )
     strong = _FakeEvent(
         spotify_artist_ids=["id-a"],
-        starts_at=datetime.now(timezone.utc) + timedelta(days=5),
+        starts_at=datetime.now(UTC) + timedelta(days=5),
     )
     weak = _FakeEvent(
         artists=["Weak Match"],
-        starts_at=datetime.now(timezone.utc) + timedelta(days=1),
+        starts_at=datetime.now(UTC) + timedelta(days=1),
     )
     no_match = _FakeEvent(artists=["Nope"])
     patched_engine["fetch"].return_value = [weak, no_match, strong]
@@ -143,9 +139,7 @@ def test_generate_caps_total_score_at_one(
 ) -> None:
     """Sum of scorer outputs never exceeds 1.0 when persisted."""
     session = MagicMock()
-    user = _FakeUser(
-        spotify_top_artists=[{"id": "id-a", "name": "Strong"}]
-    )
+    user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Strong"}])
     event = _FakeEvent(spotify_artist_ids=["id-a"])
     patched_engine["fetch"].return_value = [event]
 
@@ -161,11 +155,11 @@ def test_generate_caps_total_score_at_one(
     ]
     # Replace _build_scorers so both scorers run for this case.
     original = engine_module._build_scorers
-    engine_module._build_scorers = lambda _user: monkeypatch_scorers  # type: ignore[assignment]
+    engine_module._build_scorers = lambda _user: monkeypatch_scorers  # type: ignore[assignment,return-value]
     try:
         result = generate_for_user(session, user)  # type: ignore[arg-type]
     finally:
-        engine_module._build_scorers = original  # type: ignore[assignment]
+        engine_module._build_scorers = original
 
     assert result == 1
     score = patched_engine["create"].call_args_list[0].kwargs["score"]
@@ -177,9 +171,7 @@ def test_generate_respects_limit(
 ) -> None:
     """``limit`` kwarg caps how many rows we persist even when more match."""
     session = MagicMock()
-    user = _FakeUser(
-        spotify_top_artists=[{"id": "id-a", "name": "Solo"}]
-    )
+    user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Solo"}])
     events = [_FakeEvent(spotify_artist_ids=["id-a"]) for _ in range(10)]
     patched_engine["fetch"].return_value = events
 
@@ -201,7 +193,7 @@ def test_generate_dedupes_same_show_at_same_venue(
     session = MagicMock()
     user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Matched"}])
     shared_venue = uuid.uuid4()
-    shared_time = datetime.now(timezone.utc) + timedelta(days=3)
+    shared_time = datetime.now(UTC) + timedelta(days=3)
     dupe_a = _FakeEvent(
         venue_id=shared_venue,
         title="Matched at 9:30 Club",
@@ -225,8 +217,7 @@ def test_generate_dedupes_same_show_at_same_venue(
 
     assert result == 2
     persisted_ids = [
-        c.kwargs["event_id"]
-        for c in patched_engine["create"].call_args_list
+        c.kwargs["event_id"] for c in patched_engine["create"].call_args_list
     ]
     assert dupe_b.id not in persisted_ids
     assert dupe_a.id in persisted_ids

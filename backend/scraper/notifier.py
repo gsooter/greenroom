@@ -43,9 +43,7 @@ def send_alert(
     )
 
     if not slack_sent:
-        logger.error(
-            "Slack alert failed, falling back to email for: %s", title
-        )
+        logger.error("Slack alert failed, falling back to email for: %s", title)
         _send_email_alert(
             title=title,
             message=message,
@@ -88,11 +86,13 @@ def _send_slack_alert(
     fields = []
     if details:
         for key, value in details.items():
-            fields.append({
-                "title": key,
-                "value": str(value),
-                "short": True,
-            })
+            fields.append(
+                {
+                    "title": key,
+                    "value": str(value),
+                    "short": True,
+                }
+            )
 
     payload = {
         "attachments": [
@@ -162,14 +162,13 @@ def _send_email_alert(
             from_email=Email(settings.sendgrid_from_email),
             to_emails=To(settings.alert_email),
             subject=f"[Greenroom Scraper] {title}",
-            plain_text_content=Content(
-                "text/plain", "\n".join(body_parts)
-            ),
+            plain_text_content=Content("text/plain", "\n".join(body_parts)),
         )
 
         sg = SendGridAPIClient(settings.sendgrid_api_key)
         response = sg.send(mail)
-        return 200 <= response.status_code < 300
+        ok: bool = 200 <= response.status_code < 300
+        return ok
     except Exception as e:
         logger.error("Failed to send email alert: %s", e)
         return False

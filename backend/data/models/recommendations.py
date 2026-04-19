@@ -7,12 +7,17 @@ drive engagement (Decision 007).
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, Float, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from backend.data.models.events import Event
+    from backend.data.models.users import User
 
 
 class Recommendation(TimestampMixin, Base):
@@ -62,7 +67,7 @@ class Recommendation(TimestampMixin, Base):
         index=True,
     )
     score: Mapped[float] = mapped_column(Float, nullable=False)
-    score_breakdown: Mapped[dict] = mapped_column(
+    score_breakdown: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict
     )
     generated_at: Mapped[datetime] = mapped_column(
@@ -70,15 +75,13 @@ class Recommendation(TimestampMixin, Base):
         nullable=False,
         default=datetime.utcnow,
     )
-    is_dismissed: Mapped[bool] = mapped_column(
-        default=False, nullable=False
-    )
+    is_dismissed: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # Relationships
-    user: Mapped["User"] = relationship(  # noqa: F821
+    user: Mapped["User"] = relationship(
         back_populates="recommendations",
     )
-    event: Mapped["Event"] = relationship()  # noqa: F821
+    event: Mapped["Event"] = relationship()
 
     def __repr__(self) -> str:
         """Return a string representation of the Recommendation.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -25,7 +25,7 @@ class _FakeEvent:
     title: str = "Show"
     slug: str = "show"
     starts_at: datetime = field(
-        default_factory=lambda: datetime(2026, 5, 1, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 5, 1, tzinfo=UTC)
     )
     artists: list[str] = field(default_factory=list)
     image_url: str | None = None
@@ -40,7 +40,7 @@ class _FakeSaved:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     event: _FakeEvent = field(default_factory=_FakeEvent)
     created_at: datetime = field(
-        default_factory=lambda: datetime(2026, 4, 17, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 4, 17, tzinfo=UTC)
     )
 
 
@@ -52,7 +52,9 @@ def test_save_event_raises_when_event_missing(
     )
     with pytest.raises(NotFoundError):
         saved_service.save_event(
-            MagicMock(), _FakeUser(), uuid.uuid4()  # type: ignore[arg-type]
+            MagicMock(),
+            _FakeUser(),  # type: ignore[arg-type]
+            uuid.uuid4(),
         )
 
 
@@ -72,11 +74,11 @@ def test_save_event_returns_existing_if_already_saved(
         lambda _s, _u, _e: existing,
     )
     create_mock = MagicMock()
-    monkeypatch.setattr(
-        saved_service.users_repo, "create_saved_event", create_mock
-    )
+    monkeypatch.setattr(saved_service.users_repo, "create_saved_event", create_mock)
     result = saved_service.save_event(
-        MagicMock(), _FakeUser(), uuid.uuid4()  # type: ignore[arg-type]
+        MagicMock(),
+        _FakeUser(),  # type: ignore[arg-type]
+        uuid.uuid4(),
     )
     assert result is existing
     create_mock.assert_not_called()
@@ -103,7 +105,9 @@ def test_save_event_creates_when_not_saved(
     )
     assert (
         saved_service.save_event(
-            MagicMock(), _FakeUser(), uuid.uuid4()  # type: ignore[arg-type]
+            MagicMock(),
+            _FakeUser(),  # type: ignore[arg-type]
+            uuid.uuid4(),
         )
         is created
     )
@@ -119,7 +123,9 @@ def test_unsave_event_returns_false_when_nothing_to_remove(
     )
     assert (
         saved_service.unsave_event(
-            MagicMock(), _FakeUser(), uuid.uuid4()  # type: ignore[arg-type]
+            MagicMock(),
+            _FakeUser(),  # type: ignore[arg-type]
+            uuid.uuid4(),
         )
         is False
     )
@@ -135,12 +141,12 @@ def test_unsave_event_deletes_and_returns_true(
         lambda _s, _u, _e: saved,
     )
     delete_mock = MagicMock()
-    monkeypatch.setattr(
-        saved_service.users_repo, "delete_saved_event", delete_mock
-    )
+    monkeypatch.setattr(saved_service.users_repo, "delete_saved_event", delete_mock)
     assert (
         saved_service.unsave_event(
-            MagicMock(), _FakeUser(), uuid.uuid4()  # type: ignore[arg-type]
+            MagicMock(),
+            _FakeUser(),  # type: ignore[arg-type]
+            uuid.uuid4(),
         )
         is True
     )
@@ -159,11 +165,12 @@ def test_list_saved_events_forwards_pagination(
         captured["per_page"] = per_page
         return [], 0
 
-    monkeypatch.setattr(
-        saved_service.users_repo, "list_saved_events", fake_list
-    )
+    monkeypatch.setattr(saved_service.users_repo, "list_saved_events", fake_list)
     saved_service.list_saved_events(
-        MagicMock(), _FakeUser(), page=2, per_page=5  # type: ignore[arg-type]
+        MagicMock(),
+        _FakeUser(),  # type: ignore[arg-type]
+        page=2,
+        per_page=5,
     )
     assert captured == {"page": 2, "per_page": 5}
 

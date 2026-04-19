@@ -15,9 +15,8 @@ customer-facing links stay on the public site.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
@@ -28,11 +27,12 @@ from backend.scraper.base.http import fetch_html
 from backend.scraper.base.models import RawEvent
 from backend.scraper.base.scraper import BaseScraper
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 logger = get_logger(__name__)
 
-COMET_CALENDAR_URL = (
-    "https://calendar.rediscoverfirebooking.com/cpp-shows-preview"
-)
+COMET_CALENDAR_URL = "https://calendar.rediscoverfirebooking.com/cpp-shows-preview"
 COMET_PUBLIC_URL = "https://www.cometpingpong.com/"
 VENUE_EXTERNAL_ID = "comet-ping-pong"
 
@@ -187,9 +187,7 @@ _LONG_DATE_FORMATS: tuple[str, ...] = (
 )
 
 
-def _parse_long_date(
-    date_text: str | None, time_text: str | None
-) -> datetime | None:
+def _parse_long_date(date_text: str | None, time_text: str | None) -> datetime | None:
     """Combine a ``heading-date`` string like "April 17, 2026" with the show time.
 
     Args:

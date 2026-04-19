@@ -6,6 +6,7 @@ fed back from SendGrid webhooks (Decision 012).
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -44,27 +45,17 @@ class EmailDigestLog(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    digest_type: Mapped[str] = mapped_column(
-        String(20), nullable=False
-    )
-    event_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
-    sent_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    sendgrid_message_id: Mapped[str | None] = mapped_column(
-        String(200), nullable=True
-    )
+    digest_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sendgrid_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     opened_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     clicked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    metadata_json: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True
-    )
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     def __repr__(self) -> str:
         """Return a string representation of the EmailDigestLog.
@@ -72,7 +63,4 @@ class EmailDigestLog(TimestampMixin, Base):
         Returns:
             String representation with user ID and digest type.
         """
-        return (
-            f"<EmailDigestLog user={self.user_id} "
-            f"type={self.digest_type}>"
-        )
+        return f"<EmailDigestLog user={self.user_id} type={self.digest_type}>"

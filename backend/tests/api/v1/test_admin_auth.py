@@ -8,10 +8,9 @@ ship back to clients.
 
 from __future__ import annotations
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
-from flask import Flask
 from flask.testing import FlaskClient
 
 from backend.api.v1.admin import require_admin

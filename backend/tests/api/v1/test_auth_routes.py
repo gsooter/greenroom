@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -14,7 +14,7 @@ from flask.testing import FlaskClient
 
 from backend.api.v1 import auth as auth_route
 from backend.core.config import get_settings
-from backend.core.exceptions import AppError, SPOTIFY_AUTH_FAILED
+from backend.core.exceptions import SPOTIFY_AUTH_FAILED, AppError
 from backend.services.spotify import SpotifyProfile, SpotifyTokens
 
 
@@ -83,9 +83,7 @@ def test_complete_rejects_missing_code(client: FlaskClient) -> None:
 
 
 def test_complete_rejects_missing_state(client: FlaskClient) -> None:
-    resp = client.post(
-        "/api/v1/auth/spotify/complete", json={"code": "abc"}
-    )
+    resp = client.post("/api/v1/auth/spotify/complete", json={"code": "abc"})
     assert resp.status_code == 422
 
 
@@ -104,7 +102,7 @@ def test_complete_rejects_tampered_state(client: FlaskClient) -> None:
 
 def test_complete_rejects_wrong_purpose_state(client: FlaskClient) -> None:
     """A well-signed token with the wrong purpose is also rejected."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     wrong_state = jwt.encode(
         {
             "purpose": "something_else",
@@ -128,7 +126,7 @@ def test_complete_happy_path(
     tokens = SpotifyTokens(
         access_token="a",
         refresh_token="r",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="",
     )
     profile = SpotifyProfile(
@@ -136,19 +134,11 @@ def test_complete_happy_path(
     )
     user = _FakeUser()
 
-    monkeypatch.setattr(
-        auth_route.spotify_service, "exchange_code", lambda _c: tokens
-    )
-    monkeypatch.setattr(
-        auth_route.spotify_service, "get_profile", lambda _t: profile
-    )
-    monkeypatch.setattr(
-        auth_route, "_upsert_spotify_user", lambda _s, _p, _t: user
-    )
+    monkeypatch.setattr(auth_route.spotify_service, "exchange_code", lambda _c: tokens)
+    monkeypatch.setattr(auth_route.spotify_service, "get_profile", lambda _t: profile)
+    monkeypatch.setattr(auth_route, "_upsert_spotify_user", lambda _s, _p, _t: user)
     sync_mock = MagicMock(return_value=3)
-    monkeypatch.setattr(
-        auth_route.spotify_service, "sync_top_artists", sync_mock
-    )
+    monkeypatch.setattr(auth_route.spotify_service, "sync_top_artists", sync_mock)
     monkeypatch.setattr(
         auth_route.users_service,
         "serialize_user",
@@ -173,7 +163,7 @@ def test_complete_swallows_sync_failure(
     tokens = SpotifyTokens(
         access_token="a",
         refresh_token="r",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="",
     )
     profile = SpotifyProfile(
@@ -181,15 +171,9 @@ def test_complete_swallows_sync_failure(
     )
     user = _FakeUser()
 
-    monkeypatch.setattr(
-        auth_route.spotify_service, "exchange_code", lambda _c: tokens
-    )
-    monkeypatch.setattr(
-        auth_route.spotify_service, "get_profile", lambda _t: profile
-    )
-    monkeypatch.setattr(
-        auth_route, "_upsert_spotify_user", lambda _s, _p, _t: user
-    )
+    monkeypatch.setattr(auth_route.spotify_service, "exchange_code", lambda _c: tokens)
+    monkeypatch.setattr(auth_route.spotify_service, "get_profile", lambda _t: profile)
+    monkeypatch.setattr(auth_route, "_upsert_spotify_user", lambda _s, _p, _t: user)
 
     def boom(*_a: Any, **_k: Any) -> None:
         raise AppError(code=SPOTIFY_AUTH_FAILED, message="down", status_code=502)
@@ -218,7 +202,7 @@ def test_upsert_returns_existing_oauth_user(
     tokens = SpotifyTokens(
         access_token="a",
         refresh_token="r",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="",
     )
     profile = SpotifyProfile(
@@ -233,9 +217,7 @@ def test_upsert_returns_existing_oauth_user(
         lambda *_a, **_k: oauth,
     )
     update_tokens = MagicMock()
-    monkeypatch.setattr(
-        auth_route.users_repo, "update_oauth_tokens", update_tokens
-    )
+    monkeypatch.setattr(auth_route.users_repo, "update_oauth_tokens", update_tokens)
     monkeypatch.setattr(auth_route.users_repo, "update_user", MagicMock())
     monkeypatch.setattr(auth_route.users_repo, "update_last_login", MagicMock())
 
@@ -252,7 +234,7 @@ def test_upsert_matches_by_email_and_creates_oauth(
     tokens = SpotifyTokens(
         access_token="a",
         refresh_token="r",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="full",
     )
     profile = SpotifyProfile(
@@ -270,9 +252,7 @@ def test_upsert_matches_by_email_and_creates_oauth(
     )
     monkeypatch.setattr(auth_route.users_repo, "update_user", MagicMock())
     create_oauth = MagicMock()
-    monkeypatch.setattr(
-        auth_route.users_repo, "create_oauth_provider", create_oauth
-    )
+    monkeypatch.setattr(auth_route.users_repo, "create_oauth_provider", create_oauth)
     monkeypatch.setattr(auth_route.users_repo, "update_last_login", MagicMock())
 
     result = auth_route._upsert_spotify_user(MagicMock(), profile, tokens)
@@ -288,7 +268,7 @@ def test_upsert_creates_brand_new_user(
     tokens = SpotifyTokens(
         access_token="a",
         refresh_token="r",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="",
     )
     profile = SpotifyProfile(
@@ -305,9 +285,7 @@ def test_upsert_creates_brand_new_user(
     create_user = MagicMock(return_value=created)
     monkeypatch.setattr(auth_route.users_repo, "create_user", create_user)
     create_oauth = MagicMock()
-    monkeypatch.setattr(
-        auth_route.users_repo, "create_oauth_provider", create_oauth
-    )
+    monkeypatch.setattr(auth_route.users_repo, "create_oauth_provider", create_oauth)
     monkeypatch.setattr(auth_route.users_repo, "update_last_login", MagicMock())
 
     result = auth_route._upsert_spotify_user(MagicMock(), profile, tokens)

@@ -41,8 +41,7 @@ def test_list_venues_forwards_filters_and_pagination(
 
     cid = str(uuid.uuid4())
     resp = client.get(
-        f"/api/v1/venues?city_id={cid}&region=DMV&active_only=false"
-        "&page=3&per_page=25"
+        f"/api/v1/venues?city_id={cid}&region=DMV&active_only=false&page=3&per_page=25"
     )
 
     assert resp.status_code == 200
@@ -96,9 +95,7 @@ def test_get_venue_not_found(
     def boom(*_a: Any, **_k: Any) -> None:
         raise NotFoundError(VENUE_NOT_FOUND, "nope")
 
-    monkeypatch.setattr(
-        venues_route.venues_service, "get_venue_by_slug", boom
-    )
+    monkeypatch.setattr(venues_route.venues_service, "get_venue_by_slug", boom)
     resp = client.get("/api/v1/venues/missing")
     assert resp.status_code == 404
     assert resp.get_json()["error"]["code"] == VENUE_NOT_FOUND

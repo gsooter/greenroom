@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -25,7 +25,7 @@ class _FakeRec:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     score: float = 0.9
     generated_at: datetime | None = field(
-        default_factory=lambda: datetime(2026, 4, 18, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 4, 18, tzinfo=UTC)
     )
     is_dismissed: bool = False
     score_breakdown: dict[str, Any] | None = field(
@@ -55,11 +55,10 @@ def test_list_recommendations_returns_persisted_page_without_regen(
         lambda _s, _u, *, page, per_page: (recs, 1),
     )
     generate_mock = MagicMock()
-    monkeypatch.setattr(
-        recs_service.rec_engine, "generate_for_user", generate_mock
-    )
+    monkeypatch.setattr(recs_service.rec_engine, "generate_for_user", generate_mock)
     result, total = recs_service.list_recommendations_for_user(
-        MagicMock(), _FakeUser()  # type: ignore[arg-type]
+        MagicMock(),
+        _FakeUser(),  # type: ignore[arg-type]
     )
     assert result is recs
     assert total == 1
@@ -84,14 +83,11 @@ def test_list_recommendations_lazy_generates_when_empty(
         calls.append("generate")
         return 5
 
-    monkeypatch.setattr(
-        recs_service.users_repo, "list_recommendations", fake_list
-    )
-    monkeypatch.setattr(
-        recs_service.rec_engine, "generate_for_user", fake_generate
-    )
+    monkeypatch.setattr(recs_service.users_repo, "list_recommendations", fake_list)
+    monkeypatch.setattr(recs_service.rec_engine, "generate_for_user", fake_generate)
     result, total = recs_service.list_recommendations_for_user(
-        session, user  # type: ignore[arg-type]
+        session,
+        user,  # type: ignore[arg-type]
     )
     assert calls == ["list", "generate", "list"]
     session.commit.assert_called_once()
@@ -110,11 +106,10 @@ def test_list_recommendations_skips_regen_when_no_cached_artists(
         lambda _s, _u, *, page, per_page: ([], 0),
     )
     generate_mock = MagicMock()
-    monkeypatch.setattr(
-        recs_service.rec_engine, "generate_for_user", generate_mock
-    )
+    monkeypatch.setattr(recs_service.rec_engine, "generate_for_user", generate_mock)
     result, total = recs_service.list_recommendations_for_user(
-        MagicMock(), user  # type: ignore[arg-type]
+        MagicMock(),
+        user,  # type: ignore[arg-type]
     )
     assert result == []
     assert total == 0
@@ -132,11 +127,11 @@ def test_list_recommendations_lazy_generate_disabled(
         lambda _s, _u, *, page, per_page: ([], 0),
     )
     generate_mock = MagicMock()
-    monkeypatch.setattr(
-        recs_service.rec_engine, "generate_for_user", generate_mock
-    )
+    monkeypatch.setattr(recs_service.rec_engine, "generate_for_user", generate_mock)
     recs_service.list_recommendations_for_user(
-        MagicMock(), user, lazy_generate=False  # type: ignore[arg-type]
+        MagicMock(),
+        user,  # type: ignore[arg-type]
+        lazy_generate=False,
     )
     generate_mock.assert_not_called()
 
@@ -145,11 +140,10 @@ def test_refresh_recommendations_commits_and_returns_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = MagicMock()
-    monkeypatch.setattr(
-        recs_service.rec_engine, "generate_for_user", lambda _s, _u: 42
-    )
+    monkeypatch.setattr(recs_service.rec_engine, "generate_for_user", lambda _s, _u: 42)
     count = recs_service.refresh_recommendations_for_user(
-        session, _FakeUser()  # type: ignore[arg-type]
+        session,
+        _FakeUser(),  # type: ignore[arg-type]
     )
     assert count == 42
     session.commit.assert_called_once()

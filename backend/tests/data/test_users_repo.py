@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,6 @@ from backend.data.models.users import (
 )
 from backend.data.models.venues import Venue
 from backend.data.repositories import users as users_repo
-
 
 # ---------------------------------------------------------------------------
 # User CRUD
@@ -54,9 +53,7 @@ def test_update_user_ignores_unknown_fields(
     session: Session, make_user: Callable[..., User]
 ) -> None:
     user = make_user()
-    updated = users_repo.update_user(
-        session, user, display_name="New", bogus="x"
-    )
+    updated = users_repo.update_user(session, user, display_name="New", bogus="x")
     assert updated.display_name == "New"
 
 
@@ -78,10 +75,7 @@ def test_oauth_create_get_and_update(
     session: Session, make_user: Callable[..., User]
 ) -> None:
     user = make_user()
-    assert (
-        users_repo.get_oauth_provider(session, OAuthProvider.SPOTIFY, "sp1")
-        is None
-    )
+    assert users_repo.get_oauth_provider(session, OAuthProvider.SPOTIFY, "sp1") is None
 
     oauth = users_repo.create_oauth_provider(
         session,
@@ -90,15 +84,13 @@ def test_oauth_create_get_and_update(
         provider_user_id="sp1",
         access_token="at",
         refresh_token="rt",
-        token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        token_expires_at=datetime.now(UTC) + timedelta(hours=1),
         scopes="user-read-email",
         provider_data={"country": "US"},
     )
     assert oauth.id is not None
 
-    fetched = users_repo.get_oauth_provider(
-        session, OAuthProvider.SPOTIFY, "sp1"
-    )
+    fetched = users_repo.get_oauth_provider(session, OAuthProvider.SPOTIFY, "sp1")
     assert fetched is not None and fetched.id == oauth.id
 
     # access_token rotation only.
@@ -106,7 +98,7 @@ def test_oauth_create_get_and_update(
     assert oauth.access_token == "at2"
     assert oauth.refresh_token == "rt"
 
-    new_expiry = datetime.now(timezone.utc) + timedelta(hours=2)
+    new_expiry = datetime.now(UTC) + timedelta(hours=2)
     users_repo.update_oauth_tokens(
         session,
         oauth,
@@ -167,19 +159,13 @@ def test_list_saved_events_pagination(
     venue = make_venue(city=city)
     for _ in range(3):
         ev = make_event(venue=venue)
-        users_repo.create_saved_event(
-            session, user_id=user.id, event_id=ev.id
-        )
+        users_repo.create_saved_event(session, user_id=user.id, event_id=ev.id)
 
-    rows, total = users_repo.list_saved_events(
-        session, user.id, page=1, per_page=2
-    )
+    rows, total = users_repo.list_saved_events(session, user.id, page=1, per_page=2)
     assert total == 3
     assert len(rows) == 2
 
-    rows_p2, _ = users_repo.list_saved_events(
-        session, user.id, page=2, per_page=2
-    )
+    rows_p2, _ = users_repo.list_saved_events(session, user.id, page=2, per_page=2)
     assert len(rows_p2) == 1
 
 

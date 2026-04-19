@@ -7,7 +7,7 @@ transactional fixture in ``conftest.py``.
 from __future__ import annotations
 
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 from sqlalchemy.orm import Session
 
@@ -87,8 +87,6 @@ def test_update_city_ignores_unknown_attribute(
     session: Session, make_city: Callable[..., City]
 ) -> None:
     city = make_city(name="Old")
-    updated = cities_repo.update_city(
-        session, city, name="New", not_a_field="ignored"
-    )
+    updated = cities_repo.update_city(session, city, name="New", not_a_field="ignored")
     assert updated.name == "New"
     assert not hasattr(updated, "not_a_field")

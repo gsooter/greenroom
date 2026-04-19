@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -23,10 +23,10 @@ class _FakeRun:
     status: ScraperRunStatus = ScraperRunStatus.SUCCESS
     event_count: int = 42
     started_at: datetime = field(
-        default_factory=lambda: datetime(2026, 4, 18, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 4, 18, tzinfo=UTC)
     )
     finished_at: datetime | None = field(
-        default_factory=lambda: datetime(2026, 4, 18, 0, 5, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 4, 18, 0, 5, tzinfo=UTC)
     )
     duration_seconds: float = 5.0
     error_message: str | None = None
@@ -73,9 +73,7 @@ def test_list_scraper_runs_forwards_enum_and_filters(
 def test_trigger_scraper_run_raises_when_venue_config_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        admin_service, "get_venue_config", lambda _slug: None
-    )
+    monkeypatch.setattr(admin_service, "get_venue_config", lambda _slug: None)
     with pytest.raises(NotFoundError):
         admin_service.trigger_scraper_run(MagicMock(), "ghost-venue")
 
@@ -115,9 +113,7 @@ def test_summarize_fleet_groups_by_region(
         _FakeConfig(venue_slug="b", region="DMV"),
         _FakeConfig(venue_slug="c", region="NYC"),
     ]
-    monkeypatch.setattr(
-        admin_service, "get_enabled_configs", lambda: configs
-    )
+    monkeypatch.setattr(admin_service, "get_enabled_configs", lambda: configs)
     summary = admin_service.summarize_fleet()
     assert summary["enabled"] == 3
     assert summary["by_region"] == {"DMV": 2, "NYC": 1}

@@ -5,12 +5,17 @@ Each venue maps to one or more scrapers via scraper/config/venues.py.
 """
 
 import uuid
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from backend.data.models.cities import City
+    from backend.data.models.events import Event
 
 
 class Venue(TimestampMixin, Base):
@@ -60,7 +65,7 @@ class Venue(TimestampMixin, Base):
     website_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    external_ids: Mapped[dict | None] = mapped_column(
+    external_ids: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, default=dict
     )
     tags: Mapped[list[str] | None] = mapped_column(
@@ -69,10 +74,10 @@ class Venue(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     # Relationships
-    city: Mapped["City"] = relationship(  # noqa: F821
+    city: Mapped["City"] = relationship(
         back_populates="venues",
     )
-    events: Mapped[list["Event"]] = relationship(  # noqa: F821
+    events: Mapped[list["Event"]] = relationship(
         back_populates="venue",
         lazy="selectin",
     )

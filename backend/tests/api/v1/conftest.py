@@ -10,7 +10,7 @@ intercepts every call.
 from __future__ import annotations
 
 import uuid
-from typing import Callable, Iterator
+from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -55,9 +55,7 @@ def authed_client(
         display_name="Pat",
         is_active=True,
     )
-    monkeypatch.setattr(
-        auth_module.users_repo, "get_user_by_id", lambda _s, _uid: stub
-    )
+    monkeypatch.setattr(auth_module.users_repo, "get_user_by_id", lambda _s, _uid: stub)
     token = issue_token(stub.id)
 
     def make_headers() -> dict[str, str]:

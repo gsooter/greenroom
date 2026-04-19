@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -40,10 +40,10 @@ class _FakeVenue:
     tags: list[str] = field(default_factory=lambda: ["indie"])
     is_active: bool = True
     created_at: datetime = field(
-        default_factory=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC)
     )
     updated_at: datetime = field(
-        default_factory=lambda: datetime(2026, 1, 2, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 1, 2, tzinfo=UTC)
     )
 
 
@@ -95,9 +95,7 @@ def test_list_venues_requires_city_or_region() -> None:
 
 def test_list_venues_rejects_oversized_per_page() -> None:
     with pytest.raises(ValidationError):
-        venues_service.list_venues(
-            MagicMock(), region="DMV", per_page=101
-        )
+        venues_service.list_venues(MagicMock(), region="DMV", per_page=101)
 
 
 def test_list_venues_forwards_filters(

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -61,7 +61,7 @@ class _FakeOAuth:
     access_token: str | None = "access-123"
     refresh_token: str | None = "refresh-123"
     token_expires_at: datetime | None = field(
-        default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=1)
+        default_factory=lambda: datetime.now(UTC) + timedelta(hours=1)
     )
 
 
@@ -158,9 +158,7 @@ def test_refresh_access_token_handles_missing_refresh(
 
 def test_parse_token_response_non_string_fields_raises() -> None:
     """Numeric access_token, bogus refresh field → SPOTIFY_AUTH_FAILED."""
-    bad = _FakeResponse(
-        json_data={"access_token": 42, "expires_in": 3600}
-    )
+    bad = _FakeResponse(json_data={"access_token": 42, "expires_in": 3600})
     with pytest.raises(AppError):
         _parse_token_response(bad)  # type: ignore[arg-type]
 
@@ -233,9 +231,7 @@ def test_get_top_artists_filters_non_dict_items(
         spotify_service.requests,
         "get",
         lambda *_a, **_k: _FakeResponse(
-            json_data={
-                "items": [{"id": "a"}, "garbage", {"id": "b"}]
-            }
+            json_data={"items": [{"id": "a"}, "garbage", {"id": "b"}]}
         ),
     )
     result = get_top_artists("tok")
@@ -309,24 +305,18 @@ def test_ensure_fresh_uses_cached_token_when_still_valid() -> None:
 def test_ensure_fresh_refreshes_when_expired(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    oauth = _FakeOAuth(
-        token_expires_at=datetime.now(timezone.utc) - timedelta(minutes=1)
-    )
+    oauth = _FakeOAuth(token_expires_at=datetime.now(UTC) - timedelta(minutes=1))
     user = _FakeUser(oauth_providers=[oauth])
 
     refreshed = SpotifyTokens(
         access_token="new-access",
         refresh_token="new-refresh",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="",
     )
-    monkeypatch.setattr(
-        spotify_service, "refresh_access_token", lambda _t: refreshed
-    )
+    monkeypatch.setattr(spotify_service, "refresh_access_token", lambda _t: refreshed)
     update_mock = MagicMock()
-    monkeypatch.setattr(
-        spotify_service.users_repo, "update_oauth_tokens", update_mock
-    )
+    monkeypatch.setattr(spotify_service.users_repo, "update_oauth_tokens", update_mock)
     result = _ensure_fresh_access_token(MagicMock(), user)  # type: ignore[arg-type]
     assert result is not None
     token, _oauth = result
@@ -336,7 +326,7 @@ def test_ensure_fresh_refreshes_when_expired(
 
 def test_ensure_fresh_raises_when_expired_without_refresh_token() -> None:
     oauth = _FakeOAuth(
-        token_expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        token_expires_at=datetime.now(UTC) - timedelta(minutes=1),
         refresh_token=None,
     )
     user = _FakeUser(oauth_providers=[oauth])
@@ -409,9 +399,7 @@ def test_sync_top_artists_tolerates_recently_played_failure(
             status_code=502,
         )
 
-    monkeypatch.setattr(
-        spotify_service, "get_recently_played_artists", _raise
-    )
+    monkeypatch.setattr(spotify_service, "get_recently_played_artists", _raise)
     count = sync_top_artists(session, user, access_token="tok")  # type: ignore[arg-type]
     assert count == 1
     assert user.spotify_top_artist_ids == ["a"]
@@ -425,15 +413,11 @@ def test_get_top_artists_paginates_beyond_fifty(
     """Requests beyond 50 items walk the Spotify offset in 50-item pages."""
     calls: list[dict[str, Any]] = []
 
-    def _fake_get(
-        url: str, *, params: dict[str, Any], **_k: Any
-    ) -> _FakeResponse:
+    def _fake_get(url: str, *, params: dict[str, Any], **_k: Any) -> _FakeResponse:
         calls.append(params)
         offset = params["offset"]
         ids = [f"a{offset + i}" for i in range(params["limit"])]
-        return _FakeResponse(
-            json_data={"items": [{"id": i, "name": i} for i in ids]}
-        )
+        return _FakeResponse(json_data={"items": [{"id": i, "name": i} for i in ids]})
 
     monkeypatch.setattr(spotify_service.requests, "get", _fake_get)
     result = get_top_artists("tok", limit=120)
@@ -448,9 +432,7 @@ def test_get_top_artists_stops_when_page_short(
     """A short page signals end-of-data — no further requests are made."""
     calls: list[dict[str, Any]] = []
 
-    def _fake_get(
-        url: str, *, params: dict[str, Any], **_k: Any
-    ) -> _FakeResponse:
+    def _fake_get(url: str, *, params: dict[str, Any], **_k: Any) -> _FakeResponse:
         calls.append(params)
         items = [{"id": f"a{i}", "name": "x"} for i in range(3)]
         return _FakeResponse(json_data={"items": items})
