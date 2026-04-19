@@ -1,12 +1,17 @@
 """JWT creation, validation, and route decorators.
 
-Issues short-lived JWTs after a successful OAuth login (Spotify today,
-Google/Apple in a future phase per Decision 003) and validates them on
-protected API requests.
+After the Knuckles cutover (Decision 030), every protected request is
+authenticated with a Knuckles-issued RS256 access token. ``require_auth``
+verifies tokens locally against the cached Knuckles JWKS and looks up
+the corresponding Greenroom :class:`User` row by primary key — Greenroom
+``users.id`` and Knuckles ``users.id`` are the same UUID after the
+identity-rewrite migration.
 
-The Spotify OAuth flow lives in ``backend/services/spotify.py``; this
-module only handles the JWT lifecycle and is deliberately unaware of
-the provider used to authenticate.
+The legacy HS256 helpers (:func:`issue_token`, :func:`verify_token`)
+remain only because the soon-to-be-deleted local sign-in services
+(magic-link, Google, Apple, passkey under ``backend/services/auth.py``)
+still emit those tokens. Those services and helpers are scheduled for
+removal as the next step of the Knuckles cutover.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from backend.core.exceptions import (
     AppError,
     UnauthorizedError,
 )
+from backend.core.knuckles_client import verify_knuckles_token
 from backend.data.models.users import User
 from backend.data.repositories import users as users_repo
 
@@ -123,11 +129,13 @@ def _extract_bearer_token() -> str:
 
 
 def require_auth[F: Callable[..., Any]](func: F) -> F:
-    """Flask route decorator that enforces a valid JWT.
+    """Flask route decorator that enforces a valid Knuckles access token.
 
-    Reads the bearer token, verifies it, loads the corresponding user
-    row, and stashes it on ``flask.g.current_user`` so downstream view
-    code can reach it through :func:`get_current_user` without re-querying.
+    Reads the bearer token, verifies it against the cached Knuckles JWKS,
+    pulls the user UUID from the ``sub`` claim, loads the matching
+    Greenroom :class:`User` row, and stashes it on
+    ``flask.g.current_user`` so downstream view code can reach it through
+    :func:`get_current_user` without re-querying.
 
     Args:
         func: The Flask view function to wrap.
@@ -136,13 +144,15 @@ def require_auth[F: Callable[..., Any]](func: F) -> F:
         The wrapped view function.
 
     Raises:
-        UnauthorizedError: If the token is missing, malformed, or the
-            user no longer exists / is deactivated.
+        AppError / UnauthorizedError: If the token is missing or
+            malformed, signature/audience/issuer validation fails, the
+            ``sub`` claim is not a UUID, or the user row is missing or
+            deactivated.
     """
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        """Verify the caller's JWT before delegating to the view.
+        """Verify the caller's Knuckles token before delegating to the view.
 
         Args:
             *args: Positional args forwarded to the wrapped view.
@@ -152,7 +162,22 @@ def require_auth[F: Callable[..., Any]](func: F) -> F:
             Whatever the wrapped view returns.
         """
         token = _extract_bearer_token()
-        user_id = verify_token(token)
+        claims = verify_knuckles_token(token)
+        sub = claims.get("sub")
+        if not isinstance(sub, str):
+            raise AppError(
+                code=INVALID_TOKEN,
+                message="Access token is missing a subject.",
+                status_code=401,
+            )
+        try:
+            user_id = uuid.UUID(sub)
+        except ValueError as exc:
+            raise AppError(
+                code=INVALID_TOKEN,
+                message="Access token subject is not a valid UUID.",
+                status_code=401,
+            ) from exc
         session = get_db()
         user = users_repo.get_user_by_id(session, user_id)
         if user is None or not user.is_active:
