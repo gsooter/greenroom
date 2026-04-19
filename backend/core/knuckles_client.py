@@ -20,9 +20,13 @@ rewired to call :func:`verify_knuckles_token`.
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import jwt
@@ -36,9 +40,13 @@ from backend.core.exceptions import (
     TOKEN_EXPIRED,
     AppError,
 )
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 _ALGORITHM = "RS256"
 _JWKS_PATH = "/.well-known/jwks.json"
+_DISK_CACHE_FILENAME = "greenroom_knuckles_jwks.json"
 
 
 @dataclass
@@ -77,15 +85,46 @@ def _ttl_expired(fetched_at: float) -> bool:
     return time.time() - fetched_at > settings.knuckles_jwks_cache_ttl_seconds
 
 
-def _fetch_jwks() -> dict[str, RSAPublicKey]:
-    """Fetch the JWKS from Knuckles and parse it into a kid → key map.
+def _parse_jwks_entries(
+    entries: list[dict[str, Any]],
+) -> dict[str, RSAPublicKey]:
+    """Parse a list of JWK entries into a ``kid`` → public-key map.
 
     Non-RSA keys and entries missing a string ``kid`` are silently
     skipped; Knuckles only publishes RSA keys today, but the filter
     keeps the parser forward-compatible.
 
+    Args:
+        entries: The ``keys`` array from a JWKS document.
+
     Returns:
         Mapping from ``kid`` to RSA public key.
+    """
+    keys: dict[str, RSAPublicKey] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        kid = entry.get("kid")
+        if not isinstance(kid, str):
+            continue
+        try:
+            public_key = RSAAlgorithm.from_jwk(entry)
+        except Exception:
+            continue
+        if isinstance(public_key, RSAPublicKey):
+            keys[kid] = public_key
+    return keys
+
+
+def _fetch_jwks() -> tuple[dict[str, RSAPublicKey], list[dict[str, Any]]]:
+    """Fetch the JWKS from Knuckles and return parsed keys + raw entries.
+
+    The raw entries are returned alongside the parsed keys so the
+    caller can persist them to the disk cache verbatim, avoiding a
+    reserialization round-trip.
+
+    Returns:
+        Tuple of ``(kid → public-key map, raw JWK entries)``.
 
     Raises:
         AppError: ``INVALID_TOKEN`` (401) if the JWKS endpoint is
@@ -104,15 +143,77 @@ def _fetch_jwks() -> dict[str, RSAPublicKey]:
         ) from exc
 
     document = response.json()
-    keys: dict[str, RSAPublicKey] = {}
-    for entry in document.get("keys", []):
-        kid = entry.get("kid")
-        if not isinstance(kid, str):
-            continue
-        public_key = RSAAlgorithm.from_jwk(entry)
-        if isinstance(public_key, RSAPublicKey):
-            keys[kid] = public_key
-    return keys
+    raw_entries = document.get("keys") if isinstance(document, dict) else None
+    if not isinstance(raw_entries, list):
+        raw_entries = []
+    return _parse_jwks_entries(raw_entries), raw_entries
+
+
+def _disk_cache_path() -> Path:
+    """Return the filesystem path of the shared JWKS disk cache.
+
+    The cache sits in the system temp directory so sibling Gunicorn
+    workers in the same container can share it — when one worker
+    fetches the JWKS after a cold start, the others read the result
+    instead of dog-piling the Knuckles endpoint.
+
+    Returns:
+        Path to the JSON file holding the cached JWKS snapshot.
+    """
+    return Path(tempfile.gettempdir()) / _DISK_CACHE_FILENAME
+
+
+def _load_jwks_from_disk() -> _JwksCache | None:
+    """Load the most recent JWKS snapshot from disk, if any.
+
+    Returns:
+        A ``_JwksCache`` reconstructed from the persisted document, or
+        ``None`` if the file is missing, unreadable, malformed, or
+        contains zero usable keys.
+    """
+    path = _disk_cache_path()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    fetched_at = payload.get("fetched_at")
+    raw_entries = payload.get("keys")
+    if not isinstance(fetched_at, int | float) or not isinstance(raw_entries, list):
+        return None
+
+    keys = _parse_jwks_entries(raw_entries)
+    if not keys:
+        return None
+    return _JwksCache(keys=keys, fetched_at=float(fetched_at))
+
+
+def _persist_jwks_to_disk(raw_entries: list[dict[str, Any]], fetched_at: float) -> None:
+    """Atomically write the JWKS snapshot to the shared disk cache.
+
+    Writes to a sibling ``.tmp`` file and ``os.replace``s it into
+    place so a crashed or concurrent write never leaves a torn file
+    on disk. Disk errors are logged and swallowed — the disk cache
+    is an optimization, not a correctness requirement.
+
+    Args:
+        raw_entries: The ``keys`` array from the fetched JWKS.
+        fetched_at: Unix timestamp to stamp the snapshot with.
+    """
+    path = _disk_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=".jwks-", suffix=".tmp"
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"fetched_at": fetched_at, "keys": raw_entries}, handle)
+        os.replace(tmp_name, path)
+    except OSError:
+        logger.warning("jwks_disk_cache_write_failed", extra={"path": str(path)})
 
 
 def reset_jwks_cache() -> None:
@@ -127,13 +228,35 @@ def reset_jwks_cache() -> None:
         _cache = None
 
 
+def _refresh_jwks_cache() -> _JwksCache:
+    """Fetch the JWKS from Knuckles, update the disk cache, and return it.
+
+    Returns:
+        The freshly-built in-memory cache snapshot.
+
+    Raises:
+        AppError: Propagates ``_fetch_jwks``'s ``INVALID_TOKEN`` on
+            network or protocol errors.
+    """
+    keys, raw_entries = _fetch_jwks()
+    fetched_at = time.time()
+    _persist_jwks_to_disk(raw_entries, fetched_at)
+    return _JwksCache(keys=keys, fetched_at=fetched_at)
+
+
 def _get_signing_key(kid: str) -> RSAPublicKey:
     """Return the public key for the given ``kid``, refreshing the JWKS if needed.
 
-    Refresh policy: TTL expiry triggers a refresh. A cache miss for an
-    otherwise-fresh snapshot also triggers a refresh — that's how a
-    consuming app picks up a freshly rotated Knuckles key without
-    waiting for the TTL.
+    Refresh policy:
+
+    * Cold start (no in-memory cache) tries the shared disk cache
+      first. A fresh-enough snapshot skips the network hop entirely,
+      which matters when a new Gunicorn worker boots while a sibling
+      has already fetched the JWKS.
+    * TTL expiry forces a network refresh.
+    * A cache miss for an otherwise-fresh snapshot also triggers a
+      refresh — that's how a consuming app picks up a freshly rotated
+      Knuckles key without waiting for the TTL.
 
     Args:
         kid: The ``kid`` header from the access token under verification.
@@ -147,10 +270,17 @@ def _get_signing_key(kid: str) -> RSAPublicKey:
     """
     global _cache
     with _cache_lock:
+        if _cache is None:
+            disk = _load_jwks_from_disk()
+            if disk is not None and not _ttl_expired(disk.fetched_at):
+                _cache = disk
+
         if _cache is None or _ttl_expired(_cache.fetched_at):
-            _cache = _JwksCache(keys=_fetch_jwks(), fetched_at=time.time())
+            _cache = _refresh_jwks_cache()
+
         if kid not in _cache.keys:
-            _cache = _JwksCache(keys=_fetch_jwks(), fetched_at=time.time())
+            _cache = _refresh_jwks_cache()
+
         if kid not in _cache.keys:
             raise AppError(
                 code=INVALID_TOKEN,

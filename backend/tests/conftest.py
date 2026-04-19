@@ -99,6 +99,32 @@ def _disable_rate_limiter(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_jwks_disk_cache(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Redirect the JWKS disk cache to a per-test tmp path.
+
+    The real cache lives in a shared tempdir so Gunicorn workers in
+    the same container can share it. In tests we want each case to
+    start with an empty disk and leave no trace behind.
+
+    Yields:
+        None; teardown happens via ``monkeypatch`` scope + ``tmp_path``
+        cleanup.
+    """
+    from pathlib import Path
+
+    from backend.core import knuckles_client
+
+    monkeypatch.setattr(
+        knuckles_client,
+        "_disk_cache_path",
+        lambda: Path(tmp_path) / "knuckles_jwks.json",
+    )
+    yield
+
+
 # ---------------------------------------------------------------------------
 # Knuckles RS256 token helpers
 # ---------------------------------------------------------------------------

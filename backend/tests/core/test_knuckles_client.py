@@ -317,6 +317,107 @@ def test_verify_jwks_endpoint_failure_raises_invalid_token(
 
 
 # ---------------------------------------------------------------------------
+# JWKS disk cache
+# ---------------------------------------------------------------------------
+
+
+def test_successful_fetch_persists_jwks_to_disk(
+    signing_key: rsa.RSAPrivateKey,
+    stub_jwks: Callable[[rsa.RSAPublicKey, str], list[str]],
+) -> None:
+    """A successful JWKS fetch writes the document to the disk cache."""
+    stub_jwks(signing_key.public_key(), "kid-1")
+    knuckles_client.verify_knuckles_token(
+        _mint(signing_key, kid="kid-1", claims=_default_claims())
+    )
+
+    import json
+
+    path = knuckles_client._disk_cache_path()
+    assert path.exists()
+    payload = json.loads(path.read_text())
+    assert "fetched_at" in payload
+    assert payload["keys"][0]["kid"] == "kid-1"
+
+
+def test_cold_start_loads_from_disk_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+    signing_key: rsa.RSAPrivateKey,
+) -> None:
+    """Populated disk + fresh snapshot → verify without hitting the network."""
+    import json
+
+    fetched: list[str] = []
+
+    def fake_get(url: str, timeout: int) -> _StubResponse:
+        fetched.append(url)
+        return _StubResponse(status_code=503, payload={}, text="should not happen")
+
+    monkeypatch.setattr(knuckles_client.requests, "get", fake_get)
+
+    document = _jwks_for(signing_key.public_key(), kid="kid-1")
+    path = knuckles_client._disk_cache_path()
+    path.write_text(
+        json.dumps(
+            {
+                "fetched_at": time.time(),
+                "keys": document["keys"],
+            }
+        )
+    )
+
+    token = _mint(signing_key, kid="kid-1", claims=_default_claims())
+    claims = knuckles_client.verify_knuckles_token(token)
+
+    assert claims["sub"] == "11111111-1111-1111-1111-111111111111"
+    assert fetched == []
+
+
+def test_stale_disk_cache_forces_network_refetch(
+    monkeypatch: pytest.MonkeyPatch,
+    signing_key: rsa.RSAPrivateKey,
+    stub_jwks: Callable[[rsa.RSAPublicKey, str], list[str]],
+) -> None:
+    """Disk snapshot past TTL → refetch from network on cold start."""
+    import json
+
+    monkeypatch.setenv("KNUCKLES_JWKS_CACHE_TTL_SECONDS", "60")
+    document = _jwks_for(signing_key.public_key(), kid="kid-1")
+    path = knuckles_client._disk_cache_path()
+    path.write_text(
+        json.dumps(
+            {
+                "fetched_at": time.time() - 600,
+                "keys": document["keys"],
+            }
+        )
+    )
+
+    fetched = stub_jwks(signing_key.public_key(), "kid-1")
+    token = _mint(signing_key, kid="kid-1", claims=_default_claims())
+
+    knuckles_client.verify_knuckles_token(token)
+
+    assert len(fetched) == 1
+
+
+def test_corrupt_disk_cache_falls_back_to_network(
+    signing_key: rsa.RSAPrivateKey,
+    stub_jwks: Callable[[rsa.RSAPublicKey, str], list[str]],
+) -> None:
+    """A garbage disk file is ignored rather than crashing verification."""
+    path = knuckles_client._disk_cache_path()
+    path.write_text("this is not json {{{")
+
+    fetched = stub_jwks(signing_key.public_key(), "kid-1")
+    token = _mint(signing_key, kid="kid-1", claims=_default_claims())
+
+    knuckles_client.verify_knuckles_token(token)
+
+    assert len(fetched) == 1
+
+
+# ---------------------------------------------------------------------------
 # post()
 # ---------------------------------------------------------------------------
 
