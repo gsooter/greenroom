@@ -23,6 +23,7 @@ from flask.testing import FlaskClient
 
 from backend.api.v1 import auth_session as route
 from backend.core import auth as auth_module
+from backend.core.exceptions import AppError
 from backend.data.models.users import User
 from backend.tests.conftest import (
     KNUCKLES_TEST_CLIENT_ID,
@@ -62,10 +63,65 @@ def test_auth_logout_rejects_unauthenticated(client: FlaskClient) -> None:
 def test_auth_logout_returns_204(
     authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
 ) -> None:
-    """Authenticated logout returns an empty 204 response."""
+    """Authenticated logout without a body still returns 204."""
     client, _user, headers = authed_client
     resp = client.post("/api/v1/auth/logout", headers=headers())
     assert resp.status_code == 204
+
+
+def test_auth_logout_forwards_refresh_token_to_knuckles(
+    authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a refresh token is supplied, logout revokes it on Knuckles."""
+    client, _user, headers = authed_client
+    knuckles_post = MagicMock(return_value={})
+    monkeypatch.setattr(route, "knuckles_post", knuckles_post)
+    resp = client.post(
+        "/api/v1/auth/logout",
+        headers=headers(),
+        json={"refresh_token": "rt-123"},
+    )
+    assert resp.status_code == 204
+    knuckles_post.assert_called_once_with(
+        "/v1/logout", json={"refresh_token": "rt-123"}
+    )
+
+
+def test_auth_logout_swallows_knuckles_failure(
+    authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Upstream failure never bubbles to the client — logout is idempotent."""
+    client, _user, headers = authed_client
+    failing = MagicMock(
+        side_effect=AppError(code="UPSTREAM", message="boom", status_code=502)
+    )
+    monkeypatch.setattr(route, "knuckles_post", failing)
+    resp = client.post(
+        "/api/v1/auth/logout",
+        headers=headers(),
+        json={"refresh_token": "rt-123"},
+    )
+    assert resp.status_code == 204
+    failing.assert_called_once()
+
+
+def test_auth_logout_ignores_non_string_refresh_token(
+    authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed bodies are silently ignored — still 204, no upstream call."""
+    client, _user, headers = authed_client
+    knuckles_post = MagicMock()
+    monkeypatch.setattr(route, "knuckles_post", knuckles_post)
+    resp = client.post(
+        "/api/v1/auth/logout",
+        headers=headers(),
+        json={"refresh_token": 42},
+    )
+    assert resp.status_code == 204
+    knuckles_post.assert_not_called()
 
 
 def test_auth_me_rejects_expired_knuckles_token(

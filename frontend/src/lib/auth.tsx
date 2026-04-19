@@ -26,7 +26,10 @@ import {
   type ReactNode,
 } from "react";
 
-import { refreshSession as refreshSessionApi } from "@/lib/api/auth-identity";
+import {
+  logout as logoutApi,
+  refreshSession as refreshSessionApi,
+} from "@/lib/api/auth-identity";
 import { ApiRequestError } from "@/lib/api/client";
 import { getMe } from "@/lib/api/me";
 import type { User } from "@/types";
@@ -198,8 +201,15 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   );
 
   const logout = useCallback((): void => {
+    const currentToken = token;
+    const currentRefreshToken = refreshTokenRef.current;
     clearSession();
-  }, [clearSession]);
+    if (currentToken) {
+      void logoutApi(currentToken, currentRefreshToken).catch(() => {
+        /* Best-effort: logout always succeeds locally. */
+      });
+    }
+  }, [token, clearSession]);
 
   const refreshUser = useCallback(async (): Promise<void> => {
     if (!token) return;

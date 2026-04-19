@@ -10,9 +10,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from flask import request
+
 from backend.api.v1 import api_v1
 from backend.core.auth import get_current_user, require_auth
+from backend.core.exceptions import AppError
+from backend.core.knuckles_client import post as knuckles_post
+from backend.core.logging import get_logger
 from backend.services import users as users_service
+
+logger = get_logger(__name__)
 
 
 @api_v1.route("/auth/me", methods=["GET"])
@@ -33,15 +40,29 @@ def auth_me() -> tuple[dict[str, Any], int]:
 @api_v1.route("/auth/logout", methods=["POST"])
 @require_auth
 def auth_logout() -> tuple[dict[str, Any], int]:
-    """Acknowledge a client-driven logout.
+    """Revoke the caller's refresh token on Knuckles and confirm logout.
 
-    JWTs are stateless so the server does not maintain a session table
-    — the client drops the token from storage. This endpoint exists so
-    the frontend has a single place to call during logout and so we
-    can hook audit logging or token denylisting here later without a
-    client-side contract change.
+    If the request body carries a ``refresh_token`` string, forward it
+    to Knuckles ``POST /v1/logout`` so the refresh token family is
+    invalidated server-side. The access token itself is stateless —
+    the frontend still drops it locally — but killing the refresh
+    token prevents silent session resurrection from stolen storage.
+
+    Knuckles treats unknown tokens as a no-op and returns 204, and
+    we mirror that shape: any forwarding failure is logged and
+    swallowed so the client contract is "logout always succeeds."
 
     Returns:
         Tuple of empty JSON body and HTTP 204 status code.
     """
+    body = request.get_json(silent=True)
+    refresh_token = body.get("refresh_token") if isinstance(body, dict) else None
+    if isinstance(refresh_token, str) and refresh_token:
+        try:
+            knuckles_post("/v1/logout", json={"refresh_token": refresh_token})
+        except AppError as exc:
+            logger.warning(
+                "knuckles_logout_forwarding_failed",
+                extra={"status_code": exc.status_code, "code": exc.code},
+            )
     return {}, 204

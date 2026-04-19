@@ -36,6 +36,9 @@ const refreshSession = vi.fn<
     user: User;
   }>
 >();
+const logoutApi = vi.fn<
+  (token: string, refreshToken?: string | null) => Promise<void>
+>();
 
 vi.mock("@/lib/api/me", () => ({
   getMe: (...args: unknown[]) => (getMe as unknown as Mock)(...args),
@@ -44,6 +47,7 @@ vi.mock("@/lib/api/me", () => ({
 vi.mock("@/lib/api/auth-identity", () => ({
   refreshSession: (...args: unknown[]) =>
     (refreshSession as unknown as Mock)(...args),
+  logout: (...args: unknown[]) => (logoutApi as unknown as Mock)(...args),
 }));
 
 const mockReplace = vi.fn();
@@ -86,6 +90,8 @@ describe("AuthProvider", () => {
   beforeEach(() => {
     getMe.mockReset();
     refreshSession.mockReset();
+    logoutApi.mockReset();
+    logoutApi.mockResolvedValue(undefined);
     mockReplace.mockReset();
     window.localStorage.clear();
   });
@@ -220,7 +226,7 @@ describe("AuthProvider", () => {
     expect(window.localStorage.getItem("greenroom.refresh_token")).toBeNull();
   });
 
-  it("logout clears both tokens and localStorage", async () => {
+  it("logout clears both tokens and revokes the refresh token server-side", async () => {
     window.localStorage.setItem("greenroom.token", "stored");
     window.localStorage.setItem("greenroom.refresh_token", "refresh");
     getMe.mockResolvedValueOnce(user());
@@ -236,6 +242,38 @@ describe("AuthProvider", () => {
     expect(result.current.token).toBeNull();
     expect(window.localStorage.getItem("greenroom.token")).toBeNull();
     expect(window.localStorage.getItem("greenroom.refresh_token")).toBeNull();
+    await waitFor(() =>
+      expect(logoutApi).toHaveBeenCalledWith("stored", "refresh"),
+    );
+  });
+
+  it("logout skips the API call when there is no token", async () => {
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.logout();
+    });
+
+    expect(logoutApi).not.toHaveBeenCalled();
+  });
+
+  it("logout swallows API failures (always succeeds locally)", async () => {
+    window.localStorage.setItem("greenroom.token", "stored");
+    window.localStorage.setItem("greenroom.refresh_token", "refresh");
+    getMe.mockResolvedValueOnce(user());
+    logoutApi.mockRejectedValueOnce(
+      new ApiRequestError(500, "HTTP_ERROR", "boom"),
+    );
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+
+    act(() => {
+      result.current.logout();
+    });
+
+    expect(result.current.token).toBeNull();
   });
 
   it("refreshUser re-fetches /me when a token is present and no-ops when not", async () => {
@@ -309,6 +347,8 @@ describe("useRequireAuth", () => {
   beforeEach(() => {
     getMe.mockReset();
     refreshSession.mockReset();
+    logoutApi.mockReset();
+    logoutApi.mockResolvedValue(undefined);
     mockReplace.mockReset();
     window.localStorage.clear();
   });

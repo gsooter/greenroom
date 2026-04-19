@@ -226,15 +226,22 @@ export async function refreshSession(
 }
 
 /**
- * Invalidate the server-side session (stateless JWT: a no-op for now).
+ * Invalidate the server-side session.
  *
- * Always safe to call. The client should drop the stored token
- * immediately after this resolves.
+ * When a refresh token is supplied, the backend forwards it to
+ * Knuckles for revocation so the refresh family can't be reused
+ * from stolen storage. Always idempotent on the server — the
+ * client should drop its local tokens immediately after this
+ * resolves, whether or not the call succeeded.
  */
-export async function logout(token: string): Promise<void> {
+export async function logout(
+  token: string,
+  refreshToken?: string | null,
+): Promise<void> {
   await fetchJson<void>("/api/v1/auth/logout", {
     method: "POST",
     token,
+    body: refreshToken ? { refresh_token: refreshToken } : undefined,
     revalidateSeconds: 0,
   });
 }
