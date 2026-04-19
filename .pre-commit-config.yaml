@@ -1,0 +1,76 @@
+# Pre-commit = fast auto-fixers (run on every commit)
+# Pre-push = slow enforcement (run once before push)
+#
+# Install:
+#   pip install pre-commit
+#   pre-commit install                  # pre-commit stage
+#   pre-commit install -t pre-push      # pre-push stage
+#
+# Run manually:
+#   pre-commit run --all-files
+#   pre-commit run --all-files --hook-stage pre-push
+
+default_stages: [pre-commit]
+
+repos:
+  # --- Fast auto-fixers (pre-commit) ------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.10
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  # Frontend: run Next.js lint across the whole project when any frontend
+  # file changes. Per-file eslint stumbles on newly-added files that aren't
+  # yet in the TypeScript project, so project-wide lint is more reliable.
+  - repo: local
+    hooks:
+      - id: frontend-lint-fix
+        name: Next.js lint (frontend, auto-fix)
+        entry: bash -c 'cd frontend && npx --no-install next lint --fix'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: false
+
+  # --- Slow enforcement (pre-push) --------------------------------------
+  # Pre-push hooks shell out to scripts/ so the YAML stays parseable and
+  # the logic (venv discovery, friendly error) lives in a shell file.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (backend strict type-check)
+        entry: scripts/hooks/mypy.sh
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: pytest
+        name: pytest (backend unit tests)
+        entry: scripts/hooks/pytest.sh
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: frontend-typecheck
+        name: tsc (frontend type-check)
+        entry: scripts/hooks/tsc.sh
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+        stages: [pre-push]

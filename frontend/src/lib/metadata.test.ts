@@ -99,12 +99,14 @@ describe("absolutePageUrl + buildPageMetadata", () => {
     expect(md.alternates?.canonical).toBe("http://test.base/x");
     expect(md.openGraph?.url).toBe("http://test.base/x");
     expect(md.openGraph?.images).toEqual([{ url: "https://img.test/x.jpg" }]);
-    expect(md.twitter?.card).toBe("summary_large_image");
+    expect((md.twitter as { card?: string } | undefined)?.card).toBe(
+      "summary_large_image",
+    );
   });
 
   it("downgrades twitter card to 'summary' when no image", () => {
     const md = buildPageMetadata({ title: "X", description: "Y", path: "/x" });
-    expect(md.twitter?.card).toBe("summary");
+    expect((md.twitter as { card?: string } | undefined)?.card).toBe("summary");
     expect(md.openGraph?.images).toBeUndefined();
   });
 });
