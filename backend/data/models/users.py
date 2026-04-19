@@ -1,11 +1,11 @@
-"""SQLAlchemy ORM models for users, OAuth providers, magic-link tokens,
-and passkey credentials.
+"""SQLAlchemy ORM models for users and connected music services.
 
-Greenroom has its own identity anchor (Decision 026): users authenticate
-with a magic-link email, Google OAuth, Apple OAuth, or a WebAuthn passkey,
-and Spotify is a connected music service rather than the login method.
-The provider table pattern makes adding new providers (Apple Music, Tidal)
-a row-level change rather than a schema migration.
+After the Knuckles cutover (Decision 030), identity lives entirely in
+Knuckles — local magic-link, Google, Apple, and passkey tables are gone.
+Greenroom keeps the ``users`` row as a profile + preferences record whose
+``id`` is the Knuckles user UUID, and the ``user_oauth_providers`` table
+as the link to connected music services (Spotify today; Apple Music and
+Tidal in Phase 5).
 """
 
 import enum
@@ -14,13 +14,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
-    BigInteger,
     DateTime,
     Enum,
     ForeignKey,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -33,19 +31,15 @@ if TYPE_CHECKING:
 
 
 class OAuthProvider(enum.StrEnum):
-    """Supported OAuth provider types.
+    """Supported music-service provider types.
 
-    Identity providers: ``google``, ``apple``, ``passkey``.
-    ``spotify`` is retained as a connected music service (Decision 026).
-    Music providers ``apple_music`` and ``tidal`` ship in Phase 5 — the
-    enum values are defined here so later phases don't need to touch the
-    schema enum.
+    After Decision 030, identity providers (google/apple/passkey) live
+    in Knuckles; this enum only enumerates the music services Greenroom
+    connects to. Apple Music and Tidal ship in Phase 5 — values are
+    defined here so later phases stay data-only.
     """
 
     SPOTIFY = "spotify"
-    GOOGLE = "google"
-    APPLE = "apple"
-    PASSKEY = "passkey"
     APPLE_MUSIC = "apple_music"
     TIDAL = "tidal"
 
@@ -59,15 +53,19 @@ class DigestFrequency(enum.StrEnum):
 
 
 class User(TimestampMixin, Base):
-    """A registered user of the platform.
+    """A Greenroom profile record keyed by its Knuckles user UUID.
 
-    Users authenticate via Spotify OAuth. Their Spotify listening
-    data powers recommendations, saved shows, and email digests.
+    Knuckles is the identity anchor (Decision 030); ``users.id`` equals
+    the Knuckles user's UUID, and this row stores only Greenroom-specific
+    fields: preferences, Spotify caches, and digest settings. The profile
+    is created lazily on the first authenticated request.
 
     Attributes:
-        id: Unique identifier for the user.
-        email: User's email address from their OAuth provider.
-        display_name: User's display name from their OAuth provider.
+        id: Knuckles user UUID. Primary key; also the ``sub`` claim on
+            every Knuckles-issued access token.
+        email: User's email address, mirrored from Knuckles for
+            display and digest sending.
+        display_name: User's display name.
         avatar_url: URL to the user's profile image.
         city_id: Optional preferred city for filtering events.
         digest_frequency: Email digest preference.
@@ -91,14 +89,11 @@ class User(TimestampMixin, Base):
             ``spotify_top_artists``.
         spotify_synced_at: Last time spotify_top_* / spotify_recent_*
             fields were refreshed.
-        password_hash: Reserved slot for future password-based auth.
-            Nullable because the primary auth paths — magic link, Google,
-            Apple, and passkey — never populate it.
         onboarding_completed_at: Timestamp set once when the user has
             finished the post-signup onboarding flow (Phase 4 genre
             picker). Null means the app should show onboarding on next
             visit; a non-null value means skip/don't re-show.
-        oauth_providers: Relationship to linked OAuth providers.
+        oauth_providers: Relationship to connected music services.
         saved_events: Relationship to user's saved events.
         recommendations: Relationship to user's recommendations.
     """
@@ -151,7 +146,6 @@ class User(TimestampMixin, Base):
     spotify_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -183,15 +177,17 @@ class User(TimestampMixin, Base):
 
 
 class UserOAuthProvider(TimestampMixin, Base):
-    """A linked OAuth provider for a user.
+    """A connected music-service link for a user.
 
-    Provider table pattern (Decision 003) — adding a new OAuth provider
-    (Google, Apple) requires only inserting a new row, no schema change.
+    Provider-table pattern (Decision 003) — adding a new music service
+    (Apple Music, Tidal) is a row-level insert, not a schema change.
+    Identity providers are handled by Knuckles; this table never holds
+    a login-only provider after Decision 030.
 
     Attributes:
         id: Unique identifier for the provider link.
         user_id: Foreign key to the user.
-        provider: OAuth provider type (spotify, google, apple).
+        provider: Music-service provider type (spotify, apple_music, tidal).
         provider_user_id: User's ID on the provider platform.
         access_token: Current OAuth access token (encrypted at rest).
         refresh_token: OAuth refresh token (encrypted at rest).
@@ -287,130 +283,3 @@ class SavedEvent(TimestampMixin, Base):
             String representation with user and event IDs.
         """
         return f"<SavedEvent user={self.user_id} event={self.event_id}>"
-
-
-class MagicLinkToken(TimestampMixin, Base):
-    """A single-use magic-link sign-in token.
-
-    The raw token (the long random string that rides in the email URL)
-    is never stored — we persist a SHA-256 hash of it so a database
-    disclosure does not hand out live login tokens. Rows live only
-    long enough to be either consumed (``used_at`` set) or to expire
-    (``expires_at`` passes); a nightly cleanup job prunes old rows.
-
-    Attributes:
-        id: Unique identifier for the token row.
-        email: The address the link was issued to. Stored even when the
-            user already exists so the verify step can upsert on a
-            stable key without re-hitting the user row.
-        token_hash: SHA-256 hex digest of the raw token. The raw token
-            appears only in the outgoing email and is matched by hashing
-            incoming values and comparing here.
-        expires_at: Wall-clock UTC time after which the token is invalid
-            regardless of ``used_at`` state.
-        used_at: Timestamp when the token was redeemed. Null means the
-            token is still redeemable (if within ``expires_at``).
-        user_id: Populated once the token is redeemed so the audit trail
-            points at the user it created/authenticated. Null until the
-            verify step runs, because a request-link for a brand-new
-            address has no user row yet.
-    """
-
-    __tablename__ = "magic_link_tokens"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
-    token_hash: Mapped[str] = mapped_column(
-        String(128), nullable=False, unique=True, index=True
-    )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
-    )
-
-    def __repr__(self) -> str:
-        """Return a string representation of the MagicLinkToken.
-
-        Returns:
-            String representation with email and used state.
-        """
-        state = "used" if self.used_at is not None else "pending"
-        return f"<MagicLinkToken email={self.email} state={state}>"
-
-
-class PasskeyCredential(TimestampMixin, Base):
-    """A WebAuthn credential (Face ID / Touch ID / security key) for a user.
-
-    Each row is one registered authenticator. Users may have multiple
-    rows — one per device that completed passkey registration.
-
-    Attributes:
-        id: Unique identifier for the credential row.
-        user_id: Foreign key to the owning user.
-        credential_id: Raw credential identifier returned by the
-            authenticator. Stored base64url-encoded. Unique across all
-            users because the WebAuthn spec requires it.
-        public_key: CBOR-encoded public key (base64url) that verifies
-            signatures produced by this authenticator.
-        sign_count: Monotonic usage counter reported by the authenticator.
-            Incremented on each successful auth; a regression signals a
-            cloned credential and MUST fail verification.
-        transports: Optional comma-separated list of transports the
-            authenticator advertises (e.g. "internal,hybrid"). Hint for
-            the browser on the next authentication.
-        name: Optional user-facing label for the credential
-            ("MacBook Air", "iPhone"). Nullable because first-time
-            registration doesn't ask.
-        last_used_at: Timestamp of the most recent successful auth with
-            this credential. Null until first use.
-        user: Relationship back to the owning user.
-    """
-
-    __tablename__ = "passkey_credentials"
-    __table_args__ = (
-        UniqueConstraint("credential_id", name="uq_passkey_credential_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    credential_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
-    public_key: Mapped[str] = mapped_column(Text, nullable=False)
-    sign_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    transports: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    # Relationships
-    user: Mapped["User"] = relationship()
-
-    def __repr__(self) -> str:
-        """Return a string representation of the PasskeyCredential.
-
-        Returns:
-            String representation with user id and credential label.
-        """
-        label = self.name or self.credential_id[:12]
-        return f"<PasskeyCredential user={self.user_id} name={label}>"

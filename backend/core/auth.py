@@ -1,4 +1,4 @@
-"""JWT creation, validation, and route decorators.
+"""Knuckles-backed auth decorator and request-scoped user access.
 
 After the Knuckles cutover (Decision 030), every protected request is
 authenticated with a Knuckles-issued RS256 access token. ``require_auth``
@@ -6,12 +6,6 @@ verifies tokens locally against the cached Knuckles JWKS and looks up
 the corresponding Greenroom :class:`User` row by primary key — Greenroom
 ``users.id`` and Knuckles ``users.id`` are the same UUID after the
 identity-rewrite migration.
-
-The legacy HS256 helpers (:func:`issue_token`, :func:`verify_token`)
-remain only because the soon-to-be-deleted local sign-in services
-(magic-link, Google, Apple, passkey under ``backend/services/auth.py``)
-still emit those tokens. Those services and helpers are scheduled for
-removal as the next step of the Knuckles cutover.
 """
 
 from __future__ import annotations

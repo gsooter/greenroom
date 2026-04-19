@@ -30,27 +30,8 @@ class Settings(BaseSettings):
         posthog_api_key: PostHog analytics API key.
         posthog_host: PostHog instance host URL.
         frontend_base_url: Public URL of the Next.js app. Used when the
-            backend generates user-facing links (magic-link verify URL,
-            OAuth redirect landings, share URLs).
-        magic_link_ttl_seconds: How long a magic-link token stays
-            redeemable before ``expires_at`` invalidates it.
-        google_oauth_client_id: Google Sign-In client id. Empty when the
-            Google path is not configured.
-        google_oauth_client_secret: Google Sign-In client secret.
-        google_oauth_redirect_uri: Google OAuth redirect landing.
-        apple_oauth_client_id: Sign-in-with-Apple "services id".
-        apple_oauth_team_id: Apple Developer team id used to sign the
-            client secret JWT.
-        apple_oauth_key_id: Apple private-key id (``*.p8`` filename).
-        apple_oauth_private_key: PEM-encoded Apple private key contents
-            (``-----BEGIN PRIVATE KEY-----`` ... ``-----END ...``).
-        apple_oauth_redirect_uri: Apple OAuth redirect landing.
-        webauthn_rp_id: Relying-party id for WebAuthn — normally the
-            apex domain of ``frontend_base_url`` (e.g. ``greenroom.app``).
-        webauthn_rp_name: Display name shown on the native passkey
-            prompt ("Save passkey for <rp_name>").
-        webauthn_origin: Expected origin on WebAuthn ceremonies. Must
-            include scheme and host, no trailing slash.
+            backend generates user-facing links (OAuth redirect landings,
+            share URLs).
         tidal_client_id: Tidal Developer Platform client id (Phase 5).
         tidal_client_secret: Tidal Developer Platform client secret.
         tidal_redirect_uri: Tidal OAuth redirect URI.
@@ -119,26 +100,6 @@ class Settings(BaseSettings):
     # App
     frontend_base_url: str = "http://localhost:3000"
     debug: bool = False
-
-    # Magic link
-    magic_link_ttl_seconds: int = 15 * 60
-
-    # Google OAuth
-    google_oauth_client_id: str = ""
-    google_oauth_client_secret: str = ""
-    google_oauth_redirect_uri: str = ""
-
-    # Apple OAuth
-    apple_oauth_client_id: str = ""
-    apple_oauth_team_id: str = ""
-    apple_oauth_key_id: str = ""
-    apple_oauth_private_key: str = ""
-    apple_oauth_redirect_uri: str = ""
-
-    # WebAuthn (passkey)
-    webauthn_rp_id: str = "localhost"
-    webauthn_rp_name: str = "Greenroom"
-    webauthn_origin: str = "http://localhost:3000"
 
     # Tidal (Phase 5)
     tidal_client_id: str = ""
