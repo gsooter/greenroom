@@ -873,6 +873,191 @@ trivial — one SHA-256 per request.
 
 ---
 
+### 028 — Auth Extracted Into a Standalone Knuckles Service
+
+**Date:** 2026-04-19
+**Status:** Decided (supersedes the Greenroom-owned portions of Decisions 003 and 026)
+
+**Decision:** All identity and authentication work moves out of Greenroom
+into a separate service named **Knuckles**, deployed on its own Railway
+project with its own Postgres. Knuckles owns every identity table (`users`,
+`user_oauth_providers`, `magic_link_tokens`, `passkey_credentials`), every
+identity endpoint (magic-link, Google, Apple, WebAuthn registration + auth,
+token refresh, logout, `/me`, connected services), and JWT minting. JWTs
+are signed **RS256** and consumers (Greenroom first, other apps later)
+validate them locally via a **JWKS endpoint** Knuckles publishes. Every
+app that talks to Knuckles registers as an `app_client` with its own
+client id + secret so JWTs carry an `app_client_id` claim and tenancy is
+explicit. Greenroom keeps a minimal local `users` table — `id`,
+`display_name`, `avatar_url`, `created_at` — keyed by the Knuckles user
+id, plus the music-data columns the recommendation engine needs
+(`spotify_top_artist_ids`, `spotify_recent_artist_ids`, genre preferences,
+notification settings).
+
+**Rationale:**
+Auth is not Greenroom-specific and never should have lived inside the
+concert aggregator's repo. The product roadmap already assumes other
+apps (a reading-list tool, a personal CRM, possibly others) that will
+want the same login surface, the same social sign-in buttons, the same
+passkey support, and — critically — the same user identity so one
+person isn't maintaining four separate account rosters. Every week auth
+lives in Greenroom is a week of "which identity decisions are
+Greenroom-specific and which are universal" that has to be untangled
+later. Extracting now, before the auth code has grown a long tail of
+app-specific couplings, is the cheapest moment to pay this cost. The
+RS256 + JWKS choice is the standard pattern for this shape: consumers
+fetch the signing key once, validate offline per request, and only hit
+Knuckles for the ceremonies themselves. The `app_clients` table makes
+multi-tenancy explicit from day one instead of bolting it on once a
+second consumer exists.
+
+**Spotify split — corrected 2026-04-19:** The initial framing of
+this decision put Spotify OAuth inside Knuckles as a "connected
+service." That was wrong. Music-service OAuth is a Greenroom concern
+and stays in Greenroom entirely (see Decision 029). Knuckles is
+identity-only: magic-link, Google, Apple, WebAuthn. It never sees a
+Spotify credential, never runs the Spotify OAuth round trip, and
+never exposes a token-handoff endpoint.
+
+**Alternatives considered:**
+- **Leave auth in Greenroom and copy-paste into each future app** —
+  rejected; guaranteed drift, four different magic-link TTLs, four
+  different passkey RP IDs, and a user who exists in every app's
+  database under a different primary key.
+- **Use a managed auth provider (Auth0, Clerk, WorkOS, Supabase Auth)**
+  — considered seriously. Rejected because the per-MAU pricing crosses
+  into "real money" quickly for a small hobby portfolio, the passkey
+  and magic-link UX on the self-hosted path is already wired, and
+  owning the identity primitives means the schema can be shaped for
+  the apps (app_clients, refresh-token rotation, strict-by-default
+  audience claims) without bending to a vendor's model.
+- **Keep HS256 with a shared secret across apps** — rejected; any app
+  that can *validate* a JWT can also *mint* one, so a compromise of
+  the Greenroom env vars becomes a compromise of every other app on
+  the same secret. RS256 + JWKS keeps signing authority in Knuckles
+  alone.
+- **Do the extraction gradually, leaving auth in both places during
+  migration** — rejected; dual-write on identity is the standard way
+  to ship a "which system is the source of truth" bug. One cutover is
+  shorter and less error-prone than a migration window.
+
+**Consequences:**
+- **A new repo and Railway project** — Knuckles is a sibling deployment,
+  not a Greenroom subdirectory. The Knuckles repo has its own CI,
+  migrations, tests, and on-call story.
+- **Greenroom loses 1100+ lines of auth service code, plus the routes,
+  tests, migrations, and frontend context that rely on it.** The remaining
+  Greenroom `users` table is a foreign-key target only; no identity
+  logic lives server-side in the aggregator anymore.
+- **Greenroom's `core/auth.py` becomes a JWKS verifier.** It fetches
+  Knuckles' public key on boot (with an on-disk fallback cache for
+  resilience), validates RS256 JWTs per request, and extracts `sub`
+  as the Knuckles user id. No signing happens in Greenroom ever again.
+- **Refresh-token rotation exists for the first time.** Knuckles issues
+  1h access + 30d refresh tokens, rotates on use, and invalidates old
+  refresh tokens on logout. The frontend needs a refresh hook before
+  access-token expiry.
+- **Existing Greenroom JWTs become invalid at cutover.** HS256 tokens
+  signed with the Greenroom JWT secret will not validate against
+  Knuckles' public key. Every user signs in again on first visit
+  post-migration. Acceptable: the user count is tiny and the magic-link
+  / passkey path is already fast.
+- **Greenroom env gains `KNUCKLES_URL` and `KNUCKLES_CLIENT_ID` (plus
+  `KNUCKLES_CLIENT_SECRET` for server-to-server calls). It loses
+  `JWT_SECRET_KEY`, `GOOGLE_*`, `APPLE_*`, `WEBAUTHN_*`, `SENDGRID_*`
+  (for magic-link delivery — that moves with auth). Spotify env vars
+  (`SPOTIFY_*`) stay in Greenroom — see Decision 029.**
+- **Data migration runs once:** existing Greenroom `users` rows are
+  copied into Knuckles with preserved UUIDs; `google` and `apple`
+  provider rows are copied into Knuckles; `spotify` (and future
+  `apple_music` / `tidal`) provider rows are migrated into Greenroom's
+  new `music_service_connections` table; magic-link and passkey rows
+  move to Knuckles. Greenroom's local `users` table is rewritten to
+  the minimal shape with the same UUIDs as foreign keys. Saved
+  events, recommendations, and notification settings keep their
+  `user_id` references unchanged.
+- **Frontend auth context (`frontend/src/lib/auth.tsx`) repoints to
+  Knuckles.** Login, register, passkey ceremony, and session refresh
+  all talk to `KNUCKLES_URL`; the Greenroom API only receives an
+  `Authorization: Bearer <jwt>` header and never participates in the
+  auth round trip.
+- **`AUTH_MIGRATION.md` is the working plan** and tracks what's moved,
+  what's left, and the operational checklist for cutover. It should
+  be deleted once the migration is complete and this decision entry
+  remains as the permanent record.
+
+---
+
+### 029 — Music-Service OAuth Stays In Greenroom; Knuckles Is Identity-Only
+
+**Date:** 2026-04-19
+**Status:** Decided (clarifies the scope of Decision 028)
+
+**Decision:** Spotify, Apple Music, Tidal, and any other music-service
+OAuth lives entirely in Greenroom. Greenroom owns a new local
+`music_service_connections` table (`id`, `user_id` = Knuckles UUID,
+`service`, `access_token`, `refresh_token`, `token_expires_at`,
+`scopes`, `created_at`). Greenroom owns the OAuth routes at
+`backend/api/v1/music/` and the settings UI for connect/disconnect.
+Knuckles never sees any music-service credential, runs any music-
+service ceremony, or exposes any music-service endpoint. Knuckles'
+`user_oauth_providers.provider` enum is restricted to `{google, apple}`.
+
+**Rationale:**
+A centralized auth service is only valuable if its surface stays small
+and universal across consumers. The moment Knuckles knows about
+Spotify, every future consuming app has to reason about "does my app
+use Spotify or not" when asking Knuckles for a user. That couples
+Knuckles to a specific product's data model and turns it from
+identity-infrastructure into a leaky shared backend. Music-service
+tokens also have a fundamentally different lifecycle — they refresh
+frequently, they carry per-app scopes, and the data they gate (listening
+history, library) is only meaningful inside the consuming app's feature
+set. Keeping music services in Greenroom means one app owns the full
+picture of one concern, rather than two apps sharing an awkward split
+across an HTTP boundary. This decision also removes the server-to-server
+Spotify token handoff endpoint that Decision 028 originally proposed —
+a nice simplification because no credential ever leaves Greenroom.
+
+**Alternatives considered:**
+- **Knuckles owns the Spotify OAuth round trip, Greenroom fetches
+  tokens server-to-server** (the original Decision 028 framing) —
+  rejected per the rationale above. Adds a failure mode without
+  removing any coupling; Knuckles still knows Spotify exists.
+- **Spotify-only hybrid: Knuckles holds Spotify credentials because
+  Decision 026 called Spotify a "connected service"** — rejected.
+  The word "connected service" from Decision 026 was about Greenroom
+  UX ("after you sign in, you may connect Spotify"), not about where
+  the OAuth lives. This decision pins the infrastructure question
+  explicitly.
+- **Leave all auth in Greenroom** — rejected. That contradicts
+  Decision 028; the extraction is still the right call. This decision
+  is about the *scope* of what moves, not whether anything moves.
+
+**Consequences:**
+- Knuckles' `CLAUDE.md` and `DECISIONS.md` encode music-service
+  exclusion as a hard rule. A future Claude Code session that tries
+  to add `spotify` / `apple_music` / `tidal` to Knuckles will see
+  the rule at the top of CLAUDE.md and must reject the change.
+- Greenroom introduces `music_service_connections` in a fresh
+  migration as part of Phase 2 of the Knuckles cutover. The old
+  `user_oauth_providers` rows for music services are migrated into
+  the new table; Google/Apple rows go to Knuckles.
+- `backend/api/v1/auth.py` (Spotify routes) is not deleted — it's
+  renamed/rewired to `backend/api/v1/music/spotify.py`, pointed at
+  the new table, and no longer issues JWTs. The JWT issuance is
+  gone because Spotify OAuth doesn't create a new Greenroom user
+  account anymore; an unauthenticated user must first sign in via
+  Knuckles (magic-link / Google / Apple / passkey) before they can
+  connect Spotify.
+- `backend/services/spotify.py` (sync path) stays put; it reads the
+  current access token from `music_service_connections` instead of
+  `user_oauth_providers`. No Knuckles HTTP call on the sync path.
+- `SPOTIFY_CLIENT_ID / _SECRET / _REDIRECT_URI` stay in Greenroom's
+  environment — they do not appear in any Knuckles env file.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
