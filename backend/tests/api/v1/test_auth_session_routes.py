@@ -68,23 +68,6 @@ def test_auth_logout_returns_204(
     assert resp.status_code == 204
 
 
-def test_auth_me_rejects_legacy_hs256_token(
-    client: FlaskClient,
-    monkeypatch: pytest.MonkeyPatch,
-    knuckles_test_key: rsa.RSAPrivateKey,
-    stub_knuckles_jwks: str,
-) -> None:
-    """Old HS256 ``issue_token`` outputs no longer pass ``require_auth``."""
-    legacy = auth_module.issue_token(uuid.uuid4())
-    monkeypatch.setattr(
-        auth_module.users_repo,
-        "get_user_by_id",
-        lambda _s, _uid: MagicMock(),
-    )
-    resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {legacy}"})
-    assert resp.status_code == 401
-
-
 def test_auth_me_rejects_expired_knuckles_token(
     client: FlaskClient,
     knuckles_test_key: rsa.RSAPrivateKey,
@@ -126,18 +109,48 @@ def test_auth_me_rejects_token_with_non_uuid_subject(
     assert resp.status_code == 401
 
 
-def test_auth_me_rejects_when_user_row_missing(
+def test_auth_me_auto_provisions_missing_user_from_claims(
     client: FlaskClient,
     monkeypatch: pytest.MonkeyPatch,
     knuckles_test_key: rsa.RSAPrivateKey,
     stub_knuckles_jwks: str,
 ) -> None:
-    """Knuckles authenticated the user but Greenroom has no row → 401."""
+    """First authenticated request creates the Greenroom row lazily."""
+    created = User(id=uuid.uuid4(), email="new@example.test", is_active=True)
+    monkeypatch.setattr(auth_module.users_repo, "get_user_by_id", lambda _s, _uid: None)
+    create_user = MagicMock(return_value=created)
+    monkeypatch.setattr(auth_module.users_repo, "create_user", create_user)
+    monkeypatch.setattr(
+        route.users_service,
+        "serialize_user",
+        lambda u: {"id": str(u.id), "email": u.email},
+    )
+
+    token = mint_knuckles_token(
+        signing_key=knuckles_test_key,
+        kid=stub_knuckles_jwks,
+        user_id=created.id,
+        email=created.email,
+    )
+    resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["email"] == created.email
+    create_user.assert_called_once()
+
+
+def test_auth_me_rejects_when_claims_lack_email(
+    client: FlaskClient,
+    monkeypatch: pytest.MonkeyPatch,
+    knuckles_test_key: rsa.RSAPrivateKey,
+    stub_knuckles_jwks: str,
+) -> None:
+    """Auto-provision requires an email claim — missing it is a 401."""
     monkeypatch.setattr(auth_module.users_repo, "get_user_by_id", lambda _s, _uid: None)
     token = mint_knuckles_token(
         signing_key=knuckles_test_key,
         kid=stub_knuckles_jwks,
         user_id=uuid.uuid4(),
+        email=None,
     )
     resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401

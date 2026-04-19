@@ -1,6 +1,8 @@
 """Spotify OAuth route handlers.
 
-Two-step flow:
+Two-step flow, both halves require a valid Knuckles access token — the
+user has already signed in via Knuckles and is now *connecting* their
+Spotify account to their Greenroom profile:
 
 1. ``GET /api/v1/auth/spotify/start`` — returns the Spotify consent URL
    and a signed ``state`` token. The client performs a full-page
@@ -8,9 +10,10 @@ Two-step flow:
 
 2. ``POST /api/v1/auth/spotify/complete`` — called by the frontend
    callback page with the ``code`` and ``state`` Spotify appended to
-   the redirect. Exchanges the code for tokens, upserts the User and
-   MusicServiceConnection rows, and returns a session JWT the client
-   stores in localStorage.
+   the redirect. Exchanges the code for tokens and upserts the
+   MusicServiceConnection row attached to the caller's user. Greenroom
+   issues no tokens of its own (Decision 030); the caller keeps using
+   their Knuckles access token.
 
 State is carried as a short-lived JWT (10-minute expiry, ``purpose``
 claim = ``spotify_oauth_state``) rather than a Redis entry. That keeps
@@ -23,13 +26,13 @@ from __future__ import annotations
 
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jwt
 from flask import request
 
 from backend.api.v1 import api_v1
-from backend.core.auth import issue_token
+from backend.core.auth import get_current_user, require_auth
 from backend.core.config import get_settings
 from backend.core.database import get_db
 from backend.core.exceptions import (
@@ -38,10 +41,13 @@ from backend.core.exceptions import (
     ValidationError,
 )
 from backend.core.logging import get_logger
-from backend.data.models.users import OAuthProvider
+from backend.data.models.users import OAuthProvider, User
 from backend.data.repositories import users as users_repo
 from backend.services import spotify as spotify_service
 from backend.services import users as users_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 logger = get_logger(__name__)
 
@@ -51,6 +57,7 @@ _STATE_ALGORITHM = "HS256"
 
 
 @api_v1.route("/auth/spotify/start", methods=["GET"])
+@require_auth
 def spotify_start() -> tuple[dict[str, Any], int]:
     """Return the Spotify consent URL and a signed state token.
 
@@ -72,22 +79,25 @@ def spotify_start() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/spotify/complete", methods=["POST"])
+@require_auth
 def spotify_complete() -> tuple[dict[str, Any], int]:
-    """Finalize the Spotify OAuth flow and issue a Greenroom JWT.
+    """Finalize the Spotify OAuth flow and link the connection to the caller.
 
     Request body: ``{"code": "...", "state": "..."}``.
 
     Verifies the state token, exchanges ``code`` with Spotify, upserts
-    the local User + MusicServiceConnection rows, and returns a freshly
-    minted session JWT.
+    the caller's MusicServiceConnection row, and returns the refreshed
+    user profile. The Spotify account must not already be linked to a
+    different Greenroom user.
 
     Returns:
-        Tuple of JSON body (``token``, ``user``) and HTTP 200.
+        Tuple of JSON body (``user``) and HTTP 200.
 
     Raises:
         ValidationError: If ``code`` or ``state`` is missing/malformed.
-        AppError: ``SPOTIFY_AUTH_FAILED`` if Spotify rejects the code
-            or returns an unusable profile.
+        AppError: ``SPOTIFY_AUTH_FAILED`` if Spotify rejects the code,
+            returns an unusable profile, or the profile is already
+            linked to a different Greenroom account.
     """
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -105,12 +115,13 @@ def spotify_complete() -> tuple[dict[str, Any], int]:
     profile = spotify_service.get_profile(tokens.access_token)
 
     session = get_db()
-    user = _upsert_spotify_user(session, profile, tokens)
+    user = get_current_user()
+    _link_spotify_connection(session, user, profile, tokens)
 
     # Populate spotify_top_* fields inline so the first /for-you render
-    # isn't empty. A Spotify outage here should never block login, so
-    # any failure is logged and swallowed — the nightly Celery task
-    # (and any subsequent login) will retry.
+    # isn't empty. A Spotify outage here should never block the connect
+    # flow, so any failure is logged and swallowed — the nightly Celery
+    # task (and any subsequent reconnect) will retry.
     try:
         spotify_service.sync_top_artists(
             session, user, access_token=tokens.access_token
@@ -118,13 +129,7 @@ def spotify_complete() -> tuple[dict[str, Any], int]:
     except AppError as exc:
         logger.warning("Inline top-artists sync failed for user %s: %s", user.id, exc)
 
-    jwt_token = issue_token(user.id)
-    return {
-        "data": {
-            "token": jwt_token,
-            "user": users_service.serialize_user(user),
-        }
-    }, 200
+    return {"data": {"user": users_service.serialize_user(user)}}, 200
 
 
 # ---------------------------------------------------------------------------
@@ -180,31 +185,41 @@ def _verify_state_token(state: str) -> None:
         )
 
 
-def _upsert_spotify_user(
-    session: Any,
+def _link_spotify_connection(
+    session: Session,
+    user: User,
     profile: spotify_service.SpotifyProfile,
     tokens: spotify_service.SpotifyTokens,
-) -> Any:
-    """Link the Spotify profile to a local user row, creating one if new.
+) -> None:
+    """Create or refresh the caller's Spotify MusicServiceConnection.
 
-    Matches on ``(provider=spotify, provider_user_id=profile.id)``
-    first; falls back to matching by email so users returning after
-    revoking/reconnecting keep the same account. Updates stored tokens
-    every time so refresh flows always see the freshest pair.
+    If a connection for this Spotify profile already exists on a
+    *different* user, reject the link rather than silently rebinding
+    it — that would let attackers steal a Spotify-authenticated account
+    by re-consenting through a Knuckles account they control.
 
     Args:
         session: Active SQLAlchemy session.
+        user: The authenticated caller.
         profile: Profile fetched from Spotify.
         tokens: OAuth tokens just issued.
 
-    Returns:
-        The :class:`User` now linked to this Spotify account.
+    Raises:
+        AppError: ``SPOTIFY_AUTH_FAILED`` (409) if the Spotify profile
+            is already linked to a different Greenroom user.
     """
     connection = users_repo.get_music_connection(
         session,
         provider=OAuthProvider.SPOTIFY,
         provider_user_id=profile.id,
     )
+    if connection is not None and connection.user_id != user.id:
+        raise AppError(
+            code=SPOTIFY_AUTH_FAILED,
+            message="Spotify account is already linked to another user.",
+            status_code=409,
+        )
+
     if connection is not None:
         users_repo.update_music_connection_tokens(
             session,
@@ -213,42 +228,22 @@ def _upsert_spotify_user(
             refresh_token=tokens.refresh_token,
             token_expires_at=tokens.expires_at,
         )
-        user = connection.user
-        users_repo.update_user(
-            session,
-            user,
-            display_name=profile.display_name or user.display_name,
-            avatar_url=profile.avatar_url or user.avatar_url,
-        )
-        users_repo.update_last_login(session, user)
-        return user
-
-    existing = users_repo.get_user_by_email(session, profile.email)
-    if existing is None:
-        user = users_repo.create_user(
-            session,
-            email=profile.email,
-            display_name=profile.display_name,
-            avatar_url=profile.avatar_url,
-        )
     else:
-        user = existing
-        users_repo.update_user(
+        users_repo.create_music_connection(
             session,
-            user,
-            display_name=profile.display_name or user.display_name,
-            avatar_url=profile.avatar_url or user.avatar_url,
+            user_id=user.id,
+            provider=OAuthProvider.SPOTIFY,
+            provider_user_id=profile.id,
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            token_expires_at=tokens.expires_at,
+            scopes=tokens.scope,
         )
 
-    users_repo.create_music_connection(
+    users_repo.update_user(
         session,
-        user_id=user.id,
-        provider=OAuthProvider.SPOTIFY,
-        provider_user_id=profile.id,
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
-        token_expires_at=tokens.expires_at,
-        scopes=tokens.scope,
+        user,
+        display_name=profile.display_name or user.display_name,
+        avatar_url=profile.avatar_url or user.avatar_url,
     )
     users_repo.update_last_login(session, user)
-    return user

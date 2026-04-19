@@ -1114,6 +1114,75 @@ sees triggers a JWKS refresh, and verification proceeds.
 
 ---
 
+### 031 — Greenroom Users Are Lazily Provisioned From Knuckles Claims
+
+**Date:** 2026-04-19
+**Status:** Decided
+
+**Decision:** Greenroom does not keep a pre-populated user directory.
+The first authenticated request from a Knuckles-signed token with a
+``sub`` that has no matching Greenroom ``users`` row inserts that row
+on the fly, keyed by the Knuckles user UUID, using ``email`` (and
+``name`` when present) from the token claims. After Decision 030 the
+legacy HS256 ``issue_token`` / ``verify_token`` helpers are also
+removed; Greenroom no longer signs or verifies any token format
+except the Knuckles-issued RS256 access tokens that flow through
+``verify_knuckles_token``. The Spotify OAuth routes shift from a
+sign-in flow to a connect flow — both endpoints now require an
+existing Knuckles session and the happy path returns only the updated
+user profile, never a session token.
+
+**Rationale:** Two of Greenroom's concerns collapse into one step
+this way. (1) There is no "sync users from Knuckles" background job
+to keep correct — the first real authenticated request does it for
+free. (2) ``require_auth`` always produces a concrete ``User`` row
+for downstream code, so no view has to defensively handle "token
+valid but no local profile yet." The Spotify-connect reframing falls
+out naturally: with Knuckles as the sole identity issuer, Spotify
+OAuth cannot be a sign-in path without Greenroom re-entering the
+token-minting business it just exited.
+
+**Alternatives considered:**
+- **Pre-provision on the Knuckles side via a webhook/outbound event
+  on signup.** Rejected. It introduces an at-least-once delivery
+  problem (retries, duplicate handling, backfill for missed events)
+  to solve a problem the first real request already solves for
+  free. Webhooks earn their keep for cross-service state that *must*
+  be consistent before the user acts, which this is not.
+- **Error out with 401 until a user manually "activates" their
+  Greenroom profile.** Rejected. The extra screen adds zero value —
+  the account already exists in Knuckles and the user already
+  consented at signup there. A silent first-hit provision matches
+  the mental model.
+- **Keep the legacy HS256 ``issue_token`` helper around as dead
+  code "just in case."** Rejected. ``require_auth`` is the only
+  caller that mattered; leaving unused token-issuance helpers in a
+  security-adjacent module is an invitation to reintroduce a
+  parallel auth path by accident.
+
+**Consequences:**
+- ``backend.core.auth.issue_token`` and ``verify_token`` are gone,
+  along with ``backend/tests/core/test_auth.py``. ``require_auth``
+  is now the whole surface of the module.
+- ``users_repo.create_user`` accepts an optional ``user_id`` so the
+  provision path can pin the PK to the Knuckles UUID. Existing
+  callers that omit it keep their old behavior (fresh UUID).
+- Knuckles must include the ``email`` claim on every access token
+  it issues — Greenroom treats a missing email as an invalid token
+  because it cannot stand up a profile without one. A future
+  ``/v1/auth/me``-style enrichment from Knuckles would remove that
+  constraint; until then, the claim requirement is hard.
+- The Spotify routes now 401 unauthenticated callers. The frontend
+  "connect Spotify" UI must attach the existing Knuckles bearer to
+  both ``/auth/spotify/start`` and ``/auth/spotify/complete``, and
+  stop expecting a ``token`` field in the complete response.
+- ``/auth/spotify/complete`` rejects re-linking a Spotify profile
+  that already points at a different Greenroom user with a 409.
+  That blocks the account-takeover path where an attacker re-
+  consents through their own Knuckles login.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

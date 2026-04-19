@@ -55,6 +55,7 @@ def create_user(
     session: Session,
     *,
     email: str,
+    user_id: uuid.UUID | None = None,
     display_name: str | None = None,
     avatar_url: str | None = None,
     city_id: uuid.UUID | None = None,
@@ -64,6 +65,10 @@ def create_user(
     Args:
         session: Active SQLAlchemy session.
         email: User's email address.
+        user_id: Optional explicit primary key. After Decision 030 the
+            auto-provision path passes the Knuckles ``sub`` so Greenroom
+            ``users.id`` stays identical to the Knuckles user UUID. When
+            ``None``, SQLAlchemy generates a fresh UUID.
         display_name: User's display name.
         avatar_url: URL to user's profile image.
         city_id: Optional preferred city UUID.
@@ -72,6 +77,7 @@ def create_user(
         The newly created User instance.
     """
     user = User(
+        id=user_id if user_id is not None else uuid.uuid4(),
         email=email,
         display_name=display_name,
         avatar_url=avatar_url,
