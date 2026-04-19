@@ -26,6 +26,7 @@ dependencies = [
     "PyJWT>=2.8,<3",
     "sendgrid>=6.11,<7",
     "gunicorn>=21.2,<23",
+    "webauthn>=2.0,<3",
 ]
 
 [project.optional-dependencies]

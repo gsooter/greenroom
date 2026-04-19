@@ -16,6 +16,7 @@ from backend.api.v1 import auth as _auth  # noqa: F401, E402
 from backend.api.v1 import auth_apple as _auth_apple  # noqa: F401, E402
 from backend.api.v1 import auth_google as _auth_google  # noqa: F401, E402
 from backend.api.v1 import auth_magic_link as _auth_magic_link  # noqa: F401, E402
+from backend.api.v1 import auth_passkey as _auth_passkey  # noqa: F401, E402
 from backend.api.v1 import auth_session as _auth_session  # noqa: F401, E402
 from backend.api.v1 import cities as _cities  # noqa: F401, E402
 from backend.api.v1 import events as _events  # noqa: F401, E402

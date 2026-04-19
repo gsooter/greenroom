@@ -1,12 +1,13 @@
-"""Authentication service — magic-link, Google OAuth, and (coming next)
-Apple OAuth and WebAuthn passkey flows.
+"""Authentication service — magic-link, Google OAuth, Apple OAuth, and
+WebAuthn passkey flows.
 
 Routes stay thin; all auth business logic lives here. The module imports
 its collaborators by name (``magic_links_repo``, ``users_repo``,
-``email_service``, ``requests``) so tests can ``monkeypatch.setattr``
-them without patching import machinery.
+``email_service``, ``requests``, ``webauthn``) so tests can
+``monkeypatch.setattr`` them without patching import machinery.
 """
 
+import base64
 import hashlib
 import secrets
 import urllib.parse
@@ -15,7 +16,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
+import webauthn
 from sqlalchemy.orm import Session
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
+    ResidentKeyRequirement,
+    UserVerificationRequirement,
+)
 
 from backend.core.auth import issue_token
 from backend.core.config import get_settings
@@ -25,12 +33,15 @@ from backend.core.exceptions import (
     MAGIC_LINK_ALREADY_USED,
     MAGIC_LINK_EXPIRED,
     MAGIC_LINK_INVALID,
+    PASSKEY_AUTH_FAILED,
+    PASSKEY_REGISTRATION_FAILED,
     AppError,
     ValidationError,
 )
 from backend.core.logging import get_logger
 from backend.data.models.users import OAuthProvider, User
 from backend.data.repositories import magic_links as magic_links_repo
+from backend.data.repositories import passkeys as passkeys_repo
 from backend.data.repositories import users as users_repo
 from backend.services import email as email_service
 
@@ -731,6 +742,366 @@ def _oauth_fail_code(provider: OAuthProvider) -> str:
         OAuthProvider.APPLE: APPLE_AUTH_FAILED,
         OAuthProvider.SPOTIFY: SPOTIFY_AUTH_FAILED,
     }.get(provider, GOOGLE_AUTH_FAILED)
+
+
+# ---------------------------------------------------------------------------
+# WebAuthn passkeys
+# ---------------------------------------------------------------------------
+
+_PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60
+
+
+@dataclass(frozen=True)
+class PasskeyRegistrationChallenge:
+    """A registration ceremony's public options plus its opaque state.
+
+    Attributes:
+        options: JSON-ready ``PublicKeyCredentialCreationOptions`` the
+            browser passes to ``navigator.credentials.create``.
+        state: Short-lived signed JWT that the client must echo back on
+            the complete call. Contains the challenge and user id.
+    """
+
+    options: dict[str, Any]
+    state: str
+
+
+@dataclass(frozen=True)
+class PasskeyAuthenticationChallenge:
+    """An authentication ceremony's public options plus its opaque state.
+
+    Attributes:
+        options: JSON-ready ``PublicKeyCredentialRequestOptions`` for
+            ``navigator.credentials.get``.
+        state: Short-lived signed JWT that the client echoes back.
+    """
+
+    options: dict[str, Any]
+    state: str
+
+
+def passkey_registration_options(
+    session: Session, *, user: User
+) -> PasskeyRegistrationChallenge:
+    """Build the public-key options + state token for registering a passkey.
+
+    The ceremony is "user-verifying, platform-preferred": we ask for a
+    resident key (the passkey is stored on the authenticator itself)
+    because that's what makes the authentication side usernameless.
+
+    Args:
+        session: Active SQLAlchemy session. Used only to look up the
+            user's existing credentials so we can set
+            ``excludeCredentials`` (prevents double-registering the same
+            authenticator).
+        user: The signed-in user adding the passkey to their account.
+
+    Returns:
+        A :class:`PasskeyRegistrationChallenge` carrying the browser
+        options and the signed challenge-state token.
+    """
+    import json as _json
+
+    settings = get_settings()
+    existing = passkeys_repo.list_by_user(session, user.id)
+    opts = webauthn.generate_registration_options(
+        rp_id=settings.webauthn_rp_id,
+        rp_name=settings.webauthn_rp_name,
+        user_id=user.id.bytes,
+        user_name=user.email,
+        user_display_name=user.display_name or user.email,
+        exclude_credentials=[
+            PublicKeyCredentialDescriptor(id=_b64url_decode(c.credential_id))
+            for c in existing
+        ],
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.PREFERRED,
+        ),
+    )
+    challenge_b64 = _b64url_encode(opts.challenge)
+    state = _issue_passkey_state(
+        purpose="passkey_register_challenge",
+        claims={"user_id": str(user.id), "challenge": challenge_b64},
+    )
+    return PasskeyRegistrationChallenge(
+        options=_json.loads(webauthn.options_to_json(opts)),
+        state=state,
+    )
+
+
+def passkey_register_complete(
+    session: Session,
+    *,
+    user: User,
+    credential: dict[str, Any],
+    state: str,
+    name: str | None = None,
+) -> User:
+    """Verify the authenticator's attestation and persist the new credential.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user: The signed-in user registering the passkey.
+        credential: The ``PublicKeyCredential`` JSON the browser returned
+            from ``navigator.credentials.create``.
+        state: The signed state token this module issued at the start of
+            the ceremony.
+        name: Optional user-visible label for the credential (e.g.
+            "iPhone 15" or "YubiKey").
+
+    Returns:
+        The user after the credential has been recorded.
+
+    Raises:
+        AppError: ``PASSKEY_REGISTRATION_FAILED`` if the state is
+            tampered with, the challenge doesn't match, or the library
+            rejects the attestation.
+    """
+    claims = _verify_passkey_state(state, expected_purpose="passkey_register_challenge")
+    if claims.get("user_id") != str(user.id):
+        raise AppError(
+            code=PASSKEY_REGISTRATION_FAILED,
+            message="Passkey state does not match the signed-in user.",
+            status_code=400,
+        )
+    settings = get_settings()
+    try:
+        verification = webauthn.verify_registration_response(
+            credential=credential,
+            expected_challenge=_b64url_decode(claims["challenge"]),
+            expected_origin=settings.webauthn_origin,
+            expected_rp_id=settings.webauthn_rp_id,
+        )
+    except Exception as exc:
+        raise AppError(
+            code=PASSKEY_REGISTRATION_FAILED,
+            message="Passkey registration could not be verified.",
+            status_code=400,
+        ) from exc
+
+    passkeys_repo.create(
+        session,
+        user_id=user.id,
+        credential_id=_b64url_encode(verification.credential_id),
+        public_key=_b64url_encode(verification.credential_public_key),
+        transports=_transports_from_credential(credential),
+        name=name,
+        sign_count=verification.sign_count,
+    )
+    return user
+
+
+def passkey_authentication_options() -> PasskeyAuthenticationChallenge:
+    """Build public-key options for a usernameless passkey sign-in.
+
+    With ``allowCredentials=[]`` the browser surfaces every resident
+    passkey bound to the relying party, so the user picks the account
+    themselves. The ``userHandle`` that comes back in the assertion is
+    how we look up the Greenroom user.
+
+    Returns:
+        A :class:`PasskeyAuthenticationChallenge` with options + state.
+    """
+    import json as _json
+
+    settings = get_settings()
+    opts = webauthn.generate_authentication_options(
+        rp_id=settings.webauthn_rp_id,
+        user_verification=UserVerificationRequirement.PREFERRED,
+    )
+    challenge_b64 = _b64url_encode(opts.challenge)
+    state = _issue_passkey_state(
+        purpose="passkey_auth_challenge",
+        claims={"challenge": challenge_b64},
+    )
+    return PasskeyAuthenticationChallenge(
+        options=_json.loads(webauthn.options_to_json(opts)),
+        state=state,
+    )
+
+
+def passkey_authenticate_complete(
+    session: Session,
+    *,
+    credential: dict[str, Any],
+    state: str,
+) -> OAuthLogin:
+    """Verify an authentication assertion and issue a Greenroom JWT.
+
+    Args:
+        session: Active SQLAlchemy session.
+        credential: The ``PublicKeyCredential`` JSON from
+            ``navigator.credentials.get``.
+        state: The signed state token issued at ceremony start.
+
+    Returns:
+        An :class:`OAuthLogin` carrying the authenticated user and JWT.
+
+    Raises:
+        AppError: ``PASSKEY_AUTH_FAILED`` for any verification failure,
+            unknown credential id, deactivated user, or sign-count
+            regression (a signal the authenticator may be cloned).
+    """
+    claims = _verify_passkey_state(state, expected_purpose="passkey_auth_challenge")
+
+    raw_id = credential.get("id") if isinstance(credential, dict) else None
+    if not isinstance(raw_id, str) or not raw_id:
+        raise AppError(
+            code=PASSKEY_AUTH_FAILED,
+            message="Passkey assertion is missing a credential id.",
+            status_code=400,
+        )
+    stored = passkeys_repo.get_by_credential_id(session, raw_id)
+    if stored is None:
+        raise AppError(
+            code=PASSKEY_AUTH_FAILED,
+            message="Unknown passkey. Register it on this device first.",
+            status_code=400,
+        )
+    if not stored.user.is_active:
+        raise AppError(
+            code=PASSKEY_AUTH_FAILED,
+            message="This account is no longer active.",
+            status_code=400,
+        )
+
+    settings = get_settings()
+    try:
+        verification = webauthn.verify_authentication_response(
+            credential=credential,
+            expected_challenge=_b64url_decode(claims["challenge"]),
+            expected_rp_id=settings.webauthn_rp_id,
+            expected_origin=settings.webauthn_origin,
+            credential_public_key=_b64url_decode(stored.public_key),
+            credential_current_sign_count=stored.sign_count,
+        )
+    except Exception as exc:
+        raise AppError(
+            code=PASSKEY_AUTH_FAILED,
+            message="Passkey authentication could not be verified.",
+            status_code=400,
+        ) from exc
+
+    passkeys_repo.update_sign_count(
+        session, stored, new_count=verification.new_sign_count
+    )
+    users_repo.update_last_login(session, stored.user)
+    return OAuthLogin(user=stored.user, jwt=issue_token(stored.user.id))
+
+
+def _issue_passkey_state(*, purpose: str, claims: dict[str, Any]) -> str:
+    """Mint a short-lived signed JWT capturing a passkey ceremony's challenge.
+
+    Args:
+        purpose: The ``purpose`` claim — guards against cross-ceremony
+            replay (e.g. a register state being presented on an auth
+            complete).
+        claims: Additional claims to embed (challenge, user_id, ...).
+
+    Returns:
+        A JWT signed with the app's HS256 secret.
+    """
+    import jwt as _jwt
+
+    settings = get_settings()
+    now = datetime.now(UTC)
+    payload: dict[str, Any] = {
+        "purpose": purpose,
+        "iat": int(now.timestamp()),
+        "exp": int(
+            (now + timedelta(seconds=_PASSKEY_CHALLENGE_TTL_SECONDS)).timestamp()
+        ),
+        "nonce": secrets.token_urlsafe(8),
+        **claims,
+    }
+    return _jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
+
+
+def _verify_passkey_state(state: str, *, expected_purpose: str) -> dict[str, Any]:
+    """Decode a ceremony state JWT, enforcing its purpose claim.
+
+    Args:
+        state: The token presented by the client on the complete step.
+        expected_purpose: Which ceremony the caller expects the state
+            to belong to.
+
+    Returns:
+        The decoded claims dictionary (challenge + user context).
+
+    Raises:
+        AppError: ``PASSKEY_REGISTRATION_FAILED`` on register-purpose
+            states, ``PASSKEY_AUTH_FAILED`` on auth-purpose states,
+            when the token is expired, tampered, or was minted for a
+            different ceremony.
+    """
+    import jwt as _jwt
+
+    fail_code = (
+        PASSKEY_REGISTRATION_FAILED
+        if expected_purpose == "passkey_register_challenge"
+        else PASSKEY_AUTH_FAILED
+    )
+    settings = get_settings()
+    try:
+        claims = _jwt.decode(state, settings.jwt_secret_key, algorithms=["HS256"])
+    except _jwt.PyJWTError as exc:
+        raise AppError(
+            code=fail_code,
+            message="Passkey challenge state is invalid or expired.",
+            status_code=400,
+        ) from exc
+    if claims.get("purpose") != expected_purpose:
+        raise AppError(
+            code=fail_code,
+            message="Passkey challenge state has the wrong purpose.",
+            status_code=400,
+        )
+    return claims  # type: ignore[no-any-return]
+
+
+def _b64url_encode(raw: bytes) -> str:
+    """Encode bytes as unpadded base64url.
+
+    Args:
+        raw: The bytes to encode.
+
+    Returns:
+        ASCII string with ``=`` padding stripped.
+    """
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(value: str) -> bytes:
+    """Decode an unpadded base64url string back to bytes.
+
+    Args:
+        value: ASCII base64url text, padding optional.
+
+    Returns:
+        The decoded bytes.
+    """
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _transports_from_credential(credential: dict[str, Any]) -> str | None:
+    """Extract the transports hint the browser reported, if any.
+
+    Args:
+        credential: The ``PublicKeyCredential`` JSON from the browser.
+
+    Returns:
+        A comma-separated list (e.g. ``"internal,hybrid"``) or None
+        when the browser didn't report transports.
+    """
+    response = credential.get("response") if isinstance(credential, dict) else None
+    if not isinstance(response, dict):
+        return None
+    transports = response.get("transports")
+    if isinstance(transports, list) and transports:
+        return ",".join(str(t) for t in transports)
+    return None
 
 
 def _render_email_html(*, verify_url: str) -> str:

@@ -18,18 +18,25 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
+  completePasskeyAuthentication,
   requestMagicLink,
   startAppleOAuth,
   startGoogleOAuth,
+  startPasskeyAuthentication,
 } from "@/lib/api/auth-identity";
 import { useAuth } from "@/lib/auth";
+import {
+  decodeAuthenticationOptions,
+  encodeAuthenticationCredential,
+  isWebAuthnSupported,
+} from "@/lib/webauthn";
 
 type ProviderStatus = "idle" | "starting" | "error";
 type MagicStatus = "idle" | "sending" | "sent" | "error";
 
 export default function LoginPage(): JSX.Element {
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, login } = useAuth();
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
@@ -57,7 +64,12 @@ export default function LoginPage(): JSX.Element {
         <div className="space-y-3">
           <GoogleButton />
           <AppleButton />
-          <PasskeyButton />
+          <PasskeyButton
+            onAuthenticated={async (nextToken) => {
+              await login(nextToken);
+              router.replace("/for-you");
+            }}
+          />
         </div>
 
         <p className="mt-6 text-center text-xs text-text-secondary">
@@ -231,20 +243,81 @@ function AppleButton(): JSX.Element {
   );
 }
 
-function PasskeyButton(): JSX.Element {
+function PasskeyButton({
+  onAuthenticated,
+}: {
+  onAuthenticated: (token: string) => Promise<void>;
+}): JSX.Element {
+  const [status, setStatus] = useState<ProviderStatus>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [supported, setSupported] = useState<boolean>(true);
+
+  useEffect(() => {
+    setSupported(isWebAuthnSupported());
+  }, []);
+
+  async function handleClick(): Promise<void> {
+    setStatus("starting");
+    setError(null);
+    try {
+      const { options, state } = await startPasskeyAuthentication();
+      const assertion = (await navigator.credentials.get({
+        publicKey: decodeAuthenticationOptions(options),
+      })) as PublicKeyCredential | null;
+      if (!assertion) {
+        throw new Error("No passkey was selected.");
+      }
+      const { token } = await completePasskeyAuthentication(
+        encodeAuthenticationCredential(assertion),
+        state,
+      );
+      await onAuthenticated(token);
+    } catch (err) {
+      setStatus("error");
+      if (err instanceof DOMException && err.name === "NotAllowedError") {
+        setError("Passkey sign-in was cancelled.");
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Could not sign in with a passkey.",
+        );
+      }
+    }
+  }
+
+  if (!supported) {
+    return (
+      <button
+        type="button"
+        disabled
+        className="flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-bg-surface px-4 py-3 text-sm font-medium text-text-secondary opacity-60"
+        aria-label="Passkeys are not supported in this browser"
+        title="Passkeys are not supported in this browser"
+      >
+        Passkeys not available here
+      </button>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      disabled
-      className="flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-bg-surface px-4 py-3 text-sm font-medium text-text-secondary opacity-60"
-      aria-label="Sign in with a passkey (coming soon)"
-      title="Passkey sign-in is coming soon"
-    >
-      Sign in with a passkey
-      <span className="rounded-full bg-bg-white px-2 py-0.5 text-[10px] uppercase tracking-wide">
-        Soon
-      </span>
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => void handleClick()}
+        disabled={status === "starting"}
+        className="flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-bg-white px-4 py-3 text-sm font-medium text-text-primary transition hover:bg-bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+        aria-label="Sign in with a passkey"
+      >
+        <PasskeyGlyph />
+        {status === "starting" ? "Waiting for passkey…" : "Sign in with a passkey"}
+      </button>
+      {status === "error" && error ? (
+        <p className="text-xs text-blush-accent" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -283,6 +356,27 @@ function GoogleGlyph(): JSX.Element {
         d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A9 9 0 0 0 .957 4.962L3.964 7.294C4.672 5.167 6.656 3.58 9 3.58Z"
         fill="#EA4335"
       />
+    </svg>
+  );
+}
+
+function PasskeyGlyph(): JSX.Element {
+  return (
+    <svg
+      aria-hidden
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle cx="9" cy="8" r="4" />
+      <path d="M3 21v-1a6 6 0 0 1 6-6h1" />
+      <path d="M16 13l5 5m-3-3v4h4" />
     </svg>
   );
 }

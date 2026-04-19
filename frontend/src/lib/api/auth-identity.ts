@@ -11,6 +11,12 @@
  */
 
 import { fetchJson } from "@/lib/api/client";
+import type {
+  AuthenticationCredentialJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationCredentialJSON,
+} from "@/lib/webauthn";
 import type { Envelope, User } from "@/types";
 
 export interface MagicLinkRequestResponse {
@@ -24,6 +30,16 @@ export interface SessionResponse {
 
 export interface OAuthStartResponse {
   authorize_url: string;
+  state: string;
+}
+
+export interface PasskeyRegistrationChallenge {
+  options: PublicKeyCredentialCreationOptionsJSON;
+  state: string;
+}
+
+export interface PasskeyAuthenticationChallenge {
+  options: PublicKeyCredentialRequestOptionsJSON;
   state: string;
 }
 
@@ -107,6 +123,78 @@ export async function completeAppleOAuth(
     {
       method: "POST",
       body: { code, state, user: userData ?? null },
+      revalidateSeconds: 0,
+    },
+  );
+  return res.data;
+}
+
+/**
+ * Begin a WebAuthn registration ceremony for the signed-in user.
+ *
+ * Returns creation options (challenge, rp, user, excludeCredentials)
+ * plus a short-lived signed state token. The state must be posted back
+ * with the attestation so the backend can recover the challenge.
+ */
+export async function startPasskeyRegistration(
+  token: string,
+): Promise<PasskeyRegistrationChallenge> {
+  const res = await fetchJson<Envelope<PasskeyRegistrationChallenge>>(
+    "/api/v1/auth/passkey/register/start",
+    { method: "POST", token, revalidateSeconds: 0 },
+  );
+  return res.data;
+}
+
+/**
+ * Verify an attestation and persist the new passkey credential under
+ * the signed-in user.
+ */
+export async function completePasskeyRegistration(
+  token: string,
+  credential: RegistrationCredentialJSON,
+  state: string,
+  name?: string,
+): Promise<{ registered: boolean }> {
+  const res = await fetchJson<Envelope<{ registered: boolean }>>(
+    "/api/v1/auth/passkey/register/complete",
+    {
+      method: "POST",
+      token,
+      body: { credential, state, name: name ?? null },
+      revalidateSeconds: 0,
+    },
+  );
+  return res.data;
+}
+
+/**
+ * Begin a WebAuthn authentication ceremony for an anonymous visitor.
+ *
+ * Returns request options with an empty ``allowCredentials`` list so
+ * the platform surfaces any discoverable credential bound to the
+ * relying-party id.
+ */
+export async function startPasskeyAuthentication(): Promise<PasskeyAuthenticationChallenge> {
+  const res = await fetchJson<Envelope<PasskeyAuthenticationChallenge>>(
+    "/api/v1/auth/passkey/authenticate/start",
+    { method: "POST", revalidateSeconds: 0 },
+  );
+  return res.data;
+}
+
+/**
+ * Verify a passkey assertion and mint a Greenroom session JWT.
+ */
+export async function completePasskeyAuthentication(
+  credential: AuthenticationCredentialJSON,
+  state: string,
+): Promise<SessionResponse> {
+  const res = await fetchJson<Envelope<SessionResponse>>(
+    "/api/v1/auth/passkey/authenticate/complete",
+    {
+      method: "POST",
+      body: { credential, state },
       revalidateSeconds: 0,
     },
   );

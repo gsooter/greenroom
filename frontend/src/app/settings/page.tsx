@@ -12,11 +12,20 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { startSpotifyOAuth } from "@/lib/api/auth";
+import {
+  completePasskeyRegistration,
+  startPasskeyRegistration,
+} from "@/lib/api/auth-identity";
 import { ApiRequestError } from "@/lib/api/client";
 import { listCities } from "@/lib/api/cities";
 import { deleteMe, updateMe } from "@/lib/api/me";
 import { getMyTopArtists } from "@/lib/api/recommendations";
 import { useRequireAuth } from "@/lib/auth";
+import {
+  decodeRegistrationOptions,
+  encodeRegistrationCredential,
+  isWebAuthnSupported,
+} from "@/lib/webauthn";
 import type {
   City,
   DigestFrequency,
@@ -223,6 +232,10 @@ export default function SettingsPage(): JSX.Element {
 
       <hr className="my-10 border-border" />
 
+      <SecuritySection token={token} />
+
+      <hr className="my-10 border-border" />
+
       <section>
         <h2 className="text-base font-semibold text-text-primary">
           Danger zone
@@ -330,6 +343,102 @@ function ConnectedServicesSection({
             </ul>
           </div>
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+function SecuritySection({ token }: { token: string | null }): JSX.Element {
+  const [supported, setSupported] = useState<boolean>(true);
+  const [status, setStatus] = useState<
+    "idle" | "naming" | "registering" | "done" | "error"
+  >("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState<string>("");
+
+  useEffect(() => {
+    setSupported(isWebAuthnSupported());
+  }, []);
+
+  async function handleAdd(): Promise<void> {
+    if (!token) return;
+    setStatus("registering");
+    setError(null);
+    try {
+      const { options, state } = await startPasskeyRegistration(token);
+      const credential = (await navigator.credentials.create({
+        publicKey: decodeRegistrationOptions(options),
+      })) as PublicKeyCredential | null;
+      if (!credential) {
+        throw new Error("Passkey creation was cancelled.");
+      }
+      await completePasskeyRegistration(
+        token,
+        encodeRegistrationCredential(credential),
+        state,
+        name.trim() || undefined,
+      );
+      setStatus("done");
+      setName("");
+    } catch (err) {
+      setStatus("error");
+      if (err instanceof DOMException && err.name === "NotAllowedError") {
+        setError("Passkey creation was cancelled.");
+      } else {
+        setError(
+          err instanceof Error ? err.message : "Could not register a passkey.",
+        );
+      }
+    }
+  }
+
+  return (
+    <section>
+      <h2 className="text-base font-semibold text-text-primary">
+        Security
+      </h2>
+      <p className="mt-1 text-sm text-text-secondary">
+        Add a passkey to sign in without email links. Passkeys are stored on
+        your device (Touch ID, Face ID, Windows Hello, or a security key).
+      </p>
+
+      <div className="mt-4 rounded-lg border border-border bg-bg-white p-4">
+        {!supported ? (
+          <p className="text-xs text-text-secondary">
+            This browser does not support passkeys yet. Try Safari 16+, Chrome
+            108+, or Firefox 122+.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            <Field label="Device label (optional)">
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="MacBook Pro"
+                className="w-full rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
+              />
+            </Field>
+            <button
+              type="button"
+              onClick={() => void handleAdd()}
+              disabled={status === "registering" || !token}
+              className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {status === "registering" ? "Waiting for passkey…" : "Add a passkey"}
+            </button>
+            {status === "done" ? (
+              <p className="text-xs text-text-secondary" role="status">
+                Passkey registered. You can sign in with it next time.
+              </p>
+            ) : null}
+            {status === "error" && error ? (
+              <p className="text-xs text-blush-accent" role="alert">
+                {error}
+              </p>
+            ) : null}
+          </div>
+        )}
       </div>
     </section>
   );
