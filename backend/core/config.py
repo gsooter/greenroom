@@ -57,6 +57,19 @@ class Settings(BaseSettings):
         apple_music_developer_token: Apple MusicKit developer token —
             signed ES256 JWT minted offline and rotated via env
             (Phase 5).
+        knuckles_url: Base URL of the Knuckles identity service (no
+            trailing slash). Empty during local dev when the legacy
+            HS256 path is still in use.
+        knuckles_client_id: ``app_clients.client_id`` Knuckles assigned
+            to Greenroom. Used as the audience claim on access tokens
+            and as the ``X-Client-Id`` header on Knuckles app-client
+            endpoints.
+        knuckles_client_secret: Matching app-client secret. Sent with
+            ``X-Client-Secret`` on every Knuckles call.
+        knuckles_jwks_cache_ttl_seconds: How long to keep a fetched
+            JWKS in memory before refetching. A token signed with an
+            unknown ``kid`` always triggers an immediate refresh
+            regardless of TTL.
         debug: Enable debug mode. Defaults to False.
     """
 
@@ -134,6 +147,12 @@ class Settings(BaseSettings):
 
     # Apple Music (Phase 5)
     apple_music_developer_token: str = ""
+
+    # Knuckles identity service
+    knuckles_url: str = ""
+    knuckles_client_id: str = ""
+    knuckles_client_secret: str = ""
+    knuckles_jwks_cache_ttl_seconds: int = 60 * 60
 
 
 def get_settings() -> Settings:

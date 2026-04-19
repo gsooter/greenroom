@@ -1058,6 +1058,62 @@ a nice simplification because no credential ever leaves Greenroom.
 
 ---
 
+### 030 — Greenroom Verifies Knuckles Tokens Locally Against a Cached JWKS
+
+**Date:** 2026-04-19
+**Status:** Decided
+
+**Decision:** Greenroom validates every incoming access token against
+the Knuckles JWKS in-process. The JWKS is fetched once over HTTP,
+cached in memory keyed by ``kid`` for one hour, and re-fetched
+immediately on a cache miss (Knuckles key rotation). Greenroom never
+calls Knuckles to validate a token on the request path.
+
+**Rationale:** This is the standard RS256 + JWKS pattern and is the
+whole reason Knuckles publishes a JWKS in the first place. Local
+verification keeps the auth check on Greenroom's hot path at
+microseconds (an asymmetric signature verify, no network) and means
+Knuckles being briefly unreachable does not 503 the entire
+authenticated surface of Greenroom. The kid-miss-refresh path makes
+key rotation safe without coordinated deploys: Knuckles starts
+issuing tokens with a new ``kid``, the first such token Greenroom
+sees triggers a JWKS refresh, and verification proceeds.
+
+**Alternatives considered:**
+- **Token introspection (call Knuckles ``/v1/auth/introspect`` per
+  request)** — rejected. Adds a synchronous network hop to every
+  authenticated Greenroom request, couples uptime to Knuckles
+  uptime, and defeats the entire purpose of asymmetric signing.
+  Reasonable for opaque tokens, wasteful for JWTs.
+- **Use ``jwt.PyJWKClient`` directly** — rejected. Convenient but
+  caches keys forever (no TTL knob) and has no controllable
+  rotation refresh. The custom cache here is ~30 lines and we
+  control the failure modes.
+- **No caching, fetch JWKS per verify** — rejected. Same network-
+  coupling problem as introspection plus much higher latency.
+
+**Consequences:**
+- A new ``backend.core.knuckles_client`` module owns the JWKS cache
+  and the small HTTP client used for app-client proxy calls
+  (magic-link start, token exchange, passkey ceremonies).
+  ``backend.core.auth`` is not modified yet — this commit is
+  additive. Wiring ``require_auth`` to call
+  :func:`verify_knuckles_token` is the next step in the cutover.
+- Three new env vars in Greenroom: ``KNUCKLES_URL``,
+  ``KNUCKLES_CLIENT_ID``, ``KNUCKLES_CLIENT_SECRET``. A fourth
+  optional one (``KNUCKLES_JWKS_CACHE_TTL_SECONDS``) defaults to
+  3600. All four ship as empty strings / defaults so the module
+  imports cleanly even before the Knuckles app-client is registered.
+- A disk-cached JWKS fallback for "Knuckles down at process start"
+  is deferred to Phase 3 hardening; the in-memory cache is
+  sufficient until then because tokens already in flight remain
+  verifiable through one hour of Knuckles downtime.
+- ``PyJWT`` dependency upgraded to ``PyJWT[crypto]`` so the
+  ``cryptography`` extras (RS256 verify) are pinned explicitly
+  rather than picked up transitively.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
