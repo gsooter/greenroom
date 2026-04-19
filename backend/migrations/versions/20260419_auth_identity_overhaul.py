@@ -23,6 +23,7 @@ Schema changes:
 5. ``passkey_credentials`` table — one row per registered WebAuthn
    credential with a monotonic ``sign_count`` used to detect clones.
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -146,9 +147,7 @@ def downgrade() -> None:
     op.drop_index(
         "ix_passkey_credentials_credential_id", table_name="passkey_credentials"
     )
-    op.drop_index(
-        "ix_passkey_credentials_user_id", table_name="passkey_credentials"
-    )
+    op.drop_index("ix_passkey_credentials_user_id", table_name="passkey_credentials")
     op.drop_table("passkey_credentials")
 
     op.drop_index("ix_magic_link_tokens_user_id", table_name="magic_link_tokens")

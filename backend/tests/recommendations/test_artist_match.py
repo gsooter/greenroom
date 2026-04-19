@@ -118,9 +118,7 @@ def test_score_ignores_non_dict_entries_in_top_artists() -> None:
 def test_score_ignores_non_string_event_artists() -> None:
     """Scraper rows occasionally emit non-string artists; don't crash."""
     user = _FakeUser(spotify_top_artists=[{"name": "Real Band"}])
-    event = _FakeEvent(
-        artists=[None, 42, "Real Band"]  # type: ignore[list-item]
-    )
+    event = _FakeEvent(artists=[None, 42, "Real Band"])  # type: ignore[list-item]
     result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 0.85
