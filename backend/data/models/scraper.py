@@ -7,6 +7,7 @@ or >60% drop from the 30-run average triggers an alert (Decision 006).
 import enum
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, Enum, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -49,32 +50,22 @@ class ScraperRun(TimestampMixin, Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    venue_slug: Mapped[str] = mapped_column(
-        String(200), nullable=False, index=True
-    )
-    scraper_class: Mapped[str] = mapped_column(
-        String(200), nullable=False
-    )
+    venue_slug: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    scraper_class: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[ScraperRunStatus] = mapped_column(
         Enum(ScraperRunStatus, name="scraper_run_status", native_enum=True),
         nullable=False,
     )
-    event_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    duration_seconds: Mapped[float | None] = mapped_column(
-        Float, nullable=True
-    )
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_json: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True
-    )
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     def __repr__(self) -> str:
         """Return a string representation of the ScraperRun.

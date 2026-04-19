@@ -8,7 +8,7 @@ or Flask app. Decorator-integration tests that exercise
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
@@ -34,9 +34,7 @@ def test_issue_token_embeds_exp_and_iat() -> None:
     user_id = uuid.uuid4()
     token = auth.issue_token(user_id)
     settings = get_settings()
-    payload = jwt.decode(
-        token, settings.jwt_secret_key, algorithms=["HS256"]
-    )
+    payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
     assert payload["sub"] == str(user_id)
     assert payload["exp"] - payload["iat"] == settings.jwt_expiry_seconds
 
@@ -44,7 +42,7 @@ def test_issue_token_embeds_exp_and_iat() -> None:
 def test_verify_token_raises_token_expired_for_past_exp() -> None:
     """Expired tokens surface as ``TOKEN_EXPIRED`` / HTTP 401."""
     settings = get_settings()
-    past = datetime.now(timezone.utc) - timedelta(seconds=60)
+    past = datetime.now(UTC) - timedelta(seconds=60)
     token = jwt.encode(
         {
             "sub": str(uuid.uuid4()),

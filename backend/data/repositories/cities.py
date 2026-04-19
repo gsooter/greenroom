@@ -39,9 +39,7 @@ def get_city_by_slug(session: Session, slug: str) -> City | None:
     return session.execute(stmt).scalar_one_or_none()
 
 
-def list_active_cities(
-    session: Session, *, region: str | None = None
-) -> list[City]:
+def list_active_cities(session: Session, *, region: str | None = None) -> list[City]:
     """Fetch all active cities ordered by name.
 
     Args:

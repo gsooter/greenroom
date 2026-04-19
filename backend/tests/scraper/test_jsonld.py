@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.scraper.base.jsonld import extract_events
 
@@ -104,7 +104,7 @@ def test_flattens_graph_and_filters_non_events() -> None:
 
     titles = [e.title for e in events]
     assert titles == ["Show 1", "Show 2"]
-    assert events[1].starts_at == datetime(2026, 7, 1, 21, 0, tzinfo=timezone.utc)
+    assert events[1].starts_at == datetime(2026, 7, 1, 21, 0, tzinfo=UTC)
 
 
 def test_malformed_block_does_not_crash_extractor() -> None:

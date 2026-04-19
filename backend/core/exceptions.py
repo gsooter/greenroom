@@ -49,17 +49,13 @@ class NotFoundError(AppError):
 class UnauthorizedError(AppError):
     """Raised when authentication is missing or invalid."""
 
-    def __init__(
-        self, message: str = "Authentication required."
-    ) -> None:
+    def __init__(self, message: str = "Authentication required.") -> None:
         """Initialize an UnauthorizedError.
 
         Args:
             message: Human-readable error description.
         """
-        super().__init__(
-            code="UNAUTHORIZED", message=message, status_code=401
-        )
+        super().__init__(code="UNAUTHORIZED", message=message, status_code=401)
 
 
 class ForbiddenError(AppError):
@@ -71,9 +67,7 @@ class ForbiddenError(AppError):
         Args:
             message: Human-readable error description.
         """
-        super().__init__(
-            code="FORBIDDEN", message=message, status_code=403
-        )
+        super().__init__(code="FORBIDDEN", message=message, status_code=403)
 
 
 class ValidationError(AppError):
@@ -85,9 +79,7 @@ class ValidationError(AppError):
         Args:
             message: Human-readable validation error description.
         """
-        super().__init__(
-            code="VALIDATION_ERROR", message=message, status_code=422
-        )
+        super().__init__(code="VALIDATION_ERROR", message=message, status_code=422)
 
 
 # Error code constants

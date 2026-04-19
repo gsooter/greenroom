@@ -5,12 +5,16 @@ Adding a new city is a data operation, not a code change.
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from backend.data.models.venues import Venue
 
 
 class City(TimestampMixin, Base):
@@ -52,7 +56,7 @@ class City(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     # Relationships
-    venues: Mapped[list["Venue"]] = relationship(  # noqa: F821
+    venues: Mapped[list["Venue"]] = relationship(
         back_populates="city",
         lazy="selectin",
     )

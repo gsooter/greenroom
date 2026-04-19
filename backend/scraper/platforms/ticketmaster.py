@@ -104,9 +104,7 @@ class TicketmasterScraper(BaseScraper):
             if page + 1 >= total_pages:
                 break
 
-        logger.info(
-            "Finished scraping Ticketmaster for '%s'.", self.venue_name
-        )
+        logger.info("Finished scraping Ticketmaster for '%s'.", self.venue_name)
 
     def _fetch_page(self, page: int) -> dict[str, Any] | None:
         """Fetch a single page of results from the Discovery API.
@@ -119,7 +117,7 @@ class TicketmasterScraper(BaseScraper):
         Returns:
             Parsed JSON response dict, or None if the request failed.
         """
-        params = {
+        params: dict[str, str | int] = {
             "apikey": self.api_key,
             "venueId": self.venue_id,
             "sort": "date,asc",
@@ -149,7 +147,8 @@ class TicketmasterScraper(BaseScraper):
                     continue
 
                 response.raise_for_status()
-                return response.json()
+                data: dict[str, Any] = response.json()
+                return data
 
             except requests.RequestException as e:
                 logger.error(
@@ -184,7 +183,7 @@ class TicketmasterScraper(BaseScraper):
             if not title:
                 return None
 
-            event_id = data.get("id", "")
+            data.get("id", "")
 
             # Parse start datetime
             dates = data.get("dates", {})
@@ -231,9 +230,7 @@ class TicketmasterScraper(BaseScraper):
             )
             return None
 
-    def _parse_datetime(
-        self, start_info: dict[str, Any]
-    ) -> datetime | None:
+    def _parse_datetime(self, start_info: dict[str, Any]) -> datetime | None:
         """Parse a Ticketmaster start date/time object.
 
         The Discovery API returns ``localDate`` and ``localTime`` in the
@@ -297,12 +294,10 @@ class TicketmasterScraper(BaseScraper):
         for pr in price_ranges:
             p_min = pr.get("min")
             p_max = pr.get("max")
-            if p_min is not None:
-                if min_price is None or p_min < min_price:
-                    min_price = p_min
-            if p_max is not None:
-                if max_price is None or p_max > max_price:
-                    max_price = p_max
+            if p_min is not None and (min_price is None or p_min < min_price):
+                min_price = p_min
+            if p_max is not None and (max_price is None or p_max > max_price):
+                max_price = p_max
 
         return min_price, max_price
 
@@ -322,4 +317,5 @@ class TicketmasterScraper(BaseScraper):
             return None
 
         best = max(images, key=lambda img: img.get("width", 0))
-        return best.get("url")
+        url: str | None = best.get("url")
+        return url

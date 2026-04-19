@@ -20,7 +20,7 @@ from backend.services import spotify as spotify_service
 logger = get_logger(__name__)
 
 
-@shared_task(name="backend.services.spotify_tasks.sync_user_spotify_data")
+@shared_task(name="backend.services.spotify_tasks.sync_user_spotify_data")  # type: ignore[untyped-decorator]
 def sync_user_spotify_data(user_id: str) -> dict[str, Any]:
     """Refresh a user's cached Spotify top-artist snapshot.
 

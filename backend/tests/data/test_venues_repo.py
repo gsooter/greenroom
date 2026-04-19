@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 from sqlalchemy.orm import Session
 
@@ -42,9 +42,7 @@ def test_list_venues_filters_inactive(
     assert total == 1
     assert venues[0].slug == "open"
 
-    venues, total = venues_repo.list_venues(
-        session, city_id=city.id, active_only=False
-    )
+    venues, total = venues_repo.list_venues(session, city_id=city.id, active_only=False)
     assert total == 2
 
 
@@ -75,9 +73,7 @@ def test_list_venues_ordered_by_name_and_paginated(
     page_1, total = venues_repo.list_venues(
         session, city_id=city.id, page=1, per_page=2
     )
-    page_2, _ = venues_repo.list_venues(
-        session, city_id=city.id, page=2, per_page=2
-    )
+    page_2, _ = venues_repo.list_venues(session, city_id=city.id, page=2, per_page=2)
     assert total == 3
     assert [v.name for v in page_1] == ["Alpha", "Mango"]
     assert [v.name for v in page_2] == ["Zed"]
@@ -106,9 +102,7 @@ def test_get_venue_by_external_id_jsonb_lookup(
         slug="tm-venue",
         external_ids={"ticketmaster": "KovZpa123", "seatgeek": "999"},
     )
-    found = venues_repo.get_venue_by_external_id(
-        session, "ticketmaster", "KovZpa123"
-    )
+    found = venues_repo.get_venue_by_external_id(session, "ticketmaster", "KovZpa123")
     assert found is not None and found.slug == "tm-venue"
 
     miss = venues_repo.get_venue_by_external_id(session, "dice", "KovZpa123")
@@ -160,8 +154,6 @@ def test_update_venue_sets_fields_and_ignores_unknowns(
 ) -> None:
     city = make_city()
     venue = make_venue(city=city)
-    updated = venues_repo.update_venue(
-        session, venue, name="Renamed", bogus="ignored"
-    )
+    updated = venues_repo.update_venue(session, venue, name="Renamed", bogus="ignored")
     assert updated.name == "Renamed"
     assert not hasattr(updated, "bogus")

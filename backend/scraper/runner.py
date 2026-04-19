@@ -11,7 +11,7 @@ can also be run directly for manual/debugging runs.
 import hashlib
 import importlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from celery import shared_task
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.database import get_session_factory
 from backend.core.logging import get_logger
-from backend.data.models.events import Event, EventType, EventStatus
+from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.models.scraper import ScraperRunStatus
 from backend.data.repositories import events as events_repo
 from backend.data.repositories import scraper_runs as runs_repo
@@ -42,7 +42,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-@shared_task(name="backend.scraper.runner.scrape_all_venues")
+@shared_task(name="backend.scraper.runner.scrape_all_venues")  # type: ignore[untyped-decorator]
 def scrape_all_venues() -> dict[str, Any]:
     """Celery task: run every enabled scraper and commit ingested events.
 
@@ -67,7 +67,7 @@ def scrape_all_venues() -> dict[str, Any]:
             raise
 
 
-@shared_task(name="backend.scraper.runner.scrape_venue")
+@shared_task(name="backend.scraper.runner.scrape_venue")  # type: ignore[untyped-decorator]
 def scrape_venue(venue_slug: str) -> dict[str, Any]:
     """Celery task: run the scraper for a single venue.
 
@@ -87,13 +87,9 @@ def scrape_venue(venue_slug: str) -> dict[str, Any]:
     """
     config = get_venue_config(venue_slug)
     if config is None:
-        raise ValueError(
-            f"No scraper config for venue '{venue_slug}'"
-        )
+        raise ValueError(f"No scraper config for venue '{venue_slug}'")
     if not config.enabled:
-        raise ValueError(
-            f"Scraper for venue '{venue_slug}' is disabled."
-        )
+        raise ValueError(f"Scraper for venue '{venue_slug}' is disabled.")
 
     session_factory = get_session_factory()
     with session_factory() as session:
@@ -154,7 +150,7 @@ def run_scraper_for_venue(
     Returns:
         Dictionary with run status, event counts, and timing.
     """
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     logger.info("Starting scraper for '%s'.", config.venue_slug)
 
     try:
@@ -170,7 +166,7 @@ def run_scraper_for_venue(
             source_platform=scraper.source_platform,
         )
 
-        finished_at = datetime.now(timezone.utc)
+        finished_at = datetime.now(UTC)
         duration = (finished_at - started_at).total_seconds()
 
         # Log the run
@@ -218,12 +214,10 @@ def run_scraper_for_venue(
         }
 
     except Exception as e:
-        finished_at = datetime.now(timezone.utc)
+        finished_at = datetime.now(UTC)
         duration = (finished_at - started_at).total_seconds()
 
-        logger.exception(
-            "Scraper for '%s' failed: %s", config.venue_slug, e
-        )
+        logger.exception("Scraper for '%s' failed: %s", config.venue_slug, e)
 
         # Log the failed run
         runs_repo.create_scraper_run(
@@ -274,11 +268,10 @@ def _instantiate_scraper(config: VenueScraperConfig) -> BaseScraper:
     scraper_class = getattr(module, class_name)
 
     if not issubclass(scraper_class, BaseScraper):
-        raise TypeError(
-            f"{config.scraper_class} is not a BaseScraper subclass."
-        )
+        raise TypeError(f"{config.scraper_class} is not a BaseScraper subclass.")
 
-    return scraper_class(**config.platform_config)
+    scraper: BaseScraper = scraper_class(**config.platform_config)
+    return scraper
 
 
 def _ingest_events(
@@ -333,9 +326,7 @@ def _ingest_events(
                 skipped += 1
         else:
             # Create new event
-            slug = _generate_slug(
-                raw.title, venue_slug, raw.starts_at, external_id
-            )
+            slug = _generate_slug(raw.title, venue_slug, raw.starts_at, external_id)
             events_repo.create_event(
                 session,
                 venue_id=venue.id,
@@ -384,7 +375,7 @@ def _extract_external_id(raw: RawEvent) -> str:
             value = raw.raw_data.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-            if isinstance(value, (int, float)):
+            if isinstance(value, int | float):
                 return str(value)
 
     fingerprint = f"{raw.source_url}|{raw.title}|{raw.starts_at.isoformat()}"

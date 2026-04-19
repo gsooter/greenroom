@@ -4,7 +4,9 @@ Creates and configures the Flask app with error handlers, CORS,
 database session management, and blueprint registration.
 """
 
-from flask import Flask, jsonify
+from typing import Any
+
+from flask import Flask
 from werkzeug.exceptions import HTTPException
 
 from backend.api.v1 import api_v1
@@ -67,7 +69,7 @@ def _register_error_handlers(app: Flask) -> None:
     """
 
     @app.errorhandler(AppError)
-    def handle_app_error(error: AppError) -> tuple[dict, int]:
+    def handle_app_error(error: AppError) -> tuple[dict[str, Any], int]:
         """Handle custom application errors.
 
         Args:
@@ -85,7 +87,7 @@ def _register_error_handlers(app: Flask) -> None:
         return response, error.status_code
 
     @app.errorhandler(HTTPException)
-    def handle_http_error(error: HTTPException) -> tuple[dict, int]:
+    def handle_http_error(error: HTTPException) -> tuple[dict[str, Any], int]:
         """Handle Werkzeug HTTP exceptions.
 
         Args:
@@ -103,7 +105,7 @@ def _register_error_handlers(app: Flask) -> None:
         return response, error.code or 500
 
     @app.errorhandler(Exception)
-    def handle_unexpected_error(error: Exception) -> tuple[dict, int]:
+    def handle_unexpected_error(error: Exception) -> tuple[dict[str, Any], int]:
         """Handle unexpected unhandled exceptions.
 
         Logs the full traceback and returns a generic 500 error.
@@ -138,9 +140,7 @@ def _add_cors_headers(response):  # type: ignore[no-untyped-def]
         The response with CORS headers added.
     """
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = (
-        "Content-Type, Authorization"
-    )
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Allow-Methods"] = (
         "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     )

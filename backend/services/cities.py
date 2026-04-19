@@ -13,9 +13,7 @@ from backend.data.models.cities import City
 from backend.data.repositories import cities as cities_repo
 
 
-def list_cities(
-    session: Session, *, region: str | None = None
-) -> list[City]:
+def list_cities(session: Session, *, region: str | None = None) -> list[City]:
     """List active cities, optionally filtered by region.
 
     Args:

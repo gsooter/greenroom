@@ -29,7 +29,7 @@ class _FakeSession:
         self.rollback = MagicMock()
         self.closed = False
 
-    def __enter__(self) -> "_FakeSession":
+    def __enter__(self) -> _FakeSession:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -41,16 +41,12 @@ def test_sync_task_noop_when_user_missing(
 ) -> None:
     """Missing user row returns synced=0 without hitting Spotify."""
     session = _FakeSession()
-    monkeypatch.setattr(
-        spotify_tasks, "get_session_factory", lambda: lambda: session
-    )
+    monkeypatch.setattr(spotify_tasks, "get_session_factory", lambda: lambda: session)
     monkeypatch.setattr(
         spotify_tasks.users_repo, "get_user_by_id", lambda _s, _uid: None
     )
     sync_mock = MagicMock()
-    monkeypatch.setattr(
-        spotify_tasks.spotify_service, "sync_top_artists", sync_mock
-    )
+    monkeypatch.setattr(spotify_tasks.spotify_service, "sync_top_artists", sync_mock)
     result = spotify_tasks.sync_user_spotify_data(str(uuid.uuid4()))
     assert result["synced"] == 0
     sync_mock.assert_not_called()
@@ -60,18 +56,14 @@ def test_sync_task_skips_inactive_users(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _FakeSession()
-    monkeypatch.setattr(
-        spotify_tasks, "get_session_factory", lambda: lambda: session
-    )
+    monkeypatch.setattr(spotify_tasks, "get_session_factory", lambda: lambda: session)
     monkeypatch.setattr(
         spotify_tasks.users_repo,
         "get_user_by_id",
         lambda _s, _uid: _FakeUser(is_active=False),
     )
     sync_mock = MagicMock()
-    monkeypatch.setattr(
-        spotify_tasks.spotify_service, "sync_top_artists", sync_mock
-    )
+    monkeypatch.setattr(spotify_tasks.spotify_service, "sync_top_artists", sync_mock)
     result = spotify_tasks.sync_user_spotify_data(str(uuid.uuid4()))
     assert result["synced"] == 0
     sync_mock.assert_not_called()
@@ -81,9 +73,7 @@ def test_sync_task_commits_and_returns_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _FakeSession()
-    monkeypatch.setattr(
-        spotify_tasks, "get_session_factory", lambda: lambda: session
-    )
+    monkeypatch.setattr(spotify_tasks, "get_session_factory", lambda: lambda: session)
     monkeypatch.setattr(
         spotify_tasks.users_repo,
         "get_user_by_id",
@@ -103,9 +93,7 @@ def test_sync_task_rolls_back_on_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _FakeSession()
-    monkeypatch.setattr(
-        spotify_tasks, "get_session_factory", lambda: lambda: session
-    )
+    monkeypatch.setattr(spotify_tasks, "get_session_factory", lambda: lambda: session)
     monkeypatch.setattr(
         spotify_tasks.users_repo,
         "get_user_by_id",
@@ -115,9 +103,7 @@ def test_sync_task_rolls_back_on_exception(
     def boom(_s: object, _u: object) -> int:
         raise RuntimeError("spotify down")
 
-    monkeypatch.setattr(
-        spotify_tasks.spotify_service, "sync_top_artists", boom
-    )
+    monkeypatch.setattr(spotify_tasks.spotify_service, "sync_top_artists", boom)
     with pytest.raises(RuntimeError):
         spotify_tasks.sync_user_spotify_data(str(uuid.uuid4()))
     session.rollback.assert_called_once()

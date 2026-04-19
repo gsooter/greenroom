@@ -14,15 +14,17 @@ go through this module.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.orm import Session
-
-from backend.data.models.recommendations import Recommendation
-from backend.data.models.users import User
 from backend.data.repositories import users as users_repo
 from backend.recommendations import engine as rec_engine
 from backend.services import events as events_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from backend.data.models.recommendations import Recommendation
+    from backend.data.models.users import User
 
 
 def list_recommendations_for_user(
@@ -56,8 +58,10 @@ def list_recommendations_for_user(
     recs, total = users_repo.list_recommendations(
         session, user.id, page=page, per_page=per_page
     )
-    if total == 0 and lazy_generate and (
-        user.spotify_top_artists or user.spotify_recent_artists
+    if (
+        total == 0
+        and lazy_generate
+        and (user.spotify_top_artists or user.spotify_recent_artists)
     ):
         rec_engine.generate_for_user(session, user)
         session.commit()
@@ -108,15 +112,11 @@ def serialize_recommendation(rec: Recommendation) -> dict[str, Any]:
     return {
         "id": str(rec.id),
         "score": rec.score,
-        "generated_at": (
-            rec.generated_at.isoformat() if rec.generated_at else None
-        ),
+        "generated_at": (rec.generated_at.isoformat() if rec.generated_at else None),
         "is_dismissed": rec.is_dismissed,
         "match_reasons": match_reasons,
         "score_breakdown": {
-            key: value
-            for key, value in breakdown.items()
-            if key != "_match_reasons"
+            key: value for key, value in breakdown.items() if key != "_match_reasons"
         },
         "event": events_service.serialize_event_summary(rec.event),
     }

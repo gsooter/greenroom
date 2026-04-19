@@ -64,9 +64,7 @@ def test_score_returns_none_when_user_has_no_top_artists() -> None:
 
 def test_score_spotify_id_match_scores_one() -> None:
     """A Spotify artist-id hit is the strongest signal → 1.0."""
-    user = _FakeUser(
-        spotify_top_artists=[{"id": "abc123", "name": "Phoebe Bridgers"}]
-    )
+    user = _FakeUser(spotify_top_artists=[{"id": "abc123", "name": "Phoebe Bridgers"}])
     event = _FakeEvent(spotify_artist_ids=["abc123"], artists=[])
     result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
     assert result is not None
@@ -78,12 +76,8 @@ def test_score_spotify_id_match_scores_one() -> None:
 
 def test_score_artist_name_match_scores_point_eight_five() -> None:
     """A name-only match is slightly weaker than an id match."""
-    user = _FakeUser(
-        spotify_top_artists=[{"id": "xyz", "name": "Phoebe Bridgers"}]
-    )
-    event = _FakeEvent(
-        spotify_artist_ids=[], artists=["PHOEBE BRIDGERS"]
-    )
+    user = _FakeUser(spotify_top_artists=[{"id": "xyz", "name": "Phoebe Bridgers"}])
+    event = _FakeEvent(spotify_artist_ids=[], artists=["PHOEBE BRIDGERS"])
     result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 0.85
@@ -94,12 +88,8 @@ def test_score_artist_name_match_scores_point_eight_five() -> None:
 
 def test_score_prefers_id_and_skips_duplicate_name_match() -> None:
     """When id+name both match the same artist, only the id match is kept."""
-    user = _FakeUser(
-        spotify_top_artists=[{"id": "abc", "name": "Phoebe Bridgers"}]
-    )
-    event = _FakeEvent(
-        spotify_artist_ids=["abc"], artists=["Phoebe Bridgers"]
-    )
+    user = _FakeUser(spotify_top_artists=[{"id": "abc", "name": "Phoebe Bridgers"}])
+    event = _FakeEvent(spotify_artist_ids=["abc"], artists=["Phoebe Bridgers"])
     result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 1.0
@@ -109,12 +99,8 @@ def test_score_prefers_id_and_skips_duplicate_name_match() -> None:
 
 def test_score_returns_none_on_no_overlap() -> None:
     """No id or name intersection → None (scorer abstains)."""
-    user = _FakeUser(
-        spotify_top_artists=[{"id": "abc", "name": "Phoebe Bridgers"}]
-    )
-    event = _FakeEvent(
-        spotify_artist_ids=["other"], artists=["Random Band"]
-    )
+    user = _FakeUser(spotify_top_artists=[{"id": "abc", "name": "Phoebe Bridgers"}])
+    event = _FakeEvent(spotify_artist_ids=["other"], artists=["Random Band"])
     assert ArtistMatchScorer(user).score(event) is None  # type: ignore[arg-type]
 
 
@@ -142,9 +128,7 @@ def test_score_ignores_non_string_event_artists() -> None:
 
 def test_score_skips_top_artists_missing_name_and_id() -> None:
     """Top-artist entries without a usable name/id contribute nothing."""
-    user = _FakeUser(
-        spotify_top_artists=[{"id": "", "name": ""}, {"foo": "bar"}]
-    )
+    user = _FakeUser(spotify_top_artists=[{"id": "", "name": ""}, {"foo": "bar"}])
     event = _FakeEvent(artists=["Anyone"])
     assert ArtistMatchScorer(user).score(event) is None  # type: ignore[arg-type]
 

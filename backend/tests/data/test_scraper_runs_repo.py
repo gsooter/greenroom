@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,7 @@ def _now() -> datetime:
     Returns:
         Current datetime in UTC.
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _seed(

@@ -12,21 +12,22 @@ the provider used to authenticate.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from functools import wraps
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import jwt
 from flask import g, request
 
 from backend.core.config import get_settings
+from backend.core.database import get_db
 from backend.core.exceptions import (
     INVALID_TOKEN,
     TOKEN_EXPIRED,
     AppError,
     UnauthorizedError,
 )
-from backend.core.database import get_db
 from backend.data.models.users import User
 from backend.data.repositories import users as users_repo
 
@@ -45,17 +46,13 @@ def issue_token(user_id: uuid.UUID) -> str:
         The encoded JWT string.
     """
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "iat": int(now.timestamp()),
-        "exp": int(
-            (now + timedelta(seconds=settings.jwt_expiry_seconds)).timestamp()
-        ),
+        "exp": int((now + timedelta(seconds=settings.jwt_expiry_seconds)).timestamp()),
     }
-    return jwt.encode(
-        payload, settings.jwt_secret_key, algorithm=_JWT_ALGORITHM
-    )
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=_JWT_ALGORITHM)
 
 
 def verify_token(token: str) -> uuid.UUID:
@@ -120,9 +117,7 @@ def _extract_bearer_token() -> str:
     """
     header = request.headers.get("Authorization", "")
     if not header.lower().startswith("bearer "):
-        raise UnauthorizedError(
-            message="Missing or malformed Authorization header."
-        )
+        raise UnauthorizedError(message="Missing or malformed Authorization header.")
     token = header[len("bearer ") :].strip()
     if not token:
         raise UnauthorizedError(message="Bearer token is empty.")
@@ -163,9 +158,7 @@ def require_auth(func: F) -> F:
         session = get_db()
         user = users_repo.get_user_by_id(session, user_id)
         if user is None or not user.is_active:
-            raise UnauthorizedError(
-                message="Authenticated user no longer exists."
-            )
+            raise UnauthorizedError(message="Authenticated user no longer exists.")
         g.current_user = user
         return func(*args, **kwargs)
 

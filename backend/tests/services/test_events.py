@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -48,11 +48,11 @@ class _FakeEvent:
     event_type: EventType = EventType.CONCERT
     status: EventStatus = EventStatus.CONFIRMED
     starts_at: datetime | None = field(
-        default_factory=lambda: datetime(2026, 5, 1, 20, 0, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 5, 1, 20, 0, tzinfo=UTC)
     )
     ends_at: datetime | None = None
     doors_at: datetime | None = field(
-        default_factory=lambda: datetime(2026, 5, 1, 19, 0, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 5, 1, 19, 0, tzinfo=UTC)
     )
     artists: list[str] = field(default_factory=lambda: ["Phoebe Bridgers"])
     genres: list[str] = field(default_factory=lambda: ["indie"])
@@ -63,10 +63,10 @@ class _FakeEvent:
     max_price: float | None = 65.0
     source_url: str | None = "https://source.test"
     created_at: datetime = field(
-        default_factory=lambda: datetime(2026, 4, 1, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 4, 1, tzinfo=UTC)
     )
     updated_at: datetime = field(
-        default_factory=lambda: datetime(2026, 4, 2, tzinfo=timezone.utc)
+        default_factory=lambda: datetime(2026, 4, 2, tzinfo=UTC)
     )
 
 
@@ -142,9 +142,7 @@ def test_list_events_normalizes_enum_strings_and_delegates(
         return [], 0
 
     monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
-    events_service.list_events(
-        MagicMock(), event_type="CONCERT", status="Confirmed"
-    )
+    events_service.list_events(MagicMock(), event_type="CONCERT", status="Confirmed")
     assert captured["event_type"] is EventType.CONCERT
     assert captured["status"] is EventStatus.CONFIRMED
 
@@ -184,7 +182,7 @@ def test_serialize_event_with_city_unloaded() -> None:
 
 def test_format_event_feed_separates_tonight_and_upcoming() -> None:
     """Feed groups same-day events under TONIGHT, later dates under UPCOMING."""
-    today = datetime(2026, 4, 18, 18, 0, tzinfo=timezone.utc)
+    today = datetime(2026, 4, 18, 18, 0, tzinfo=UTC)
     tonight = _FakeEvent(starts_at=today + timedelta(hours=1))
     tomorrow = _FakeEvent(
         starts_at=today + timedelta(days=1),
@@ -200,7 +198,7 @@ def test_format_event_feed_separates_tonight_and_upcoming() -> None:
 
 def test_format_event_feed_omits_empty_buckets() -> None:
     """No tonight events → no TONIGHT header."""
-    today = datetime(2026, 4, 18, tzinfo=timezone.utc)
+    today = datetime(2026, 4, 18, tzinfo=UTC)
     future = _FakeEvent(starts_at=today + timedelta(days=2))
     feed = events_service.format_event_feed([future], today)
     assert "TONIGHT" not in feed

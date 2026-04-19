@@ -86,19 +86,19 @@ def _response_json(
 @responses.activate
 def test_parses_events_with_price_image_and_artists() -> None:
     """A fully-populated Discovery event becomes a complete RawEvent."""
-    payload = _response_json([
-        _event_json(
-            price_ranges=[{"min": 25.0, "max": 65.0, "currency": "USD"}],
-            images=[
-                {"url": "https://img.tm/small.jpg", "width": 100},
-                {"url": "https://img.tm/large.jpg", "width": 2048},
-            ],
-            attractions=[{"name": "Black Midi"}, {"name": "Opener Band"}],
-        )
-    ])
-    responses.add(
-        responses.GET, DISCOVERY_API_URL, json=payload, status=200
+    payload = _response_json(
+        [
+            _event_json(
+                price_ranges=[{"min": 25.0, "max": 65.0, "currency": "USD"}],
+                images=[
+                    {"url": "https://img.tm/small.jpg", "width": 100},
+                    {"url": "https://img.tm/large.jpg", "width": 2048},
+                ],
+                attractions=[{"name": "Black Midi"}, {"name": "Opener Band"}],
+            )
+        ]
     )
+    responses.add(responses.GET, DISCOVERY_API_URL, json=payload, status=200)
 
     scraper = TicketmasterScraper(
         venue_id="KovZpa2ywe",
@@ -126,19 +126,13 @@ def test_parses_events_with_price_image_and_artists() -> None:
 @responses.activate
 def test_stops_when_total_pages_reached() -> None:
     """Pagination halts at the API-reported totalPages, not MAX_PAGES."""
-    page0 = _response_json(
-        [_event_json(event_id="a")], total_pages=2
-    )
-    page1 = _response_json(
-        [_event_json(event_id="b")], total_pages=2
-    )
+    page0 = _response_json([_event_json(event_id="a")], total_pages=2)
+    page1 = _response_json([_event_json(event_id="b")], total_pages=2)
     responses.add(responses.GET, DISCOVERY_API_URL, json=page0, status=200)
     responses.add(responses.GET, DISCOVERY_API_URL, json=page1, status=200)
 
     events = list(
-        TicketmasterScraper(
-            venue_id="v", venue_name="Test", api_key="k"
-        ).scrape()
+        TicketmasterScraper(venue_id="v", venue_name="Test", api_key="k").scrape()
     )
 
     assert [e.raw_data["id"] for e in events] == ["a", "b"]
@@ -152,9 +146,7 @@ def test_rate_limit_retries_then_succeeds(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "backend.scraper.platforms.ticketmaster.time.sleep", lambda _: None
     )
-    responses.add(
-        responses.GET, DISCOVERY_API_URL, status=429, body="rate limited"
-    )
+    responses.add(responses.GET, DISCOVERY_API_URL, status=429, body="rate limited")
     responses.add(
         responses.GET,
         DISCOVERY_API_URL,
@@ -163,9 +155,7 @@ def test_rate_limit_retries_then_succeeds(monkeypatch: Any) -> None:
     )
 
     events = list(
-        TicketmasterScraper(
-            venue_id="v", venue_name="Test", api_key="k"
-        ).scrape()
+        TicketmasterScraper(venue_id="v", venue_name="Test", api_key="k").scrape()
     )
 
     assert len(events) == 1
@@ -181,9 +171,7 @@ def test_skips_events_with_no_local_date() -> None:
     responses.add(responses.GET, DISCOVERY_API_URL, json=payload, status=200)
 
     events = list(
-        TicketmasterScraper(
-            venue_id="v", venue_name="Test", api_key="k"
-        ).scrape()
+        TicketmasterScraper(venue_id="v", venue_name="Test", api_key="k").scrape()
     )
 
     assert [e.raw_data["id"] for e in events] == ["good"]
@@ -192,14 +180,10 @@ def test_skips_events_with_no_local_date() -> None:
 @responses.activate
 def test_empty_response_ends_scraping_cleanly() -> None:
     """A page with no ``_embedded`` block exits the loop without error."""
-    responses.add(
-        responses.GET, DISCOVERY_API_URL, json={"page": {}}, status=200
-    )
+    responses.add(responses.GET, DISCOVERY_API_URL, json={"page": {}}, status=200)
 
     events = list(
-        TicketmasterScraper(
-            venue_id="v", venue_name="Test", api_key="k"
-        ).scrape()
+        TicketmasterScraper(venue_id="v", venue_name="Test", api_key="k").scrape()
     )
     assert events == []
 
@@ -224,6 +208,7 @@ def test_sends_api_key_and_venue_id_as_query_params() -> None:
 
     assert len(responses.calls) == 1
     request_url = responses.calls[0].request.url
+    assert request_url is not None
     assert "apikey=my-test-key" in request_url
     assert "venueId=KovZpa2ywe" in request_url
 
@@ -231,9 +216,7 @@ def test_sends_api_key_and_venue_id_as_query_params() -> None:
 @responses.activate
 def test_missing_local_time_defaults_to_evening() -> None:
     """An event with no ``localTime`` defaults to 8:00 PM."""
-    payload = _response_json([
-        _event_json(local_date="2026-06-01", local_time=None)
-    ])
+    payload = _response_json([_event_json(local_date="2026-06-01", local_time=None)])
     responses.add(
         responses.GET,
         DISCOVERY_API_URL,
@@ -243,9 +226,7 @@ def test_missing_local_time_defaults_to_evening() -> None:
     )
 
     event = next(
-        TicketmasterScraper(
-            venue_id="v", venue_name="Test", api_key="k"
-        ).scrape()
+        TicketmasterScraper(venue_id="v", venue_name="Test", api_key="k").scrape()
     )
     assert event.starts_at.hour == 20
     assert event.starts_at.minute == 0

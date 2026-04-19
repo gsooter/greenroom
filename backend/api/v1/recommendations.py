@@ -7,6 +7,8 @@ after login; an explicit POST is available for a manual refresh.
 
 from __future__ import annotations
 
+from typing import Any
+
 from flask import request
 
 from backend.api.v1 import api_v1
@@ -18,7 +20,7 @@ from backend.services import recommendations as recs_service
 
 @api_v1.route("/me/recommendations", methods=["GET"])
 @require_auth
-def list_my_recommendations() -> tuple[dict, int]:
+def list_my_recommendations() -> tuple[dict[str, Any], int]:
     """Return the authenticated user's paginated recommendation list.
 
     Query parameters:
@@ -59,7 +61,7 @@ def list_my_recommendations() -> tuple[dict, int]:
 
 @api_v1.route("/me/recommendations/refresh", methods=["POST"])
 @require_auth
-def refresh_my_recommendations() -> tuple[dict, int]:
+def refresh_my_recommendations() -> tuple[dict[str, Any], int]:
     """Force a regeneration of the caller's recommendation list.
 
     Intended for a "Refresh" button on the For-You page — the client

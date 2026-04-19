@@ -66,14 +66,8 @@ def test_parses_schedule_shows_with_doors_time() -> None:
     assert first.artists == ["HEAVENLY", "LIGHTHEADED", "SWANSEA SOUND"]
     assert first.description == "Doors at 7:30"
     assert first.ticket_url == "https://www.etix.com/ticket/p/43971320/heavenly"
-    assert (
-        first.source_url
-        == "https://www.blackcatdc.com/shows/heavenly.html"
-    )
-    assert (
-        first.image_url
-        == "https://www.blackcatdc.com/images/460/heavenly.jpg"
-    )
+    assert first.source_url == "https://www.blackcatdc.com/shows/heavenly.html"
+    assert first.image_url == "https://www.blackcatdc.com/images/460/heavenly.jpg"
 
     second = events[1]
     assert second.title == "DEPECHE MODE DANCE PARTY"

@@ -33,25 +33,19 @@ def test_list_cities_passes_region_filter(
     assert len(body["data"]) == 2
 
 
-def test_get_city_by_slug(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_city_by_slug(client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cities_route.cities_service,
         "get_city_by_slug",
         lambda _s, slug: {"slug": slug},
     )
-    monkeypatch.setattr(
-        cities_route.cities_service, "serialize_city", lambda c: c
-    )
+    monkeypatch.setattr(cities_route.cities_service, "serialize_city", lambda c: c)
     resp = client.get("/api/v1/cities/washington-dc")
     assert resp.status_code == 200
     assert resp.get_json()["data"] == {"slug": "washington-dc"}
 
 
-def test_get_city_404(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_city_404(client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*_a: Any, **_k: Any) -> None:
         raise NotFoundError(CITY_NOT_FOUND, "nope")
 

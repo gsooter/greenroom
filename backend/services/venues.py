@@ -9,8 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from backend.core.exceptions import NotFoundError, ValidationError
-from backend.core.exceptions import VENUE_NOT_FOUND
+from backend.core.exceptions import VENUE_NOT_FOUND, NotFoundError, ValidationError
 from backend.data.models.venues import Venue
 from backend.data.repositories import venues as venues_repo
 

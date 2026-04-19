@@ -4,6 +4,8 @@ Thin handlers that validate input and delegate to the cities service.
 No business logic lives here.
 """
 
+from typing import Any
+
 from flask import request
 
 from backend.api.v1 import api_v1
@@ -12,7 +14,7 @@ from backend.services import cities as cities_service
 
 
 @api_v1.route("/cities", methods=["GET"])
-def list_cities() -> tuple[dict, int]:
+def list_cities() -> tuple[dict[str, Any], int]:
     """List active cities, optionally filtered by region.
 
     Query parameters:
@@ -33,7 +35,7 @@ def list_cities() -> tuple[dict, int]:
 
 
 @api_v1.route("/cities/<slug>", methods=["GET"])
-def get_city(slug: str) -> tuple[dict, int]:
+def get_city(slug: str) -> tuple[dict[str, Any], int]:
     """Fetch a single city by slug.
 
     Args:

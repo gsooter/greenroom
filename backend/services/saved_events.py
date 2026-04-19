@@ -8,21 +8,22 @@ payloads match the shape returned by the browse endpoints.
 
 from __future__ import annotations
 
-import uuid
-from typing import Any
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING, Any
 
 from backend.core.exceptions import EVENT_NOT_FOUND, NotFoundError
-from backend.data.models.users import SavedEvent, User
 from backend.data.repositories import events as events_repo
 from backend.data.repositories import users as users_repo
 from backend.services import events as events_service
 
+if TYPE_CHECKING:
+    import uuid
 
-def save_event(
-    session: Session, user: User, event_id: uuid.UUID
-) -> SavedEvent:
+    from sqlalchemy.orm import Session
+
+    from backend.data.models.users import SavedEvent, User
+
+
+def save_event(session: Session, user: User, event_id: uuid.UUID) -> SavedEvent:
     """Save an event for the authenticated user.
 
     Idempotent — calling this twice with the same ``(user, event)``
@@ -51,14 +52,10 @@ def save_event(
     if existing is not None:
         return existing
 
-    return users_repo.create_saved_event(
-        session, user_id=user.id, event_id=event_id
-    )
+    return users_repo.create_saved_event(session, user_id=user.id, event_id=event_id)
 
 
-def unsave_event(
-    session: Session, user: User, event_id: uuid.UUID
-) -> bool:
+def unsave_event(session: Session, user: User, event_id: uuid.UUID) -> bool:
     """Remove an event from the authenticated user's saved list.
 
     Idempotent — returns ``False`` if the event was not saved, so the
@@ -98,9 +95,7 @@ def list_saved_events(
     Returns:
         Tuple of (saved events list, total count).
     """
-    return users_repo.list_saved_events(
-        session, user.id, page=page, per_page=per_page
-    )
+    return users_repo.list_saved_events(session, user.id, page=page, per_page=per_page)
 
 
 def serialize_saved_event(saved: SavedEvent) -> dict[str, Any]:

@@ -9,9 +9,7 @@ creation on OAuth login, token refresh) lives in
 from __future__ import annotations
 
 import uuid
-from typing import Any
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING, Any
 
 from backend.core.exceptions import (
     CITY_NOT_FOUND,
@@ -23,6 +21,8 @@ from backend.data.models.users import DigestFrequency, User
 from backend.data.repositories import cities as cities_repo
 from backend.data.repositories import users as users_repo
 
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 # Fields on ``User`` that callers are allowed to patch via PATCH /me.
 # Anything not in this set is silently ignored to prevent mass-assignment
@@ -60,9 +60,7 @@ def get_user(session: Session, user_id: uuid.UUID) -> User:
     return user
 
 
-def update_user_profile(
-    session: Session, user: User, patch: dict[str, Any]
-) -> User:
+def update_user_profile(session: Session, user: User, patch: dict[str, Any]) -> User:
     """Apply a partial update to a user's profile.
 
     Only fields in the allowlist are applied; unknown fields are
@@ -138,9 +136,7 @@ def serialize_user(user: User) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _validated_updates(
-    session: Session, patch: dict[str, Any]
-) -> dict[str, Any]:
+def _validated_updates(session: Session, patch: dict[str, Any]) -> dict[str, Any]:
     """Filter, type-check, and coerce a profile patch payload.
 
     Args:
@@ -183,9 +179,7 @@ def _validated_updates(
     return updates
 
 
-def _coerce_city_id(
-    session: Session, value: Any
-) -> uuid.UUID | None:
+def _coerce_city_id(session: Session, value: Any) -> uuid.UUID | None:
     """Coerce and validate a ``city_id`` patch value.
 
     Args:
@@ -233,9 +227,7 @@ def _coerce_digest_frequency(value: Any) -> DigestFrequency:
         return DigestFrequency(value)
     except ValueError as exc:
         allowed = ", ".join(f.value for f in DigestFrequency)
-        raise ValidationError(
-            f"digest_frequency must be one of: {allowed}"
-        ) from exc
+        raise ValidationError(f"digest_frequency must be one of: {allowed}") from exc
 
 
 def _coerce_genre_list(value: Any) -> list[str] | None:
@@ -253,15 +245,11 @@ def _coerce_genre_list(value: Any) -> list[str] | None:
     if value is None:
         return None
     if not isinstance(value, list):
-        raise ValidationError(
-            "genre_preferences must be an array of strings or null."
-        )
+        raise ValidationError("genre_preferences must be an array of strings or null.")
     cleaned: list[str] = []
     for genre in value:
         if not isinstance(genre, str):
-            raise ValidationError(
-                "genre_preferences must be an array of strings."
-            )
+            raise ValidationError("genre_preferences must be an array of strings.")
         trimmed = genre.strip()
         if trimmed:
             cleaned.append(trimmed)

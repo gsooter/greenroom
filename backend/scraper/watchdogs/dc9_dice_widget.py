@@ -53,7 +53,7 @@ def is_widget_live(html: str) -> bool:
     return WIDGET_ID in stripped
 
 
-@shared_task(
+@shared_task(  # type: ignore[untyped-decorator]
     name="backend.scraper.watchdogs.dc9_dice_widget.check_dc9_dice_widget"
 )
 def check_dc9_dice_widget() -> dict[str, object]:

@@ -25,9 +25,7 @@ def test_list_scraper_runs_happy_path(
         captured.update(kw)
         return [object()], 1
 
-    monkeypatch.setattr(
-        admin_route.admin_service, "list_scraper_runs", fake_list
-    )
+    monkeypatch.setattr(admin_route.admin_service, "list_scraper_runs", fake_list)
     monkeypatch.setattr(
         admin_route.admin_service,
         "serialize_scraper_run",
@@ -53,8 +51,6 @@ def test_trigger_scraper_run_happy_path(
         "trigger_scraper_run",
         lambda _s, slug: {"status": "success", "slug": slug},
     )
-    resp = client.post(
-        "/api/v1/admin/scrapers/black-cat/run", headers=_hdr()
-    )
+    resp = client.post("/api/v1/admin/scrapers/black-cat/run", headers=_hdr())
     assert resp.status_code == 200
     assert resp.get_json()["data"]["slug"] == "black-cat"

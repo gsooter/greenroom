@@ -96,9 +96,7 @@ def test_get_venue_not_found(
     def boom(*_a: Any, **_k: Any) -> None:
         raise NotFoundError(VENUE_NOT_FOUND, "nope")
 
-    monkeypatch.setattr(
-        venues_route.venues_service, "get_venue_by_slug", boom
-    )
+    monkeypatch.setattr(venues_route.venues_service, "get_venue_by_slug", boom)
     resp = client.get("/api/v1/venues/missing")
     assert resp.status_code == 404
     assert resp.get_json()["error"]["code"] == VENUE_NOT_FOUND

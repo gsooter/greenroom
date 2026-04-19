@@ -89,7 +89,7 @@ def init_db(app: Flask) -> None:
     Args:
         app: The Flask application instance.
     """
-    global _session_factory  # noqa: PLW0603
+    global _session_factory
     _session_factory = get_session_factory()
     app.teardown_appcontext(_teardown_session)
 
@@ -127,8 +127,7 @@ def get_db() -> Session:
     """
     if "db_session" not in g:
         if _session_factory is None:
-            raise RuntimeError(
-                "Database not initialized. Call init_db(app) first."
-            )
+            raise RuntimeError("Database not initialized. Call init_db(app) first.")
         g.db_session = _session_factory()
-    return g.db_session
+    session: Session = g.db_session
+    return session

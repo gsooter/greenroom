@@ -16,16 +16,19 @@ adding it to ``_build_scorers`` — no other file changes.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Protocol
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from backend.data.models.events import Event, EventStatus
-from backend.data.models.users import User
 from backend.data.repositories import users as users_repo
 from backend.recommendations.scorers.artist_match import ArtistMatchScorer
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from backend.data.models.users import User
 
 # Cap how many upcoming events we score per user. The full candidate
 # set is small today (hundreds) but this guards the worst case so a
@@ -140,7 +143,7 @@ def _fetch_scoreable_events(
     Returns:
         List of candidate :class:`Event` rows.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stmt = (
         select(Event)
         .where(Event.starts_at >= now)

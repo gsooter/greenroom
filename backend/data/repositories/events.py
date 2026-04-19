@@ -18,7 +18,6 @@ from backend.data.models.events import (
     TicketPricingSnapshot,
 )
 
-
 # ---------------------------------------------------------------------------
 # Event queries
 # ---------------------------------------------------------------------------
@@ -122,22 +121,20 @@ def list_events(
         base = base.where(Venue.city_id == city_id)
 
     if region is not None:
-        base = base.join(City, Venue.city_id == City.id).where(
-            City.region == region
-        )
+        base = base.join(City, Venue.city_id == City.id).where(City.region == region)
 
     if venue_ids is not None:
         base = base.where(Event.venue_id.in_(venue_ids))
 
     if date_from is not None:
-        base = base.where(Event.starts_at >= datetime.combine(
-            date_from, datetime.min.time()
-        ))
+        base = base.where(
+            Event.starts_at >= datetime.combine(date_from, datetime.min.time())
+        )
 
     if date_to is not None:
-        base = base.where(Event.starts_at <= datetime.combine(
-            date_to, datetime.max.time()
-        ))
+        base = base.where(
+            Event.starts_at <= datetime.combine(date_to, datetime.max.time())
+        )
 
     if genres is not None:
         base = base.where(Event.genres.overlap(genres))
@@ -151,12 +148,7 @@ def list_events(
     count_stmt = select(func.count()).select_from(base.subquery())
     total = session.execute(count_stmt).scalar_one()
 
-    stmt = (
-        base
-        .order_by(Event.starts_at)
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    )
+    stmt = base.order_by(Event.starts_at).offset((page - 1) * per_page).limit(per_page)
     events = list(session.execute(stmt).scalars().all())
     return events, total
 
@@ -189,12 +181,7 @@ def list_events_by_venue(
     count_stmt = select(func.count()).select_from(base.subquery())
     total = session.execute(count_stmt).scalar_one()
 
-    stmt = (
-        base
-        .order_by(Event.starts_at)
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    )
+    stmt = base.order_by(Event.starts_at).offset((page - 1) * per_page).limit(per_page)
     events = list(session.execute(stmt).scalars().all())
     return events, total
 
@@ -218,9 +205,7 @@ def list_events_by_artist_ids(
     Returns:
         List of matching Event instances ordered by start date.
     """
-    stmt = select(Event).where(
-        Event.spotify_artist_ids.overlap(spotify_artist_ids)
-    )
+    stmt = select(Event).where(Event.spotify_artist_ids.overlap(spotify_artist_ids))
 
     if upcoming_only:
         stmt = stmt.where(Event.starts_at >= func.now())
@@ -359,17 +344,14 @@ def list_ticket_snapshots(
     Returns:
         List of TicketPricingSnapshot instances, newest first.
     """
-    stmt = (
-        select(TicketPricingSnapshot)
-        .where(TicketPricingSnapshot.event_id == event_id)
+    stmt = select(TicketPricingSnapshot).where(
+        TicketPricingSnapshot.event_id == event_id
     )
 
     if source is not None:
         stmt = stmt.where(TicketPricingSnapshot.source == source)
 
-    stmt = stmt.order_by(
-        TicketPricingSnapshot.created_at.desc()
-    ).limit(limit)
+    stmt = stmt.order_by(TicketPricingSnapshot.created_at.desc()).limit(limit)
 
     return list(session.execute(stmt).scalars().all())
 

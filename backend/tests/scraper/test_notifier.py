@@ -92,9 +92,7 @@ def test_slack_alert_noop_when_webhook_unconfigured(
     post_mock = MagicMock()
     monkeypatch.setattr(notifier.requests, "post", post_mock)
 
-    result = notifier._send_slack_alert(
-        title="t", message="m", severity="warning"
-    )
+    result = notifier._send_slack_alert(title="t", message="m", severity="warning")
 
     assert result is False
     post_mock.assert_not_called()
@@ -130,9 +128,7 @@ def test_slack_alert_defaults_color_for_unknown_severity(
     post_mock = MagicMock(return_value=_FakeSlackResponse(status_code=200))
     monkeypatch.setattr(notifier.requests, "post", post_mock)
 
-    result = notifier._send_slack_alert(
-        title="t", message="m", severity="catastrophic"
-    )
+    result = notifier._send_slack_alert(title="t", message="m", severity="catastrophic")
 
     assert result is True
     post_mock.assert_called_once()
@@ -153,8 +149,7 @@ def test_email_alert_noop_when_alert_email_unconfigured(
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
     assert (
-        notifier._send_email_alert(title="t", message="m", severity="warning")
-        is False
+        notifier._send_email_alert(title="t", message="m", severity="warning") is False
     )
 
 
@@ -168,8 +163,7 @@ def test_email_alert_noop_when_sendgrid_key_unconfigured(
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
     assert (
-        notifier._send_email_alert(title="t", message="m", severity="warning")
-        is False
+        notifier._send_email_alert(title="t", message="m", severity="warning") is False
     )
 
 

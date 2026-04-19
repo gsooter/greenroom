@@ -5,6 +5,7 @@ No business logic lives here.
 """
 
 import uuid
+from typing import Any
 
 from flask import request
 
@@ -16,7 +17,7 @@ from backend.services import venues as venues_service
 
 
 @api_v1.route("/venues", methods=["GET"])
-def list_venues() -> tuple[dict, int]:
+def list_venues() -> tuple[dict[str, Any], int]:
     """List venues with pagination. At least one scope filter required.
 
     Query parameters:
@@ -72,7 +73,7 @@ def list_venues() -> tuple[dict, int]:
 
 
 @api_v1.route("/venues/<slug>", methods=["GET"])
-def get_venue(slug: str) -> tuple[dict, int]:
+def get_venue(slug: str) -> tuple[dict[str, Any], int]:
     """Fetch a single venue by slug, including upcoming events.
 
     Args:

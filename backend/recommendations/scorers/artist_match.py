@@ -16,11 +16,11 @@ lookup.
 from __future__ import annotations
 
 import unicodedata
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from backend.data.models.events import Event
-from backend.data.models.users import User
-
+if TYPE_CHECKING:
+    from backend.data.models.events import Event
+    from backend.data.models.users import User
 
 SCORER_NAME = "artist_match"
 _ID_MATCH_SCORE = 1.0
@@ -121,9 +121,7 @@ class ArtistMatchScorer:
                 continue
             hit = self._name_to_artist.get(key)
             if hit is not None:
-                matched.append(
-                    {"name": hit.get("name"), "match": "artist_name"}
-                )
+                matched.append({"name": hit.get("name"), "match": "artist_name"})
                 best_score = max(best_score, _NAME_MATCH_SCORE)
 
         if not matched:

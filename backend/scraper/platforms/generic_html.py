@@ -14,13 +14,17 @@ or nothing.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 from backend.core.logging import get_logger
 from backend.scraper.base.http import fetch_html
 from backend.scraper.base.jsonld import extract_events
-from backend.scraper.base.models import RawEvent
 from backend.scraper.base.scraper import BaseScraper
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from backend.scraper.base.models import RawEvent
 
 logger = get_logger(__name__)
 

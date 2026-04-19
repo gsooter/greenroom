@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -114,9 +113,7 @@ def test_get_event_by_uuid(
 ) -> None:
     """Valid UUID path delegates to get_event; slug path is not hit."""
     event = _fake_event()
-    monkeypatch.setattr(
-        events_route.events_service, "get_event", lambda _s, _i: event
-    )
+    monkeypatch.setattr(events_route.events_service, "get_event", lambda _s, _i: event)
     monkeypatch.setattr(
         events_route.events_service,
         "get_event_by_slug",
@@ -140,15 +137,10 @@ def test_get_event_by_slug_falls_through(
         "get_event_by_slug",
         lambda _s, slug: {"slug": slug},
     )
-    monkeypatch.setattr(
-        events_route.events_service, "serialize_event", lambda e: e
-    )
+    monkeypatch.setattr(events_route.events_service, "serialize_event", lambda e: e)
     resp = client.get("/api/v1/events/phoebe-bridgers-930-club-2026-05-01-abc")
     assert resp.status_code == 200
-    assert (
-        resp.get_json()["data"]["slug"]
-        == "phoebe-bridgers-930-club-2026-05-01-abc"
-    )
+    assert resp.get_json()["data"]["slug"] == "phoebe-bridgers-930-club-2026-05-01-abc"
 
 
 def test_get_event_not_found(

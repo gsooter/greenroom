@@ -4,7 +4,6 @@ Provides queries for logging scraper executions and retrieving
 historical data used by the validator for anomaly detection.
 """
 
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -203,12 +202,9 @@ def count_failed_runs_since(
     Returns:
         Number of failed runs since the given time.
     """
-    stmt = (
-        select(func.count())
-        .where(
-            ScraperRun.venue_slug == venue_slug,
-            ScraperRun.status == ScraperRunStatus.FAILED,
-            ScraperRun.started_at >= since,
-        )
+    stmt = select(func.count()).where(
+        ScraperRun.venue_slug == venue_slug,
+        ScraperRun.status == ScraperRunStatus.FAILED,
+        ScraperRun.started_at >= since,
     )
     return session.execute(stmt).scalar_one()

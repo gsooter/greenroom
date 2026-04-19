@@ -9,6 +9,7 @@ history and trend analysis (Decision 010).
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     DateTime,
@@ -24,6 +25,9 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from backend.data.models.venues import Venue
 
 
 class EventType(str, enum.Enum):
@@ -128,9 +132,7 @@ class Event(TimestampMixin, Base):
         default=EventStatus.CONFIRMED,
         index=True,
     )
-    starts_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ends_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -146,24 +148,20 @@ class Event(TimestampMixin, Base):
     spotify_artist_ids: Mapped[list[str] | None] = mapped_column(
         ARRAY(String(50)), nullable=True
     )
-    genres: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String(50)), nullable=True
-    )
+    genres: Mapped[list[str] | None] = mapped_column(ARRAY(String(50)), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ticket_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     min_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    raw_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     external_id: Mapped[str | None] = mapped_column(
         String(200), nullable=True, index=True
     )
-    source_platform: Mapped[str | None] = mapped_column(
-        String(50), nullable=True
-    )
+    source_platform: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # Relationships
-    venue: Mapped["Venue"] = relationship(  # noqa: F821
+    venue: Mapped["Venue"] = relationship(
         back_populates="events",
     )
     ticket_snapshots: Mapped[list["TicketPricingSnapshot"]] = relationship(
@@ -217,10 +215,8 @@ class TicketPricingSnapshot(TimestampMixin, Base):
     max_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     average_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     listing_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    currency: Mapped[str] = mapped_column(
-        String(3), nullable=False, default="USD"
-    )
-    raw_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    raw_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     # Relationships
     event: Mapped["Event"] = relationship(

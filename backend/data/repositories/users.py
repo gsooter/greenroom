@@ -19,7 +19,6 @@ from backend.data.models.users import (
     UserOAuthProvider,
 )
 
-
 # ---------------------------------------------------------------------------
 # User queries
 # ---------------------------------------------------------------------------
@@ -273,8 +272,7 @@ def list_saved_events(
     total = session.execute(count_stmt).scalar_one()
 
     stmt = (
-        base
-        .order_by(SavedEvent.created_at.desc())
+        base.order_by(SavedEvent.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )
@@ -341,9 +339,7 @@ def list_recommendations(
     Returns:
         Tuple of (recommendations list, total count).
     """
-    base = select(Recommendation).where(
-        Recommendation.user_id == user_id
-    )
+    base = select(Recommendation).where(Recommendation.user_id == user_id)
 
     if not include_dismissed:
         base = base.where(Recommendation.is_dismissed.is_(False))
@@ -352,8 +348,7 @@ def list_recommendations(
     total = session.execute(count_stmt).scalar_one()
 
     stmt = (
-        base
-        .order_by(Recommendation.score.desc())
+        base.order_by(Recommendation.score.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )
@@ -426,9 +421,7 @@ def delete_recommendations_for_user(
     Returns:
         Number of recommendations deleted.
     """
-    stmt = select(Recommendation).where(
-        Recommendation.user_id == user_id
-    )
+    stmt = select(Recommendation).where(Recommendation.user_id == user_id)
     recs = list(session.execute(stmt).scalars().all())
     count = len(recs)
     for rec in recs:

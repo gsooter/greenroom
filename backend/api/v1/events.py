@@ -6,8 +6,9 @@ No business logic lives here.
 
 import uuid
 from datetime import date, datetime
+from typing import Any
 
-from flask import Response, jsonify, request
+from flask import Response, request
 
 from backend.api.v1 import api_v1
 from backend.core.database import get_db
@@ -15,7 +16,7 @@ from backend.services import events as events_service
 
 
 @api_v1.route("/events", methods=["GET"])
-def list_events() -> tuple[dict, int]:
+def list_events() -> tuple[dict[str, Any], int]:
     """List events with optional filters and pagination.
 
     Query parameters:
@@ -72,7 +73,7 @@ def list_events() -> tuple[dict, int]:
 
 
 @api_v1.route("/events/<event_id>", methods=["GET"])
-def get_event(event_id: str) -> tuple[dict, int]:
+def get_event(event_id: str) -> tuple[dict[str, Any], int]:
     """Fetch a single event by ID or slug.
 
     Args:
