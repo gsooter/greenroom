@@ -69,14 +69,18 @@ def _register_error_handlers(app: Flask) -> None:
     """
 
     @app.errorhandler(AppError)
-    def handle_app_error(error: AppError) -> tuple[dict[str, Any], int]:
+    def handle_app_error(
+        error: AppError,
+    ) -> tuple[dict[str, Any], int] | tuple[dict[str, Any], int, dict[str, str]]:
         """Handle custom application errors.
 
         Args:
             error: The AppError instance.
 
         Returns:
-            Tuple of JSON error response and HTTP status code.
+            Tuple of JSON error response and HTTP status code, plus a
+            ``Retry-After`` header when the error is a rate-limit
+            violation so clients can back off politely.
         """
         response = {
             "error": {
@@ -84,6 +88,9 @@ def _register_error_handlers(app: Flask) -> None:
                 "message": error.message,
             }
         }
+        retry_after = getattr(error, "retry_after_seconds", None)
+        if retry_after is not None:
+            return response, error.status_code, {"Retry-After": str(retry_after)}
         return response, error.status_code
 
     @app.errorhandler(HTTPException)

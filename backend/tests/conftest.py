@@ -77,6 +77,28 @@ def _clear_settings_cache() -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True)
+def _disable_rate_limiter(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Default the rate limiter to fail-open in tests.
+
+    The limiter is built to degrade gracefully when Redis is
+    unreachable, but CI environments often have a real Redis pointing
+    at a shared db and per-IP counters would leak between tests.
+    Stubbing ``_get_redis`` to ``None`` makes every rate-limited
+    route behave as if Redis were down (i.e. it calls through).
+
+    Tests that exercise the limiter explicitly re-enable it by
+    monkey-patching ``_get_redis`` back to a fake client.
+
+    Yields:
+        None; teardown restores by virtue of monkeypatch scope.
+    """
+    from backend.core import rate_limit as rate_limit_module
+
+    monkeypatch.setattr(rate_limit_module, "_get_redis", lambda: None)
+    yield
+
+
 # ---------------------------------------------------------------------------
 # Knuckles RS256 token helpers
 # ---------------------------------------------------------------------------

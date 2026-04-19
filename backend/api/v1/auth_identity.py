@@ -36,6 +36,7 @@ from backend.core.exceptions import (
 from backend.core.knuckles_client import post as knuckles_post
 from backend.core.knuckles_client import verify_knuckles_token
 from backend.core.logging import get_logger
+from backend.core.rate_limit import rate_limit
 from backend.data.repositories import users as users_repo
 from backend.services import users as users_service
 
@@ -54,7 +55,31 @@ _APPLE_REDIRECT_PATH = "/auth/apple/callback"
 # ---------------------------------------------------------------------------
 
 
+def _magic_link_email_key() -> str:
+    """Rate-limit key extractor for per-email magic-link throttling.
+
+    Returns:
+        A normalized email address, or the empty string when the body
+        is missing or malformed — in that case the limiter skips and
+        the route's own validation will reject with 422.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return ""
+    value = body.get("email")
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower()
+
+
 @api_v1.route("/auth/magic-link/request", methods=["POST"])
+@rate_limit("magic_link_request_ip", limit=10, window_seconds=3600)
+@rate_limit(
+    "magic_link_request_email",
+    limit=5,
+    window_seconds=3600,
+    key_fn=_magic_link_email_key,
+)
 def magic_link_request() -> tuple[dict[str, Any], int]:
     """Proxy a magic-link send request to Knuckles.
 
@@ -78,6 +103,7 @@ def magic_link_request() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/magic-link/verify", methods=["POST"])
+@rate_limit("magic_link_verify_ip", limit=20, window_seconds=60)
 def magic_link_verify() -> tuple[dict[str, Any], int]:
     """Redeem a magic-link token and return ``{token, user}``.
 
@@ -102,6 +128,7 @@ def magic_link_verify() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/google/start", methods=["GET"])
+@rate_limit("oauth_start_ip", limit=30, window_seconds=60)
 def google_start() -> tuple[dict[str, Any], int]:
     """Return a Google consent URL and signed state token from Knuckles.
 
@@ -116,6 +143,7 @@ def google_start() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/google/complete", methods=["POST"])
+@rate_limit("oauth_complete_ip", limit=20, window_seconds=60)
 def google_complete() -> tuple[dict[str, Any], int]:
     """Exchange a Google code/state pair for a Greenroom session.
 
@@ -142,6 +170,7 @@ def google_complete() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/apple/start", methods=["GET"])
+@rate_limit("oauth_start_ip", limit=30, window_seconds=60)
 def apple_start() -> tuple[dict[str, Any], int]:
     """Return an Apple consent URL and signed state token from Knuckles.
 
@@ -156,6 +185,7 @@ def apple_start() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/apple/complete", methods=["POST"])
+@rate_limit("oauth_complete_ip", limit=20, window_seconds=60)
 def apple_complete() -> tuple[dict[str, Any], int]:
     """Exchange an Apple code/state (plus optional user blob) for a session.
 
@@ -243,6 +273,7 @@ def passkey_register_complete() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/passkey/authenticate/start", methods=["POST"])
+@rate_limit("passkey_auth_start_ip", limit=30, window_seconds=60)
 def passkey_authenticate_start() -> tuple[dict[str, Any], int]:
     """Return a discoverable-credential authentication challenge.
 
@@ -254,6 +285,7 @@ def passkey_authenticate_start() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/passkey/authenticate/complete", methods=["POST"])
+@rate_limit("passkey_auth_complete_ip", limit=20, window_seconds=60)
 def passkey_authenticate_complete() -> tuple[dict[str, Any], int]:
     """Verify a passkey assertion and mint a Greenroom session.
 
@@ -280,6 +312,7 @@ def passkey_authenticate_complete() -> tuple[dict[str, Any], int]:
 
 
 @api_v1.route("/auth/refresh", methods=["POST"])
+@rate_limit("refresh_ip", limit=60, window_seconds=60)
 def refresh_session() -> tuple[dict[str, Any], int]:
     """Rotate a refresh token into a fresh access+refresh pair.
 

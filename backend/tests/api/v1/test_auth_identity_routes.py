@@ -590,3 +590,89 @@ def test_refresh_bubbles_knuckles_errors(
     monkeypatch.setattr(route, "knuckles_post", fake_post)
     resp = client.post("/api/v1/auth/refresh", json={"refresh_token": "dead"})
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+
+def test_magic_link_request_enforces_per_ip_rate_limit(
+    client: FlaskClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After the per-IP quota is exhausted, magic-link requests 429.
+
+    Uses a per-key fake Redis so the IP and email limiters count
+    independently. Sends 10 requests with unique emails (staying under
+    the per-email limit) to exhaust the per-IP quota, then confirms
+    the 11th is blocked with the standard ``RATE_LIMITED`` code and a
+    ``Retry-After`` header.
+    """
+    from backend.core import rate_limit as rate_limit_module
+
+    class _KeyedCounter:
+        """Fake Redis keyed by cache key so per-IP vs per-email don't collide."""
+
+        def __init__(self) -> None:
+            """Create an empty counter store."""
+            self.counts: dict[str, int] = {}
+            self._pending_key: str | None = None
+
+        def pipeline(self) -> Any:
+            """Return a pipeline that mirrors INCR + TTL semantics."""
+            return _KeyedPipeline(self)
+
+        def expire(self, *_a: Any, **_k: Any) -> bool:
+            """Accept the TTL set from the limiter; no-op for the test."""
+            return True
+
+    class _KeyedPipeline:
+        def __init__(self, parent: _KeyedCounter) -> None:
+            """Hold a reference to the parent counter.
+
+            Args:
+                parent: The :class:`_KeyedCounter` tracking state.
+            """
+            self._parent = parent
+            self._key: str | None = None
+
+        def incr(self, key: str, *_a: Any, **_k: Any) -> _KeyedPipeline:
+            """Bump the counter for ``key`` by one.
+
+            Args:
+                key: Full Redis cache key for the rule+subject pair.
+
+            Returns:
+                Self, for fluent chaining.
+            """
+            self._key = key
+            self._parent.counts[key] = self._parent.counts.get(key, 0) + 1
+            return self
+
+        def ttl(self, *_a: Any, **_k: Any) -> _KeyedPipeline:
+            """Fluent no-op — the stub reports a constant TTL."""
+            return self
+
+        def execute(self) -> list[int]:
+            """Return ``(counter, ttl)`` like a real pipeline would."""
+            assert self._key is not None
+            return [self._parent.counts[self._key], 30]
+
+    counter_instance = _KeyedCounter()
+    monkeypatch.setattr(rate_limit_module, "_get_redis", lambda: counter_instance)
+
+    monkeypatch.setattr(route, "knuckles_post", lambda *_a, **_k: {"data": {}})
+    for i in range(10):
+        resp = client.post(
+            "/api/v1/auth/magic-link/request",
+            json={"email": f"fan{i}@example.test"},
+        )
+        assert resp.status_code == 200, f"call {i} unexpectedly blocked"
+    resp = client.post(
+        "/api/v1/auth/magic-link/request",
+        json={"email": "fan-final@example.test"},
+    )
+    assert resp.status_code == 429
+    assert resp.get_json()["error"]["code"] == "RATE_LIMITED"
+    assert resp.headers.get("Retry-After") == "30"

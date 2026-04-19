@@ -82,6 +82,30 @@ class ValidationError(AppError):
         super().__init__(code="VALIDATION_ERROR", message=message, status_code=422)
 
 
+class RateLimitExceededError(AppError):
+    """Raised when a caller exceeds a per-endpoint rate limit.
+
+    Rendered as HTTP 429 with the ``RATE_LIMITED`` code so the client
+    can distinguish "slow down" from other 4xx errors.
+    """
+
+    def __init__(
+        self,
+        message: str = "Too many requests. Please try again later.",
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        """Initialize a RateLimitExceededError.
+
+        Args:
+            message: Human-readable hint shown to the caller.
+            retry_after_seconds: Approximate seconds until the caller
+                may retry. Surfaced on the exception for the route
+                handler to add as a ``Retry-After`` header.
+        """
+        super().__init__(code="RATE_LIMITED", message=message, status_code=429)
+        self.retry_after_seconds = retry_after_seconds
+
+
 # Error code constants
 EVENT_NOT_FOUND = "EVENT_NOT_FOUND"
 VENUE_NOT_FOUND = "VENUE_NOT_FOUND"
