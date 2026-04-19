@@ -13,6 +13,8 @@ api_v1 = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 # These imports must come after api_v1 is defined.
 from backend.api.v1 import admin as _admin  # noqa: F401, E402
 from backend.api.v1 import auth as _auth  # noqa: F401, E402
+from backend.api.v1 import auth_apple as _auth_apple  # noqa: F401, E402
+from backend.api.v1 import auth_google as _auth_google  # noqa: F401, E402
 from backend.api.v1 import auth_magic_link as _auth_magic_link  # noqa: F401, E402
 from backend.api.v1 import auth_session as _auth_session  # noqa: F401, E402
 from backend.api.v1 import cities as _cities  # noqa: F401, E402
