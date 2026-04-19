@@ -773,6 +773,106 @@ once we have a minute to look at the actual failure log.
 
 ---
 
+### 026 — Greenroom Becomes Its Own Identity Anchor
+
+**Date:** 2026-04-19
+**Status:** Decided (supersedes Decision 003)
+
+**Decision:** Users authenticate against a Greenroom account, not a
+Spotify account. Four identity paths ship in Phase 1: WebAuthn passkey
+(primary, listed first in the UI), "Sign in with Apple", "Sign in with
+Google", and an email magic-link. Spotify remains a fully functional
+*connected music service* that users attach from `/settings` after they
+already have an account; the sync pipeline (`services/spotify.py`,
+`spotify_top_artist_ids`, etc.) is unchanged — only the auth surface
+moves.
+
+**Rationale:**
+Decision 003 made Spotify the only login because the MVP was a
+concert-only app and every logged-in feature needed Spotify data. That
+coupling now blocks three concrete things: (1) non-Spotify music
+services (Apple Music, Tidal) can never be the anchor, so a user who
+lives in Apple Music has to create a throwaway Spotify account to use
+the app; (2) passkeys and Sign-in-with-Apple are the industry baseline
+in 2026 — asking a signed-in user to also hand over Spotify scopes
+before the app does anything is worse conversion than the Spotify-only
+data is worth; (3) artist following (Phase 2) and genre preferences
+(Phase 4) give logged-in users meaningful personalization with zero
+music-service connection, so "login requires Spotify" is no longer a
+product truth.
+
+**Provider migration:** existing Spotify-authed users are not broken.
+Their `users` row already has `email`, and their `user_oauth_providers`
+row with `provider=spotify` already carries a stable `provider_user_id`.
+JWTs have always carried the internal Greenroom `users.id` as their
+`sub` (see `core/auth.issue_token`), so no session invalidation is
+needed. The Spotify callback becomes a "log in *or* connect Spotify"
+flow based on the caller's auth state.
+
+**Alternatives considered:**
+- Keep Spotify as the only login and add Google/Apple in a later phase
+  — rejected: blocks Apple Music/Tidal users from the app entirely.
+- Email/password as the primary method — rejected: passkeys and
+  magic-links together cover every real user journey without the
+  password-reset/credential-stuffing overhead.
+- Social-only (Google + Apple) with no email path — rejected: magic
+  links are critical for users who don't want a third party to know
+  they use the app, and for desktop-first users without a passkey.
+
+**Consequences:**
+- `user_oauth_providers` gains `passkey` (identity) plus `apple_music`
+  and `tidal` (connected music, Phase 5) enum values in the
+  `20260419_auth_identity_overhaul` migration.
+- New tables `magic_link_tokens` (hashed one-time tokens, 15-minute TTL)
+  and `passkey_credentials` (WebAuthn public keys + sign counts).
+- `users.password_hash` is added as a nullable column. The magic-link
+  and passkey paths never populate it; it exists so a future
+  password-reset fallback can be added without another migration.
+- `services/auth.py` is the single home for all identity flows.
+  `services/spotify.py` is now connection-only — no JWT issuance paths.
+- Frontend `/login` becomes a 4-button stack (passkey first, then
+  Apple, Google, email). Spotify connect moves to `/settings` under
+  "Connected services".
+
+---
+
+### 027 — Magic-Link Tokens Are Hashed At Rest
+
+**Date:** 2026-04-19
+**Status:** Decided
+
+**Decision:** The only value stored in `magic_link_tokens.token_hash` is
+the SHA-256 hex digest of the raw token. The raw token exists exactly
+twice: once in the outgoing email URL and once in memory during the
+verify request. Verification hashes the incoming value and looks up by
+the hash column.
+
+**Rationale:**
+A magic-link token is a short-lived password-equivalent. If the database
+is compromised, an attacker with plaintext tokens has a 15-minute window
+to log in as any user with a pending link. Storing the hash reduces that
+to "hash must be inverted before the TTL expires," which is
+computationally infeasible for a 32-byte random secret. The cost is
+trivial — one SHA-256 per request.
+
+**Alternatives considered:**
+- Encrypt the token with an app-level key — rejected: the key lives in
+  the same environment, so a breach that reads the DB can usually read
+  the key too. Hashing has no decryption path by construction.
+- Store plaintext and rely on short TTL alone — rejected: the TTL helps
+  against *replayed* attacks but not against *concurrent* disclosure.
+
+**Consequences:**
+- `generate_magic_link(email)` returns the raw token (for the email
+  body) and inserts only the hash. The raw value is never persisted.
+- `verify_magic_link(token)` hashes the caller-supplied token and
+  looks it up. A pure equality check on the hash column is enough.
+- A nightly `cleanup_expired_magic_links` Celery task deletes rows
+  whose `expires_at` is more than 24 hours old so the table stays
+  small.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
