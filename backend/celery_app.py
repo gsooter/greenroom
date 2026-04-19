@@ -77,9 +77,7 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "options": {"expires": 60 * 60 * 3},
         },
         "watch-dc9-dice-widget-weekly": {
-            "task": (
-                "backend.scraper.watchdogs.dc9_dice_widget" ".check_dc9_dice_widget"
-            ),
+            "task": ("backend.scraper.watchdogs.dc9_dice_widget.check_dc9_dice_widget"),
             "schedule": crontab(hour=5, minute=0, day_of_week=1),
             "options": {"expires": 60 * 60},
         },

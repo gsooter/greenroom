@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 import jwt
 from flask import g, request
@@ -30,8 +30,6 @@ from backend.core.exceptions import (
 )
 from backend.data.models.users import User
 from backend.data.repositories import users as users_repo
-
-F = TypeVar("F", bound=Callable[..., Any])
 
 _JWT_ALGORITHM = "HS256"
 
@@ -124,7 +122,7 @@ def _extract_bearer_token() -> str:
     return token
 
 
-def require_auth(func: F) -> F:
+def require_auth[F: Callable[..., Any]](func: F) -> F:
     """Flask route decorator that enforces a valid JWT.
 
     Reads the bearer token, verifies it, loads the corresponding user
@@ -162,7 +160,7 @@ def require_auth(func: F) -> F:
         g.current_user = user
         return func(*args, **kwargs)
 
-    return cast(F, wrapper)
+    return cast("F", wrapper)
 
 
 def get_current_user() -> User:

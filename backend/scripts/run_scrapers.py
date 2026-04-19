@@ -63,8 +63,7 @@ def _dry_run(venue_slug: str | None) -> int:
             head = events[0]
             first_line = f"   first: {head.starts_at:%Y-%m-%d %H:%M}  {head.title}"
         print(
-            f"  [{marker}] {config.venue_slug:<32} "
-            f"{len(events):>3} events{first_line}"
+            f"  [{marker}] {config.venue_slug:<32} {len(events):>3} events{first_line}"
         )
 
     print(f"\nTotal events (not persisted): {total}")

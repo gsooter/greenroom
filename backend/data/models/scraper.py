@@ -16,7 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from backend.core.database import Base, TimestampMixin
 
 
-class ScraperRunStatus(str, enum.Enum):
+class ScraperRunStatus(enum.StrEnum):
     """Status of a scraper run."""
 
     SUCCESS = "success"

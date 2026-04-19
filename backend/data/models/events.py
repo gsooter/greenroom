@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from backend.data.models.venues import Venue
 
 
-class EventType(str, enum.Enum):
+class EventType(enum.StrEnum):
     """Enum of supported event categories.
 
     Only 'concert' is active at launch. Others are defined so expanding
@@ -44,7 +44,7 @@ class EventType(str, enum.Enum):
     OTHER = "other"
 
 
-class EventStatus(str, enum.Enum):
+class EventStatus(enum.StrEnum):
     """Lifecycle status of an event.
 
     Tracks whether an event is confirmed, cancelled, postponed, or
@@ -230,6 +230,5 @@ class TicketPricingSnapshot(TimestampMixin, Base):
             String representation with source and price range.
         """
         return (
-            f"<TicketPricingSnapshot {self.source} "
-            f"${self.min_price}-${self.max_price}>"
+            f"<TicketPricingSnapshot {self.source} ${self.min_price}-${self.max_price}>"
         )

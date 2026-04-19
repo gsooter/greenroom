@@ -11,7 +11,7 @@ from __future__ import annotations
 import hmac
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from flask import request
 
@@ -21,10 +21,8 @@ from backend.core.database import get_db
 from backend.core.exceptions import ForbiddenError, UnauthorizedError
 from backend.services import admin as admin_service
 
-F = TypeVar("F", bound=Callable[..., Any])
 
-
-def require_admin(func: F) -> F:
+def require_admin[F: Callable[..., Any]](func: F) -> F:
     """Gate a route behind the shared admin secret.
 
     Uses :func:`hmac.compare_digest` to avoid timing attacks when the
@@ -62,7 +60,7 @@ def require_admin(func: F) -> F:
             raise ForbiddenError(message="Invalid admin key.")
         return func(*args, **kwargs)
 
-    return cast(F, wrapper)
+    return cast("F", wrapper)
 
 
 @api_v1.route("/admin/scrapers", methods=["GET"])

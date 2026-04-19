@@ -33,7 +33,7 @@ dev = [
     "pytest>=8.0,<9",
     "pytest-cov>=5.0,<6",
     "black>=24.0,<25",
-    "ruff>=0.4,<1",
+    "ruff==0.15.11",
     "mypy>=1.9,<2",
     "types-requests>=2.31,<3",
     "types-beautifulsoup4>=4.12,<5",

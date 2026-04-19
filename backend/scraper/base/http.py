@@ -19,8 +19,7 @@ from backend.core.logging import get_logger
 logger = get_logger(__name__)
 
 USER_AGENT: Final[str] = (
-    "GreenroomBot/0.1 (+https://greenroom.concerts; contact: "
-    "greenroom.dmv@gmail.com)"
+    "GreenroomBot/0.1 (+https://greenroom.concerts; contact: greenroom.dmv@gmail.com)"
 )
 
 DEFAULT_TIMEOUT: Final[float] = 20.0

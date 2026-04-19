@@ -41,8 +41,7 @@ def test_list_venues_forwards_filters_and_pagination(
 
     cid = str(uuid.uuid4())
     resp = client.get(
-        f"/api/v1/venues?city_id={cid}&region=DMV&active_only=false"
-        "&page=3&per_page=25"
+        f"/api/v1/venues?city_id={cid}&region=DMV&active_only=false&page=3&per_page=25"
     )
 
     assert resp.status_code == 200

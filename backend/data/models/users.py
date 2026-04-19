@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from backend.data.models.recommendations import Recommendation
 
 
-class OAuthProvider(str, enum.Enum):
+class OAuthProvider(enum.StrEnum):
     """Supported OAuth provider types.
 
     Only SPOTIFY is active at launch. Others defined for future
@@ -40,7 +40,7 @@ class OAuthProvider(str, enum.Enum):
     APPLE = "apple"
 
 
-class DigestFrequency(str, enum.Enum):
+class DigestFrequency(enum.StrEnum):
     """Email digest frequency preferences."""
 
     DAILY = "daily"
@@ -219,7 +219,7 @@ class UserOAuthProvider(TimestampMixin, Base):
         Returns:
             String representation with provider type and user ID.
         """
-        return f"<UserOAuthProvider {self.provider.value} " f"user={self.user_id}>"
+        return f"<UserOAuthProvider {self.provider.value} user={self.user_id}>"
 
 
 class SavedEvent(TimestampMixin, Base):

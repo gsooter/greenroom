@@ -25,8 +25,12 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=500"]
 
+  # Keep this rev in lockstep with `backend/pyproject.toml`'s ruff pin
+  # and whatever CI resolves on `pip install -e backend[dev]`. When
+  # ruff adds new rules between releases, a version skew here silently
+  # produces a clean pre-commit but a failing CI — update all three together.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.10
+    rev: v0.15.11
     hooks:
       - id: ruff
         args: ["--fix"]

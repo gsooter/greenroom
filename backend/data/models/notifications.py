@@ -63,4 +63,4 @@ class EmailDigestLog(TimestampMixin, Base):
         Returns:
             String representation with user ID and digest type.
         """
-        return f"<EmailDigestLog user={self.user_id} " f"type={self.digest_type}>"
+        return f"<EmailDigestLog user={self.user_id} type={self.digest_type}>"
