@@ -75,8 +75,8 @@ function GoogleCallbackInner(): JSX.Element {
 
     void (async () => {
       try {
-        const { token } = await completeGoogleOAuth(code, state);
-        await login(token);
+        const { token, refresh_token } = await completeGoogleOAuth(code, state);
+        await login(token, refresh_token);
         router.replace("/for-you");
       } catch (err) {
         setStatus("error");

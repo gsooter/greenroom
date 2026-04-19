@@ -65,8 +65,8 @@ export default function LoginPage(): JSX.Element {
           <GoogleButton />
           <AppleButton />
           <PasskeyButton
-            onAuthenticated={async (nextToken) => {
-              await login(nextToken);
+            onAuthenticated={async (nextToken, nextRefreshToken) => {
+              await login(nextToken, nextRefreshToken);
               router.replace("/for-you");
             }}
           />
@@ -246,7 +246,10 @@ function AppleButton(): JSX.Element {
 function PasskeyButton({
   onAuthenticated,
 }: {
-  onAuthenticated: (token: string) => Promise<void>;
+  onAuthenticated: (
+    token: string,
+    refreshToken: string | null,
+  ) => Promise<void>;
 }): JSX.Element {
   const [status, setStatus] = useState<ProviderStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -267,11 +270,11 @@ function PasskeyButton({
       if (!assertion) {
         throw new Error("No passkey was selected.");
       }
-      const { token } = await completePasskeyAuthentication(
+      const { token, refresh_token } = await completePasskeyAuthentication(
         encodeAuthenticationCredential(assertion),
         state,
       );
-      await onAuthenticated(token);
+      await onAuthenticated(token, refresh_token);
     } catch (err) {
       setStatus("error");
       if (err instanceof DOMException && err.name === "NotAllowedError") {

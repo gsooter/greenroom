@@ -1,10 +1,11 @@
 /**
  * Client-side auth context and hooks.
  *
- * The frontend stores the JWT issued by the Flask `/api/v1/auth/*`
- * endpoints (Spotify OAuth, not yet wired) in `localStorage`.
- * Reloading the app rehydrates the context and fetches `/me` so
- * components can read the current user without threading a prop.
+ * The frontend stores the access + refresh tokens issued by Greenroom's
+ * `/api/v1/auth/*` proxies (Knuckles-backed) in `localStorage`.
+ * Reloading the app rehydrates the context and fetches `/me`; if the
+ * access token has expired, we transparently rotate via the refresh
+ * token before giving up on the session.
  *
  * Server components MUST NOT import this module — it is "use client"
  * end to end. Browse pages stay purely SSR and don't need auth state
@@ -20,98 +21,187 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 
+import { refreshSession as refreshSessionApi } from "@/lib/api/auth-identity";
 import { ApiRequestError } from "@/lib/api/client";
 import { getMe } from "@/lib/api/me";
 import type { User } from "@/types";
 
 const TOKEN_STORAGE_KEY = "greenroom.token";
+const REFRESH_STORAGE_KEY = "greenroom.refresh_token";
+
+interface SessionTokens {
+  token: string;
+  refreshToken: string | null;
+}
 
 interface AuthState {
   user: User | null;
   token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (token: string) => Promise<void>;
+  login: (token: string, refreshToken?: string | null) => Promise<void>;
   logout: () => void;
-  refresh: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+  refreshSession: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
-function readStoredToken(): string | null {
+function readStoredTokens(): SessionTokens | null {
   if (typeof window === "undefined") return null;
   try {
-    return window.localStorage.getItem(TOKEN_STORAGE_KEY);
+    const token = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!token) return null;
+    const refreshToken = window.localStorage.getItem(REFRESH_STORAGE_KEY);
+    return { token, refreshToken };
   } catch {
     return null;
   }
 }
 
-function writeStoredToken(token: string | null): void {
+function writeStoredTokens(tokens: SessionTokens | null): void {
   if (typeof window === "undefined") return;
   try {
-    if (token === null) {
+    if (tokens === null) {
       window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(REFRESH_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(TOKEN_STORAGE_KEY, tokens.token);
+    if (tokens.refreshToken) {
+      window.localStorage.setItem(REFRESH_STORAGE_KEY, tokens.refreshToken);
     } else {
-      window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      window.localStorage.removeItem(REFRESH_STORAGE_KEY);
     }
   } catch {
     /* storage may be disabled; fail quietly */
   }
 }
 
+function isAuthFailure(err: unknown): boolean {
+  return (
+    err instanceof ApiRequestError && (err.status === 401 || err.status === 403)
+  );
+}
+
 export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
   const [token, setToken] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  const fetchUser = useCallback(async (activeToken: string): Promise<void> => {
-    try {
-      const fetched = await getMe(activeToken);
-      setUser(fetched);
-    } catch (err) {
-      // A 401/403 here means the stored token is no longer valid —
-      // drop it so the UI reverts to the logged-out state.
-      if (err instanceof ApiRequestError && (err.status === 401 || err.status === 403)) {
-        writeStoredToken(null);
-        setToken(null);
-      }
-      setUser(null);
-    }
-  }, []);
+  const refreshTokenRef = useRef<string | null>(null);
+  const refreshInFlightRef = useRef<Promise<string | null> | null>(null);
 
   useEffect(() => {
-    const stored = readStoredToken();
+    refreshTokenRef.current = refreshToken;
+  }, [refreshToken]);
+
+  const clearSession = useCallback((): void => {
+    writeStoredTokens(null);
+    setToken(null);
+    setRefreshToken(null);
+    setUser(null);
+  }, []);
+
+  const applySession = useCallback(
+    (nextToken: string, nextRefreshToken: string | null): void => {
+      writeStoredTokens({ token: nextToken, refreshToken: nextRefreshToken });
+      setToken(nextToken);
+      setRefreshToken(nextRefreshToken);
+    },
+    [],
+  );
+
+  const rotateSession = useCallback(async (): Promise<string | null> => {
+    const current = refreshTokenRef.current;
+    if (!current) return null;
+
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+
+    const attempt = (async (): Promise<string | null> => {
+      try {
+        const session = await refreshSessionApi(current);
+        applySession(session.token, session.refresh_token);
+        return session.token;
+      } catch (err) {
+        if (isAuthFailure(err)) {
+          clearSession();
+        }
+        return null;
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    })();
+    refreshInFlightRef.current = attempt;
+    return attempt;
+  }, [applySession, clearSession]);
+
+  const fetchUser = useCallback(
+    async (activeToken: string): Promise<void> => {
+      try {
+        const fetched = await getMe(activeToken);
+        setUser(fetched);
+        return;
+      } catch (err) {
+        if (!isAuthFailure(err)) {
+          setUser(null);
+          return;
+        }
+      }
+
+      const rotated = await rotateSession();
+      if (!rotated) {
+        clearSession();
+        return;
+      }
+      try {
+        setUser(await getMe(rotated));
+      } catch (err) {
+        if (isAuthFailure(err)) {
+          clearSession();
+        } else {
+          setUser(null);
+        }
+      }
+    },
+    [rotateSession, clearSession],
+  );
+
+  useEffect(() => {
+    const stored = readStoredTokens();
     if (!stored) {
       setIsLoading(false);
       return;
     }
-    setToken(stored);
-    void fetchUser(stored).finally(() => setIsLoading(false));
+    setToken(stored.token);
+    setRefreshToken(stored.refreshToken);
+    refreshTokenRef.current = stored.refreshToken;
+    void fetchUser(stored.token).finally(() => setIsLoading(false));
   }, [fetchUser]);
 
   const login = useCallback(
-    async (nextToken: string): Promise<void> => {
-      writeStoredToken(nextToken);
-      setToken(nextToken);
+    async (nextToken: string, nextRefreshToken: string | null = null): Promise<void> => {
+      applySession(nextToken, nextRefreshToken);
       setIsLoading(true);
       await fetchUser(nextToken);
       setIsLoading(false);
     },
-    [fetchUser],
+    [applySession, fetchUser],
   );
 
   const logout = useCallback((): void => {
-    writeStoredToken(null);
-    setToken(null);
-    setUser(null);
-  }, []);
+    clearSession();
+  }, [clearSession]);
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const refreshUser = useCallback(async (): Promise<void> => {
     if (!token) return;
     await fetchUser(token);
   }, [token, fetchUser]);
@@ -124,9 +214,10 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       isAuthenticated: Boolean(user && token),
       login,
       logout,
-      refresh,
+      refreshUser,
+      refreshSession: rotateSession,
     }),
-    [user, token, isLoading, login, logout, refresh],
+    [user, token, isLoading, login, logout, refreshUser, rotateSession],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

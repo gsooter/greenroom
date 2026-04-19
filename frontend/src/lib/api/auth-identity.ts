@@ -25,6 +25,9 @@ export interface MagicLinkRequestResponse {
 
 export interface SessionResponse {
   token: string;
+  token_expires_at: string | null;
+  refresh_token: string | null;
+  refresh_token_expires_at: string | null;
   user: User;
 }
 
@@ -195,6 +198,27 @@ export async function completePasskeyAuthentication(
     {
       method: "POST",
       body: { credential, state },
+      revalidateSeconds: 0,
+    },
+  );
+  return res.data;
+}
+
+/**
+ * Rotate a refresh token into a fresh access+refresh pair.
+ *
+ * Knuckles single-uses refresh tokens — the returned
+ * `refresh_token` replaces the one passed in. Callers must store
+ * both new values before discarding the old pair.
+ */
+export async function refreshSession(
+  refreshToken: string,
+): Promise<SessionResponse> {
+  const res = await fetchJson<Envelope<SessionResponse>>(
+    "/api/v1/auth/refresh",
+    {
+      method: "POST",
+      body: { refresh_token: refreshToken },
       revalidateSeconds: 0,
     },
   );

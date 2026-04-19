@@ -64,8 +64,8 @@ function MagicLinkVerifyInner(): JSX.Element {
 
     void (async () => {
       try {
-        const { token: jwt } = await verifyMagicLink(token);
-        await login(jwt);
+        const { token: jwt, refresh_token } = await verifyMagicLink(token);
+        await login(jwt, refresh_token);
         router.replace("/for-you");
       } catch (err) {
         setStatus("error");

@@ -37,7 +37,7 @@ const DIGEST_OPTIONS: DigestFrequency[] = ["daily", "weekly", "never"];
 
 export default function SettingsPage(): JSX.Element {
   const router = useRouter();
-  const { user, token, isLoading, isAuthenticated, refresh, logout } =
+  const { user, token, isLoading, isAuthenticated, refreshUser, logout } =
     useRequireAuth();
 
   const [cities, setCities] = useState<City[]>([]);
@@ -113,7 +113,7 @@ export default function SettingsPage(): JSX.Element {
       setStatus("saving");
       try {
         await updateMe(token, patch);
-        await refresh();
+        await refreshUser();
         setStatus("saved");
       } catch (err) {
         setStatus("error");
@@ -124,7 +124,7 @@ export default function SettingsPage(): JSX.Element {
         );
       }
     },
-    [token, hasChanges, patch, refresh],
+    [token, hasChanges, patch, refreshUser],
   );
 
   const handleDelete = useCallback(async (): Promise<void> => {
