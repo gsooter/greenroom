@@ -288,3 +288,4 @@ Risks flagged early:
 |---|---|---|
 | 2026-04-19 | 0 | Initial audit inventory written. |
 | 2026-04-19 | 0 | Scope correction: music services (Spotify / Apple Music / Tidal) stay in Greenroom entirely. Knuckles is identity-only. Part 1a, 1d, 1f, 2, 3a, 3b, 3c, 4, 5 updated in place. |
+| 2026-04-19 | 2 | Phase 2 complete. Local auth deleted, `music_service_connections` renamed in place, `require_auth` auto-provisions from claims (Decision 031), identity endpoints proxied server-side via `auth_identity.py` + `knuckles_client` (Decision 032). Users table truncated in prod — no real users, auto-provision refills on next sign-in. |
