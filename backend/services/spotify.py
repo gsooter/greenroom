@@ -406,34 +406,34 @@ def _ensure_fresh_access_token(session: Session, user: User) -> tuple[str, Any] 
     Raises:
         AppError: ``SPOTIFY_AUTH_FAILED`` if a refresh attempt fails.
     """
-    oauth = next(
-        (p for p in user.oauth_providers if p.provider == OAuthProvider.SPOTIFY),
+    connection = next(
+        (c for c in user.music_connections if c.provider == OAuthProvider.SPOTIFY),
         None,
     )
-    if oauth is None or not oauth.access_token:
+    if connection is None or not connection.access_token:
         return None
 
     now = datetime.now(UTC)
-    expires_at = oauth.token_expires_at
+    expires_at = connection.token_expires_at
     is_expired = expires_at is None or expires_at <= now + timedelta(seconds=30)
     if is_expired:
-        if not oauth.refresh_token:
+        if not connection.refresh_token:
             raise AppError(
                 code=SPOTIFY_AUTH_FAILED,
                 message="Spotify token expired and no refresh token stored.",
                 status_code=401,
             )
-        tokens = refresh_access_token(oauth.refresh_token)
-        users_repo.update_oauth_tokens(
+        tokens = refresh_access_token(connection.refresh_token)
+        users_repo.update_music_connection_tokens(
             session,
-            oauth,
+            connection,
             access_token=tokens.access_token,
             refresh_token=tokens.refresh_token,
             token_expires_at=tokens.expires_at,
         )
-        return tokens.access_token, oauth
+        return tokens.access_token, connection
 
-    return oauth.access_token, oauth
+    return connection.access_token, connection
 
 
 def sync_top_artists(

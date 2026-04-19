@@ -9,8 +9,8 @@ Two-step flow:
 2. ``POST /api/v1/auth/spotify/complete`` — called by the frontend
    callback page with the ``code`` and ``state`` Spotify appended to
    the redirect. Exchanges the code for tokens, upserts the User and
-   UserOAuthProvider rows, and returns a session JWT the client stores
-   in localStorage.
+   MusicServiceConnection rows, and returns a session JWT the client
+   stores in localStorage.
 
 State is carried as a short-lived JWT (10-minute expiry, ``purpose``
 claim = ``spotify_oauth_state``) rather than a Redis entry. That keeps
@@ -78,7 +78,7 @@ def spotify_complete() -> tuple[dict[str, Any], int]:
     Request body: ``{"code": "...", "state": "..."}``.
 
     Verifies the state token, exchanges ``code`` with Spotify, upserts
-    the local User + UserOAuthProvider rows, and returns a freshly
+    the local User + MusicServiceConnection rows, and returns a freshly
     minted session JWT.
 
     Returns:
@@ -200,20 +200,20 @@ def _upsert_spotify_user(
     Returns:
         The :class:`User` now linked to this Spotify account.
     """
-    oauth = users_repo.get_oauth_provider(
+    connection = users_repo.get_music_connection(
         session,
         provider=OAuthProvider.SPOTIFY,
         provider_user_id=profile.id,
     )
-    if oauth is not None:
-        users_repo.update_oauth_tokens(
+    if connection is not None:
+        users_repo.update_music_connection_tokens(
             session,
-            oauth,
+            connection,
             access_token=tokens.access_token,
             refresh_token=tokens.refresh_token,
             token_expires_at=tokens.expires_at,
         )
-        user = oauth.user
+        user = connection.user
         users_repo.update_user(
             session,
             user,
@@ -240,7 +240,7 @@ def _upsert_spotify_user(
             avatar_url=profile.avatar_url or user.avatar_url,
         )
 
-    users_repo.create_oauth_provider(
+    users_repo.create_music_connection(
         session,
         user_id=user.id,
         provider=OAuthProvider.SPOTIFY,

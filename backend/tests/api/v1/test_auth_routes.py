@@ -213,11 +213,13 @@ def test_upsert_returns_existing_oauth_user(
 
     monkeypatch.setattr(
         auth_route.users_repo,
-        "get_oauth_provider",
+        "get_music_connection",
         lambda *_a, **_k: oauth,
     )
     update_tokens = MagicMock()
-    monkeypatch.setattr(auth_route.users_repo, "update_oauth_tokens", update_tokens)
+    monkeypatch.setattr(
+        auth_route.users_repo, "update_music_connection_tokens", update_tokens
+    )
     monkeypatch.setattr(auth_route.users_repo, "update_user", MagicMock())
     monkeypatch.setattr(auth_route.users_repo, "update_last_login", MagicMock())
 
@@ -243,7 +245,7 @@ def test_upsert_matches_by_email_and_creates_oauth(
     email_user = _FakeUser()
 
     monkeypatch.setattr(
-        auth_route.users_repo, "get_oauth_provider", lambda *_a, **_k: None
+        auth_route.users_repo, "get_music_connection", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
         auth_route.users_repo,
@@ -252,7 +254,7 @@ def test_upsert_matches_by_email_and_creates_oauth(
     )
     monkeypatch.setattr(auth_route.users_repo, "update_user", MagicMock())
     create_oauth = MagicMock()
-    monkeypatch.setattr(auth_route.users_repo, "create_oauth_provider", create_oauth)
+    monkeypatch.setattr(auth_route.users_repo, "create_music_connection", create_oauth)
     monkeypatch.setattr(auth_route.users_repo, "update_last_login", MagicMock())
 
     result = auth_route._upsert_spotify_user(MagicMock(), profile, tokens)
@@ -277,7 +279,7 @@ def test_upsert_creates_brand_new_user(
     created = _FakeUser()
 
     monkeypatch.setattr(
-        auth_route.users_repo, "get_oauth_provider", lambda *_a, **_k: None
+        auth_route.users_repo, "get_music_connection", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
         auth_route.users_repo, "get_user_by_email", lambda *_a, **_k: None
@@ -285,7 +287,7 @@ def test_upsert_creates_brand_new_user(
     create_user = MagicMock(return_value=created)
     monkeypatch.setattr(auth_route.users_repo, "create_user", create_user)
     create_oauth = MagicMock()
-    monkeypatch.setattr(auth_route.users_repo, "create_oauth_provider", create_oauth)
+    monkeypatch.setattr(auth_route.users_repo, "create_music_connection", create_oauth)
     monkeypatch.setattr(auth_route.users_repo, "update_last_login", MagicMock())
 
     result = auth_route._upsert_spotify_user(MagicMock(), profile, tokens)

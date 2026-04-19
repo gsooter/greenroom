@@ -16,10 +16,10 @@ from backend.data.models.recommendations import Recommendation
 from backend.data.models.scraper import ScraperRun, ScraperRunStatus
 from backend.data.models.users import (
     DigestFrequency,
+    MusicServiceConnection,
     OAuthProvider,
     SavedEvent,
     User,
-    UserOAuthProvider,
 )
 from backend.data.models.venues import Venue
 
@@ -30,6 +30,7 @@ __all__ = [
     "Event",
     "EventStatus",
     "EventType",
+    "MusicServiceConnection",
     "OAuthProvider",
     "Recommendation",
     "SavedEvent",
@@ -37,6 +38,5 @@ __all__ = [
     "ScraperRunStatus",
     "TicketPricingSnapshot",
     "User",
-    "UserOAuthProvider",
     "Venue",
 ]

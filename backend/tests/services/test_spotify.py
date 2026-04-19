@@ -54,8 +54,8 @@ class _FakeResponse:
 
 
 @dataclass
-class _FakeOAuth:
-    """Stand-in for the SPOTIFY OAuth provider row."""
+class _FakeConnection:
+    """Stand-in for the SPOTIFY music-service connection row."""
 
     provider: OAuthProvider = OAuthProvider.SPOTIFY
     access_token: str | None = "access-123"
@@ -68,7 +68,7 @@ class _FakeOAuth:
 @dataclass
 class _FakeUser:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
-    oauth_providers: list[_FakeOAuth] = field(default_factory=list)
+    music_connections: list[_FakeConnection] = field(default_factory=list)
     spotify_top_artists: list[dict[str, Any]] | None = None
     spotify_top_artist_ids: list[str] | None = None
     spotify_recent_artists: list[dict[str, Any]] | None = None
@@ -289,24 +289,26 @@ def test_simplify_artist_handles_no_images() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ensure_fresh_returns_none_when_no_provider_row() -> None:
-    user = _FakeUser(oauth_providers=[])
+def test_ensure_fresh_returns_none_when_no_connection_row() -> None:
+    user = _FakeUser(music_connections=[])
     assert _ensure_fresh_access_token(MagicMock(), user) is None  # type: ignore[arg-type]
 
 
 def test_ensure_fresh_uses_cached_token_when_still_valid() -> None:
-    user = _FakeUser(oauth_providers=[_FakeOAuth()])
+    user = _FakeUser(music_connections=[_FakeConnection()])
     result = _ensure_fresh_access_token(MagicMock(), user)  # type: ignore[arg-type]
     assert result is not None
-    token, _oauth = result
+    token, _connection = result
     assert token == "access-123"
 
 
 def test_ensure_fresh_refreshes_when_expired(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    oauth = _FakeOAuth(token_expires_at=datetime.now(UTC) - timedelta(minutes=1))
-    user = _FakeUser(oauth_providers=[oauth])
+    connection = _FakeConnection(
+        token_expires_at=datetime.now(UTC) - timedelta(minutes=1)
+    )
+    user = _FakeUser(music_connections=[connection])
 
     refreshed = SpotifyTokens(
         access_token="new-access",
@@ -316,20 +318,22 @@ def test_ensure_fresh_refreshes_when_expired(
     )
     monkeypatch.setattr(spotify_service, "refresh_access_token", lambda _t: refreshed)
     update_mock = MagicMock()
-    monkeypatch.setattr(spotify_service.users_repo, "update_oauth_tokens", update_mock)
+    monkeypatch.setattr(
+        spotify_service.users_repo, "update_music_connection_tokens", update_mock
+    )
     result = _ensure_fresh_access_token(MagicMock(), user)  # type: ignore[arg-type]
     assert result is not None
-    token, _oauth = result
+    token, _connection = result
     assert token == "new-access"
     update_mock.assert_called_once()
 
 
 def test_ensure_fresh_raises_when_expired_without_refresh_token() -> None:
-    oauth = _FakeOAuth(
+    connection = _FakeConnection(
         token_expires_at=datetime.now(UTC) - timedelta(minutes=1),
         refresh_token=None,
     )
-    user = _FakeUser(oauth_providers=[oauth])
+    user = _FakeUser(music_connections=[connection])
     with pytest.raises(AppError):
         _ensure_fresh_access_token(MagicMock(), user)  # type: ignore[arg-type]
 
@@ -342,7 +346,7 @@ def test_ensure_fresh_raises_when_expired_without_refresh_token() -> None:
 def test_sync_top_artists_returns_zero_when_no_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    user = _FakeUser(oauth_providers=[])
+    user = _FakeUser(music_connections=[])
     monkeypatch.setattr(
         spotify_service, "_ensure_fresh_access_token", lambda _s, _u: None
     )

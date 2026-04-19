@@ -3,9 +3,9 @@
 After the Knuckles cutover (Decision 030), identity lives entirely in
 Knuckles — local magic-link, Google, Apple, and passkey tables are gone.
 Greenroom keeps the ``users`` row as a profile + preferences record whose
-``id`` is the Knuckles user UUID, and the ``user_oauth_providers`` table
-as the link to connected music services (Spotify today; Apple Music and
-Tidal in Phase 5).
+``id`` is the Knuckles user UUID, and the ``music_service_connections``
+table as the link to connected music services (Spotify today; Apple
+Music and Tidal in Phase 5).
 """
 
 import enum
@@ -93,7 +93,7 @@ class User(TimestampMixin, Base):
             finished the post-signup onboarding flow (Phase 4 genre
             picker). Null means the app should show onboarding on next
             visit; a non-null value means skip/don't re-show.
-        oauth_providers: Relationship to connected music services.
+        music_connections: Relationship to connected music services.
         saved_events: Relationship to user's saved events.
         recommendations: Relationship to user's recommendations.
     """
@@ -151,7 +151,7 @@ class User(TimestampMixin, Base):
     )
 
     # Relationships
-    oauth_providers: Mapped[list["UserOAuthProvider"]] = relationship(
+    music_connections: Mapped[list["MusicServiceConnection"]] = relationship(
         back_populates="user",
         lazy="selectin",
         cascade="all, delete-orphan",
@@ -176,7 +176,7 @@ class User(TimestampMixin, Base):
         return f"<User {self.email}>"
 
 
-class UserOAuthProvider(TimestampMixin, Base):
+class MusicServiceConnection(TimestampMixin, Base):
     """A connected music-service link for a user.
 
     Provider-table pattern (Decision 003) — adding a new music service
@@ -185,7 +185,7 @@ class UserOAuthProvider(TimestampMixin, Base):
     a login-only provider after Decision 030.
 
     Attributes:
-        id: Unique identifier for the provider link.
+        id: Unique identifier for the connection row.
         user_id: Foreign key to the user.
         provider: Music-service provider type (spotify, apple_music, tidal).
         provider_user_id: User's ID on the provider platform.
@@ -197,7 +197,7 @@ class UserOAuthProvider(TimestampMixin, Base):
         user: Relationship to the parent user.
     """
 
-    __tablename__ = "user_oauth_providers"
+    __tablename__ = "music_service_connections"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -227,16 +227,16 @@ class UserOAuthProvider(TimestampMixin, Base):
 
     # Relationships
     user: Mapped["User"] = relationship(
-        back_populates="oauth_providers",
+        back_populates="music_connections",
     )
 
     def __repr__(self) -> str:
-        """Return a string representation of the UserOAuthProvider.
+        """Return a string representation of the MusicServiceConnection.
 
         Returns:
             String representation with provider type and user ID.
         """
-        return f"<UserOAuthProvider {self.provider.value} user={self.user_id}>"
+        return f"<MusicServiceConnection {self.provider.value} user={self.user_id}>"
 
 
 class SavedEvent(TimestampMixin, Base):
