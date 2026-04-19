@@ -11,6 +11,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { startSpotifyOAuth } from "@/lib/api/auth";
 import { ApiRequestError } from "@/lib/api/client";
 import { listCities } from "@/lib/api/cities";
 import { deleteMe, updateMe } from "@/lib/api/me";
@@ -215,34 +216,10 @@ export default function SettingsPage(): JSX.Element {
 
       <hr className="my-10 border-border" />
 
-      <section>
-        <h2 className="text-base font-semibold text-text-primary">
-          Your Spotify rotation
-        </h2>
-        <p className="mt-1 text-sm text-text-secondary">
-          These are the artists currently driving your recommendations.
-          {topArtistsSyncedAt
-            ? ` Last synced ${formatSyncedAt(topArtistsSyncedAt)}.`
-            : ""}
-        </p>
-        {topArtists.length === 0 ? (
-          <p className="mt-4 text-sm text-text-secondary">
-            We haven&apos;t synced your Spotify listening history yet. Sign in with
-            Spotify again or check back after our nightly sync.
-          </p>
-        ) : (
-          <ul className="mt-4 flex flex-wrap gap-2">
-            {topArtists.slice(0, 24).map((artist) => (
-              <li
-                key={`${artist.id ?? artist.name}`}
-                className="rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent"
-              >
-                {artist.name}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <ConnectedServicesSection
+        topArtists={topArtists}
+        topArtistsSyncedAt={topArtistsSyncedAt}
+      />
 
       <hr className="my-10 border-border" />
 
@@ -263,6 +240,98 @@ export default function SettingsPage(): JSX.Element {
         </button>
       </section>
     </PageShell>
+  );
+}
+
+function ConnectedServicesSection({
+  topArtists,
+  topArtistsSyncedAt,
+}: {
+  topArtists: SpotifyTopArtist[];
+  topArtistsSyncedAt: string | null;
+}): JSX.Element {
+  const [connecting, setConnecting] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const isConnected = topArtists.length > 0 || Boolean(topArtistsSyncedAt);
+
+  async function handleConnect(): Promise<void> {
+    setConnecting(true);
+    setError(null);
+    try {
+      const { authorize_url } = await startSpotifyOAuth();
+      window.location.href = authorize_url;
+    } catch (err) {
+      setConnecting(false);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not start Spotify connection.",
+      );
+    }
+  }
+
+  return (
+    <section>
+      <h2 className="text-base font-semibold text-text-primary">
+        Connected services
+      </h2>
+      <p className="mt-1 text-sm text-text-secondary">
+        Link music services to improve your For-You picks. These are optional —
+        Greenroom works without them.
+      </p>
+
+      <div className="mt-4 rounded-lg border border-border bg-bg-white p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-text-primary">Spotify</p>
+            <p className="mt-1 text-xs text-text-secondary">
+              {isConnected
+                ? `Connected. Last synced ${
+                    topArtistsSyncedAt
+                      ? formatSyncedAt(topArtistsSyncedAt)
+                      : "recently"
+                  }.`
+                : "Not connected. Link Spotify to power personalized picks."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleConnect()}
+            disabled={connecting}
+            className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {connecting
+              ? "Redirecting…"
+              : isConnected
+                ? "Reconnect"
+                : "Connect Spotify"}
+          </button>
+        </div>
+        {error ? (
+          <p className="mt-3 text-xs text-blush-accent" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {topArtists.length > 0 ? (
+          <div className="mt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+              Your rotation
+            </p>
+            <ul className="mt-2 flex flex-wrap gap-2">
+              {topArtists.slice(0, 24).map((artist) => (
+                <li
+                  key={`${artist.id ?? artist.name}`}
+                  className="rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent"
+                >
+                  {artist.name}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
