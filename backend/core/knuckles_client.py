@@ -259,13 +259,22 @@ def _client_headers() -> dict[str, str]:
     }
 
 
-def post(path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
+def post(
+    path: str,
+    *,
+    json: dict[str, Any] | None = None,
+    bearer_token: str | None = None,
+) -> dict[str, Any]:
     """POST to a Knuckles app-client endpoint.
 
     Args:
         path: Path under the Knuckles base URL (e.g.
             ``/v1/auth/magic-link/start``). Must start with ``/``.
         json: Optional JSON body. ``None`` sends ``{}``.
+        bearer_token: Optional user access token to forward as
+            ``Authorization: Bearer``. Required by Knuckles endpoints
+            that sit behind ``@require_auth`` (e.g. passkey register).
+            App-client headers are always sent regardless.
 
     Returns:
         The decoded JSON response from Knuckles.
@@ -276,10 +285,13 @@ def post(path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     settings = get_settings()
     url = settings.knuckles_url.rstrip("/") + path
+    headers = _client_headers()
+    if bearer_token is not None:
+        headers["Authorization"] = f"Bearer {bearer_token}"
     response = requests.post(
         url,
         json=json or {},
-        headers=_client_headers(),
+        headers=headers,
         timeout=10,
     )
     if response.status_code >= 400:

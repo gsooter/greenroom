@@ -1183,6 +1183,69 @@ token-minting business it just exited.
 
 ---
 
+### 032 — Greenroom Proxies Knuckles Identity Endpoints Server-Side
+
+**Date:** 2026-04-19
+**Status:** Decided
+
+**Decision:** The browser never talks to Knuckles. Every identity
+ceremony the frontend needs — magic-link start/verify, Google
+start/complete, Apple start/complete, passkey register begin/complete,
+passkey sign-in begin/complete — is exposed on Greenroom at the
+existing ``/api/v1/auth/*`` paths and forwarded to Knuckles from the
+server via ``backend.core.knuckles_client.post``. Greenroom's
+server-side env holds the ``X-Client-Id`` / ``X-Client-Secret``
+pair; the secret never appears in a bundle, a cookie, or a response
+body. The session-completing proxies (``magic-link/verify``,
+``google/complete``, ``apple/complete``, ``passkey/authenticate/complete``)
+verify the Knuckles-issued access token, lazily provision the
+Greenroom ``users`` row, and return a normalized ``{token, user}``
+envelope that the frontend AuthContext already consumes.
+
+**Rationale:** Knuckles Decision 007 is explicit: every Knuckles
+auth endpoint requires app-client credentials and there is no
+"public-client" escape hatch. Respecting that from Greenroom is the
+default-safe posture — a compromised SPA bundle cannot by itself
+mint tokens, because the bundle never held the secret in the first
+place. The server-side proxy path also keeps the frontend API surface
+stable (the existing ``auth-identity.ts`` client is unchanged), so
+nothing the user sees or bookmarks has to move.
+
+**Alternatives considered:**
+- **Point the frontend at ``NEXT_PUBLIC_KNUCKLES_URL`` directly and
+  add a "public client" mode to Knuckles.** Rejected. It would
+  require reversing Knuckles Decision 007, weakening the security
+  model for every consuming app, not just Greenroom. Public clients
+  also force origin-allowlist + PKCE plumbing on Knuckles that the
+  confidential-client path sidesteps entirely.
+- **Split identity into two bundles — one public (no secret) and one
+  confidential (Greenroom's).** Rejected. Doubles the deploy surface
+  and the config drift risk for one frontend's convenience.
+- **Have the frontend call Knuckles directly with the secret baked
+  into the bundle.** Rejected on sight — it leaks the secret to every
+  browser tab and to any script injected into the SPA.
+
+**Consequences:**
+- ``backend/api/v1/auth_identity.py`` is the authoritative list of
+  identity proxies. New Knuckles auth endpoints have to be added
+  here before the frontend can call them.
+- ``knuckles_client.post`` now accepts a ``bearer_token`` kwarg so
+  proxies for Knuckles' bearer-auth endpoints (passkey register) can
+  forward the caller's token alongside the app-client headers.
+- Greenroom owns the ``redirect_url`` for each ceremony, filled in
+  from ``settings.frontend_base_url``. The frontend no longer sends
+  a redirect URL at all — one less field the SPA can tamper with.
+- The normalized ``{token, user}`` envelope now only surfaces the
+  access token; the Knuckles refresh token stays on the Knuckles
+  response and is dropped at the proxy boundary. Refresh-token
+  handling is deferred to a later decision; until then a session
+  lives exactly as long as the Knuckles access-token TTL.
+- The ``/auth/logout`` endpoint is unchanged and still lives in
+  ``auth_session.py`` — it is a no-op server-side and does not need
+  to round-trip to Knuckles.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
