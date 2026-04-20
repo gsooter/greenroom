@@ -50,6 +50,9 @@ CMD ["flask", "--app", "backend.app:create_app", "run", \
 # ---- prod ----------------------------------------------------------------
 # Shell form so ${PORT} expands — Railway injects PORT per web service and
 # the fallback keeps local `docker run` working without env plumbing.
+# Alembic runs before gunicorn so every deploy picks up pending migrations
+# before the new version starts serving traffic. The `-c` path is relative
+# to /app because PYTHONPATH=/app and the config lives under backend/.
 FROM base AS prod
 
-CMD gunicorn --bind 0.0.0.0:${PORT:-5001} --workers 2 --access-logfile - --error-logfile - "backend.app:create_app()"
+CMD cd /app/backend && alembic upgrade head && cd /app && gunicorn --bind 0.0.0.0:${PORT:-5001} --workers 2 --access-logfile - --error-logfile - "backend.app:create_app()"
