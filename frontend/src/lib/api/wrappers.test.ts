@@ -46,9 +46,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function lastCall(): { url: URL; init: RequestInit } {
+type CapturedInit = Omit<RequestInit, "headers"> & {
+  headers: Record<string, string>;
+};
+
+function lastCall(): { url: URL; init: CapturedInit } {
   const call = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]!;
-  return { url: new URL(String(call[0])), init: call[1] ?? {} };
+  const init = (call[1] ?? {}) as RequestInit;
+  return {
+    url: new URL(String(call[0])),
+    init: {
+      ...init,
+      headers: (init.headers ?? {}) as Record<string, string>,
+    },
+  };
 }
 
 describe("api/events", () => {

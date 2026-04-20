@@ -57,7 +57,7 @@ function userFixture(): User {
     email: "fan@example.com",
     display_name: "Fan",
     spotify_user_id: "spot-fan",
-  } as User;
+  } as unknown as User;
 }
 
 describe("MobileBottomNav", () => {
