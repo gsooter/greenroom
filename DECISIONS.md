@@ -267,7 +267,7 @@ matters, keeping analytics data internal is meaningful.
 ### 012 — SendGrid for Email
 
 **Date:** 2026-04-16
-**Status:** Decided
+**Status:** Superseded by Decision 032
 
 **Decision:** SendGrid for all transactional email and digest sending.
 
@@ -560,7 +560,7 @@ never populate it. This is documented TM behavior, not a bug to chase.
 **Date:** 2026-04-18
 **Status:** Decided
 
-**Decision:** SendGrid-powered weekly email digests (`backend/services/notifications.py`,
+**Decision:** Resend-powered weekly email digests (`backend/services/notifications.py`,
 digest Celery beat entry, `/api/v1/users/me/digest-preview` endpoint) are
 explicitly excluded from the MVP launch. `services/notifications.py` stays as a
 one-line stub. Users can still set `digest_frequency` on their profile in
@@ -568,7 +568,7 @@ one-line stub. Users can still set `digest_frequency` on their profile in
 when the feature ships — but no email actually sends until after launch.
 
 **Rationale:**
-A transactional-email pipeline is four separate workstreams (SendGrid account
+A transactional-email pipeline is four separate workstreams (Resend account
 provisioning, HTML template, Celery schedule + job, unsubscribe flow) and each
 one has its own failure surface. Shipping it poorly — stale data, broken
 unsubscribe, bad template — actively damages the retention story it's supposed
@@ -594,7 +594,7 @@ layering email on top.
   exercised end-to-end before the feature lights up. The dropdown does not
   need a warning label; users never see a "we don't actually send these yet"
   state because nobody is promised an email.
-- `SENDGRID_API_KEY` is still listed in env vars but is allowed to be a
+- `RESEND_API_KEY` is still listed in env vars but is allowed to be a
   placeholder at launch; production can leave it unset until the digest
   ships.
 - v1.1 trigger: 50 active users OR a week of observed return-rate data,
@@ -964,7 +964,7 @@ never exposes a token-handoff endpoint.
   / passkey path is already fast.
 - **Greenroom env gains `KNUCKLES_URL` and `KNUCKLES_CLIENT_ID` (plus
   `KNUCKLES_CLIENT_SECRET` for server-to-server calls). It loses
-  `JWT_SECRET_KEY`, `GOOGLE_*`, `APPLE_*`, `WEBAUTHN_*`, `SENDGRID_*`
+  `JWT_SECRET_KEY`, `GOOGLE_*`, `APPLE_*`, `WEBAUTHN_*`, `RESEND_*`
   (for magic-link delivery — that moves with auth). Spotify env vars
   (`SPOTIFY_*`) stay in Greenroom — see Decision 029.**
 - **Data migration runs once:** existing Greenroom `users` rows are
@@ -1243,6 +1243,51 @@ nothing the user sees or bookmarks has to move.
 - The ``/auth/logout`` endpoint is unchanged and still lives in
   ``auth_session.py`` — it is a no-op server-side and does not need
   to round-trip to Knuckles.
+
+---
+
+### 033 — Resend Replaces SendGrid for Transactional Email
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** Greenroom and Knuckles both send transactional email
+through Resend. SendGrid is removed as a dependency from both repos.
+The DB column `email_digest_log.sendgrid_message_id` is renamed to
+`provider_message_id` so a future provider change does not require
+another schema migration.
+
+**Rationale:**
+Resend's developer ergonomics are meaningfully better than SendGrid's
+for the volume Greenroom actually sends: a single HTTP endpoint
+(`POST /emails`), one Bearer token, no SDK to carry. The SendGrid SDK
+pulled in a starlette transitive that mypy had to ignore globally;
+dropping it removes that override. Resend's free tier (3,000/mo,
+100/day) comfortably covers the MVP digest + scraper-alert traffic.
+
+**Alternatives considered:**
+- Stay on SendGrid — rejected; the SDK adds weight and the API
+  surface is larger than we use.
+- Use the SendGrid REST API directly without the SDK — rejected; it
+  avoids the SDK dependency but keeps us on a provider whose free
+  tier was recently cut and whose deliverability story for
+  transactional-only senders has regressed.
+- AWS SES — rejected; SES requires sandbox-exit paperwork and a
+  verified domain with DKIM before any recipient outside a verified
+  allowlist can receive mail. Too much operational setup for the
+  volume.
+
+**Consequences:**
+- `services/email.py` in both repos calls `POST
+  https://api.resend.com/emails` directly via `requests`. No SDK.
+- `backend/scraper/notifier.py` routes its email fallback through
+  the same `send_email` seam — the scraper no longer carries its own
+  SendGrid import.
+- `RESEND_API_KEY` / `RESEND_FROM_EMAIL` replace the SendGrid env
+  vars in both repos' `.env.example`, CI workflow, and dev configs.
+- Decision 012 is marked Superseded.
+- Decision 028's env-loss list updated to reference `RESEND_*`
+  instead of `SENDGRID_*` for magic-link delivery moving to Knuckles.
 
 ---
 

@@ -45,7 +45,7 @@ verbose so the rewrite cannot miss an import.
 |---|---|---|
 | `backend/core/auth.py` | `issue_token`, `verify_token`, `require_auth` decorator, `get_current_user`. HS256 JWT signer. | 179 |
 | `backend/services/auth.py` | Magic-link + Google + Apple + WebAuthn passkey business logic; Spotify-specific upsert helpers; state-JWT minting and verifying. | 1127 |
-| `backend/services/email.py` | SendGrid delivery for magic-link emails. Also the only caller of `sendgrid` in the repo — will ship in Knuckles alongside the magic-link service. | 86 |
+| `backend/services/email.py` | Resend delivery for magic-link emails. Also the only caller of `resend` in the repo — will ship in Knuckles alongside the magic-link service. | 86 |
 | `backend/api/v1/auth.py` | Spotify OAuth routes: `GET /auth/spotify/start`, `POST /auth/spotify/complete`. Also holds the local `_upsert_spotify_user` helper. **Does NOT move to Knuckles** — Spotify is now framed as a Greenroom music-service connection. Rewires to `backend/api/v1/music/spotify.py` against a new `music_service_connections` table, no JWT issuance. | 254 |
 | `backend/api/v1/auth_magic_link.py` | `POST /auth/magic-link/{request,verify}`. | 95 |
 | `backend/api/v1/auth_google.py` | `GET /auth/google/start`, `POST /auth/google/complete`. State JWT helpers duplicated locally. | 135 |
@@ -140,7 +140,7 @@ import `User`, `OAuthProvider`, `users_repo`, or a helper out of
 noted):
 - `JWT_SECRET_KEY`, `JWT_EXPIRY_SECONDS` — Knuckles (GREENROOM no longer signs).
 - `MAGIC_LINK_TTL_SECONDS` — Knuckles.
-- `SENDGRID_API_KEY`, `SENDGRID_FROM_EMAIL` — Knuckles.
+- `RESEND_API_KEY`, `RESEND_FROM_EMAIL` — Knuckles.
 - `GOOGLE_OAUTH_CLIENT_ID / _SECRET / _REDIRECT_URI` — Knuckles.
 - `APPLE_OAUTH_CLIENT_ID / _TEAM_ID / _KEY_ID / _PRIVATE_KEY / _REDIRECT_URI` — Knuckles.
 - `SPOTIFY_CLIENT_ID / _SECRET / _REDIRECT_URI` — **stays in Greenroom.** Spotify OAuth is a Greenroom music-service connection; Knuckles never sees these.
@@ -158,7 +158,7 @@ noted):
 ## Part 2 — What is complete vs partial vs not started
 
 ### Complete in GREENROOM today
-- **Magic-link email sign-in** end-to-end: request, verify, JWT issuance, SendGrid delivery, SHA-256 hashing at rest, single-use enforcement, 15-minute TTL. Tests: 14 service tests + 6 route tests.
+- **Magic-link email sign-in** end-to-end: request, verify, JWT issuance, Resend delivery, SHA-256 hashing at rest, single-use enforcement, 15-minute TTL. Tests: 14 service tests + 6 route tests.
 - **Google OAuth sign-in** end-to-end. Start, code exchange, profile upsert, JWT issuance. Tests green.
 - **Sign-in-with-Apple** end-to-end including private-relay email handling and id-token verification against Apple's JWKS. Tests green.
 - **WebAuthn passkey** registration + authentication ceremonies using `py_webauthn`. Sign-count monotonicity, usernameless discoverable credentials, state carried in short-lived signed JWTs. 25 new tests committed in `d0f7b25` (see commit log).

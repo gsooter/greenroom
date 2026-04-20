@@ -19,8 +19,8 @@ class Settings(BaseSettings):
         redis_url: Redis connection string.
         jwt_secret_key: Secret key for signing JWTs.
         jwt_expiry_seconds: JWT token expiry in seconds.
-        sendgrid_api_key: SendGrid API key for email sending.
-        sendgrid_from_email: Sender email address for SendGrid.
+        resend_api_key: Resend API key for transactional email.
+        resend_from_email: Sender email address used on every Resend send.
         ticketmaster_api_key: Ticketmaster Discovery API key.
         seatgeek_client_id: SeatGeek API client ID.
         seatgeek_client_secret: SeatGeek API client secret.
@@ -86,9 +86,9 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_expiry_seconds: int = 3600
 
-    # SendGrid
-    sendgrid_api_key: str
-    sendgrid_from_email: str
+    # Resend
+    resend_api_key: str
+    resend_from_email: str
 
     # Ticketmaster
     ticketmaster_api_key: str

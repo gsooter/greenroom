@@ -21,7 +21,7 @@ requires login.
 - Database: PostgreSQL (Railway managed)
 - Queue: Celery + Redis (Railway, same project as Flask)
 - Auth: Knuckles identity service (RS256 JWTs via JWKS); Spotify OAuth 2.0 as a music-service connect
-- Email: SendGrid
+- Email: Resend
 - Analytics: PostHog (self-hosted on Railway)
 
 ---
@@ -634,9 +634,9 @@ REDIS_URL
 # JWT (signing the short-lived Spotify OAuth state token)
 JWT_SECRET_KEY
 
-# SendGrid
-SENDGRID_API_KEY
-SENDGRID_FROM_EMAIL
+# Resend
+RESEND_API_KEY
+RESEND_FROM_EMAIL
 
 # Ticketmaster
 TICKETMASTER_API_KEY

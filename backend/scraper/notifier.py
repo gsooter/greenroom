@@ -10,7 +10,9 @@ from typing import Any
 import requests
 
 from backend.core.config import get_settings
+from backend.core.exceptions import AppError
 from backend.core.logging import get_logger
+from backend.services.email import send_email
 
 logger = get_logger(__name__)
 
@@ -126,7 +128,7 @@ def _send_email_alert(
     severity: str,
     details: dict[str, Any] | None = None,
 ) -> bool:
-    """Send an alert email via SendGrid as a fallback.
+    """Send an alert email via Resend as a fallback.
 
     Args:
         title: Short alert title.
@@ -143,32 +145,27 @@ def _send_email_alert(
         logger.debug("Alert email not configured, skipping.")
         return False
 
-    if not settings.sendgrid_api_key or settings.sendgrid_api_key == "x":
-        logger.debug("SendGrid not configured, skipping email alert.")
+    if not settings.resend_api_key or settings.resend_api_key == "x":
+        logger.debug("Resend not configured, skipping email alert.")
         return False
 
+    body_parts = [f"Severity: {severity}", "", message]
+    if details:
+        body_parts.append("")
+        body_parts.append("Details:")
+        for key, value in details.items():
+            body_parts.append(f"  {key}: {value}")
+    text_body = "\n".join(body_parts)
+    html_body = "<pre>" + text_body.replace("<", "&lt;").replace(">", "&gt;") + "</pre>"
+
     try:
-        from sendgrid import SendGridAPIClient
-        from sendgrid.helpers.mail import Content, Email, Mail, To
-
-        body_parts = [f"Severity: {severity}", "", message]
-        if details:
-            body_parts.append("")
-            body_parts.append("Details:")
-            for key, value in details.items():
-                body_parts.append(f"  {key}: {value}")
-
-        mail = Mail(
-            from_email=Email(settings.sendgrid_from_email),
-            to_emails=To(settings.alert_email),
+        send_email(
+            to=settings.alert_email,
             subject=f"[Greenroom Scraper] {title}",
-            plain_text_content=Content("text/plain", "\n".join(body_parts)),
+            html_body=html_body,
+            text_body=text_body,
         )
-
-        sg = SendGridAPIClient(settings.sendgrid_api_key)
-        response = sg.send(mail)
-        ok: bool = 200 <= response.status_code < 300
-        return ok
-    except Exception as e:
+        return True
+    except AppError as e:
         logger.error("Failed to send email alert: %s", e)
         return False

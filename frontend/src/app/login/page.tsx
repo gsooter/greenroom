@@ -2,7 +2,7 @@
  * /login — multi-path identity entry.
  *
  * Offers four ways to sign in:
- *   1. Magic link — email address, link mailed via SendGrid.
+ *   1. Magic link — email address, link mailed via Resend.
  *   2. Google OAuth — redirect to Google consent.
  *   3. Apple OAuth — redirect to Apple consent.
  *   4. Passkey (WebAuthn) — disabled for now, pending `py_webauthn`.

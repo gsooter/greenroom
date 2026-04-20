@@ -1,20 +1,22 @@
-"""Transactional email delivery through SendGrid.
+"""Transactional email delivery through Resend.
 
-The service layer talks to this module rather than importing SendGrid
-directly, so tests can stub the single :func:`send_email` entry point
-without monkey-patching the SDK.
+The service layer talks to this module rather than importing the HTTP
+client directly, so tests can stub the single :func:`send_email` entry
+point without monkey-patching any SDK.
 """
 
 from typing import Any
 
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+import requests
 
 from backend.core.config import get_settings
 from backend.core.exceptions import EMAIL_DELIVERY_FAILED, AppError
 from backend.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+_RESEND_ENDPOINT = "https://api.resend.com/emails"
+_RESEND_TIMEOUT_SECONDS = 10
 
 
 def send_email(
@@ -24,7 +26,7 @@ def send_email(
     html_body: str,
     text_body: str | None = None,
 ) -> None:
-    """Send a single transactional email.
+    """Send a single transactional email via Resend.
 
     Args:
         to: Recipient address.
@@ -34,35 +36,47 @@ def send_email(
             HTML, but deliverability is better when both are present.
 
     Raises:
-        AppError: ``EMAIL_DELIVERY_FAILED`` on any SendGrid error. The
+        AppError: ``EMAIL_DELIVERY_FAILED`` on any Resend error. The
             caller decides whether to surface this to the user or log
             and swallow.
     """
     settings = get_settings()
-    message = Mail(
-        from_email=settings.sendgrid_from_email,
-        to_emails=to,
-        subject=subject,
-        html_content=html_body,
-        plain_text_content=text_body or _strip_html(html_body),
-    )
+    payload: dict[str, Any] = {
+        "from": settings.resend_from_email,
+        "to": [to],
+        "subject": subject,
+        "html": html_body,
+        "text": text_body or _strip_html(html_body),
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.resend_api_key}",
+        "Content-Type": "application/json",
+    }
     try:
-        client = SendGridAPIClient(settings.sendgrid_api_key)
-        response: Any = client.send(message)
-    except Exception as exc:  # SendGrid raises a broad set of classes
-        logger.warning("sendgrid_send_failed: %s", exc)
+        response = requests.post(
+            _RESEND_ENDPOINT,
+            json=payload,
+            headers=headers,
+            timeout=_RESEND_TIMEOUT_SECONDS,
+        )
+    except requests.RequestException as exc:
+        logger.warning("resend_send_failed: %s", exc)
         raise AppError(
             code=EMAIL_DELIVERY_FAILED,
             message="Failed to deliver email.",
             status_code=502,
         ) from exc
 
-    status = getattr(response, "status_code", None)
-    if isinstance(status, int) and status >= 400:
-        logger.warning("sendgrid_http_error: status=%s to=%s", status, to)
+    if response.status_code >= 400:
+        logger.warning(
+            "resend_http_error: status=%s to=%s body=%s",
+            response.status_code,
+            to,
+            response.text,
+        )
         raise AppError(
             code=EMAIL_DELIVERY_FAILED,
-            message="SendGrid returned a non-success status.",
+            message="Resend returned a non-success status.",
             status_code=502,
         )
 

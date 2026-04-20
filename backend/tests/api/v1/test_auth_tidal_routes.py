@@ -183,6 +183,7 @@ def test_complete_happy_path_links_connection_without_issuing_jwt(
         refresh_token="r",
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="",
+        user_id="tidal-1",
     )
     profile = TidalProfile(
         id="tidal-1",
@@ -196,7 +197,7 @@ def test_complete_happy_path_links_connection_without_issuing_jwt(
         "exchange_code",
         lambda _c, code_verifier: tokens,
     )
-    monkeypatch.setattr(auth_route.tidal_service, "get_profile", lambda _t: profile)
+    monkeypatch.setattr(auth_route.tidal_service, "get_profile", lambda _t, _u: profile)
     link_mock = MagicMock()
     monkeypatch.setattr(auth_route, "_link_tidal_connection", link_mock)
     sync_mock = MagicMock(return_value=3)
@@ -231,6 +232,7 @@ def test_complete_swallows_sync_failure(
         refresh_token="r",
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="",
+        user_id="t1",
     )
     profile = TidalProfile(
         id="t1", email="p@example.test", display_name="Pat", avatar_url=None
@@ -241,7 +243,7 @@ def test_complete_swallows_sync_failure(
         "exchange_code",
         lambda _c, code_verifier: tokens,
     )
-    monkeypatch.setattr(auth_route.tidal_service, "get_profile", lambda _t: profile)
+    monkeypatch.setattr(auth_route.tidal_service, "get_profile", lambda _t, _u: profile)
     monkeypatch.setattr(auth_route, "_link_tidal_connection", MagicMock())
 
     def boom(*_a: Any, **_k: Any) -> None:
@@ -272,6 +274,7 @@ def _tokens() -> TidalTokens:
         refresh_token="r",
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         scope="",
+        user_id="tidal-1",
     )
 
 

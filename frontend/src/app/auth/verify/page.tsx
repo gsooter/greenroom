@@ -1,7 +1,7 @@
 /**
  * /auth/verify — magic-link completion page.
  *
- * The email SendGrid delivers points here with `?token=...`. We POST
+ * The email Resend delivers points here with `?token=...`. We POST
  * that token to `/auth/magic-link/verify`, store the returned JWT via
  * AuthContext, and send the user to `/for-you`.
  *

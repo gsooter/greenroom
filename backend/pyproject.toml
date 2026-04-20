@@ -24,7 +24,6 @@ dependencies = [
     "beautifulsoup4>=4.12,<5",
     "lxml>=5.0,<6",
     "PyJWT[crypto]>=2.8,<3",
-    "sendgrid>=6.11,<7",
     "gunicorn>=21.2,<23",
     "webauthn>=2.0,<3",
 ]
@@ -95,7 +94,7 @@ exclude = ["migrations/"]
 disable_error_code = ["comparison-overlap", "list-item", "union-attr", "unused-ignore"]
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "sendgrid.*"]
+module = ["celery.*"]
 ignore_missing_imports = true
 
 # Tests use small `_Fake*` dataclasses as stand-ins for SQLAlchemy models
