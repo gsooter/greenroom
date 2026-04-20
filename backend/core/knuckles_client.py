@@ -437,6 +437,8 @@ def post(
         )
         raise KnucklesHTTPError(message=message, status_code=response.status_code)
 
+    if response.status_code == 204 or not response.content:
+        return {}
     decoded: dict[str, Any] = response.json()
     return decoded
 
