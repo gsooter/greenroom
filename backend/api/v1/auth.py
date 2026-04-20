@@ -243,7 +243,6 @@ def _link_spotify_connection(
     users_repo.update_user(
         session,
         user,
-        display_name=profile.display_name or user.display_name,
-        avatar_url=profile.avatar_url or user.avatar_url,
+        display_name=user.display_name or profile.display_name,
+        avatar_url=user.avatar_url or profile.avatar_url,
     )
-    users_repo.update_last_login(session, user)

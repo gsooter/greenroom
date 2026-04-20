@@ -291,7 +291,6 @@ def test_link_updates_tokens_when_connection_belongs_to_user(
     create_conn = MagicMock()
     monkeypatch.setattr(auth_route.users_repo, "create_music_connection", create_conn)
     monkeypatch.setattr(auth_route.users_repo, "update_user", MagicMock())
-    monkeypatch.setattr(auth_route.users_repo, "update_last_login", MagicMock())
 
     auth_route._link_spotify_connection(MagicMock(), user, _profile(), _tokens())
 
@@ -311,7 +310,6 @@ def test_link_creates_connection_when_none_exists(
     create_conn = MagicMock()
     monkeypatch.setattr(auth_route.users_repo, "create_music_connection", create_conn)
     monkeypatch.setattr(auth_route.users_repo, "update_user", MagicMock())
-    monkeypatch.setattr(auth_route.users_repo, "update_last_login", MagicMock())
 
     auth_route._link_spotify_connection(MagicMock(), user, _profile(), _tokens())
 

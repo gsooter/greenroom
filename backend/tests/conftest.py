@@ -21,7 +21,29 @@ from typing import Any
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+
+
+def _generate_test_es256_pem() -> str:
+    """Return a throwaway ES256 private key for Apple Music dev-token tests.
+
+    Generated once at module import so every test uses the same key,
+    and so ``jwt.decode`` assertions can reuse the paired public key.
+
+    Returns:
+        The unencrypted PKCS8 PEM string.
+    """
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    return pem.decode("ascii")
+
+
+APPLE_MUSIC_TEST_PEM = _generate_test_es256_pem()
 
 # ---------------------------------------------------------------------------
 # Environment stubs for Pydantic Settings
@@ -57,6 +79,13 @@ _TEST_ENV = {
     "KNUCKLES_CLIENT_ID": KNUCKLES_TEST_CLIENT_ID,
     "KNUCKLES_CLIENT_SECRET": "test-knuckles-secret",
     "KNUCKLES_JWKS_CACHE_TTL_SECONDS": "3600",
+    "TIDAL_CLIENT_ID": "test-tidal-id",
+    "TIDAL_CLIENT_SECRET": "test-tidal-secret",
+    "TIDAL_REDIRECT_URI": "http://localhost/callback/tidal",
+    "APPLE_MUSIC_TEAM_ID": "TESTTEAM01",
+    "APPLE_MUSIC_KEY_ID": "TESTKEY001",
+    "APPLE_MUSIC_PRIVATE_KEY": APPLE_MUSIC_TEST_PEM,
+    "APPLE_MUSIC_BUNDLE_ID": "media.greenroom.test.web",
 }
 
 for _key, _value in _TEST_ENV.items():
