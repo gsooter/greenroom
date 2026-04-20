@@ -21,6 +21,7 @@ from backend.core.database import get_session_factory
 from backend.core.logging import get_logger
 from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.models.scraper import ScraperRunStatus
+from backend.data.repositories import artists as artists_repo
 from backend.data.repositories import events as events_repo
 from backend.data.repositories import scraper_runs as runs_repo
 from backend.data.repositories import venues as venues_repo
@@ -311,6 +312,7 @@ def _ingest_events(
     skipped = 0
 
     for raw in raw_events:
+        _upsert_artists(session, raw.artists)
         external_id = _extract_external_id(raw)
         existing = events_repo.get_event_by_external_id(
             session, external_id, source_platform
@@ -339,6 +341,7 @@ def _ingest_events(
                 ends_at=raw.ends_at,
                 on_sale_at=raw.on_sale_at,
                 artists=raw.artists,
+                genres=raw.genres or None,
                 image_url=raw.image_url,
                 ticket_url=raw.ticket_url,
                 min_price=raw.min_price,
@@ -351,6 +354,23 @@ def _ingest_events(
             created += 1
 
     return created, updated, skipped
+
+
+def _upsert_artists(session: Session, names: list[str]) -> None:
+    """Upsert each performer name onto the artists table.
+
+    Called once per RawEvent during ingestion so the ``artists`` table
+    grows as events come in. The Spotify enrichment Celery task picks
+    up from there — no synchronous Spotify calls in the scraper path.
+
+    Args:
+        session: Active SQLAlchemy session.
+        names: Performer names straight off the RawEvent.
+    """
+    for name in names:
+        if not isinstance(name, str) or not name.strip():
+            continue
+        artists_repo.upsert_artist_by_name(session, name)
 
 
 def _extract_external_id(raw: RawEvent) -> str:
@@ -402,6 +422,7 @@ def _update_event_from_raw(event: Event, raw: RawEvent) -> bool:
         ("ends_at", raw.ends_at),
         ("on_sale_at", raw.on_sale_at),
         ("artists", raw.artists),
+        ("genres", raw.genres or None),
         ("image_url", raw.image_url),
         ("ticket_url", raw.ticket_url),
         ("min_price", raw.min_price),

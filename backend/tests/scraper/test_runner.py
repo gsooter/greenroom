@@ -35,6 +35,7 @@ def _raw(
     raw_data: dict[str, Any] | None = None,
     source_url: str = "https://src.test/e/1",
     artists: list[str] | None = None,
+    genres: list[str] | None = None,
 ) -> RawEvent:
     """Build a RawEvent with sensible defaults for ingestion tests."""
     return RawEvent(
@@ -44,6 +45,7 @@ def _raw(
         source_url=source_url,
         raw_data=raw_data if raw_data is not None else {"id": "ext-1"},
         artists=artists or ["A"],
+        genres=genres or [],
     )
 
 
@@ -86,6 +88,7 @@ class _FakeEvent:
     ends_at: datetime | None = None
     on_sale_at: datetime | None = None
     artists: list[str] = field(default_factory=list)
+    genres: list[str] = field(default_factory=list)
     image_url: str | None = None
     ticket_url: str | None = None
     min_price: float | None = None
@@ -221,6 +224,55 @@ def test_update_event_from_raw_ignores_none_fields() -> None:
     assert event.description == "existing"
 
 
+def test_update_event_from_raw_propagates_genres() -> None:
+    """Fresh genres from a re-scrape land on the existing event row."""
+    event = _FakeEvent(title="Show", genres=[])
+    raw = _raw(title="Show", genres=["indie", "rock"])
+    changed = runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    assert changed is True
+    assert event.genres == ["indie", "rock"]
+
+
+def test_update_event_from_raw_empty_genres_do_not_clobber() -> None:
+    """An empty genres list from a scraper keeps existing genres intact."""
+    event = _FakeEvent(title="Show", genres=["indie"])
+    raw = _raw(title="Show", genres=[])
+    runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    assert event.genres == ["indie"]
+
+
+# ---------------------------------------------------------------------------
+# _upsert_artists
+# ---------------------------------------------------------------------------
+
+
+def test_upsert_artists_calls_repo_once_per_non_blank_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Valid names are forwarded; blanks and non-strings are skipped."""
+    upsert_mock = MagicMock()
+    monkeypatch.setattr(runner.artists_repo, "upsert_artist_by_name", upsert_mock)
+
+    session = MagicMock()
+    runner._upsert_artists(
+        session,
+        ["Phoebe Bridgers", "", "   ", "Boygenius"],  # type: ignore[list-item]
+    )
+
+    assert upsert_mock.call_count == 2
+    forwarded = [call.args[1] for call in upsert_mock.call_args_list]
+    assert forwarded == ["Phoebe Bridgers", "Boygenius"]
+
+
+def test_upsert_artists_noop_on_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upsert_mock = MagicMock()
+    monkeypatch.setattr(runner.artists_repo, "upsert_artist_by_name", upsert_mock)
+    runner._upsert_artists(MagicMock(), [])
+    upsert_mock.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # _instantiate_scraper
 # ---------------------------------------------------------------------------
@@ -252,6 +304,7 @@ def test_ingest_events_skips_everything_when_venue_missing(
 ) -> None:
     """If the venue isn't in the DB, all events are skipped with a log."""
     monkeypatch.setattr(runner.venues_repo, "get_venue_by_slug", lambda _s, _slug: None)
+    monkeypatch.setattr(runner.artists_repo, "upsert_artist_by_name", MagicMock())
     created, updated, skipped = runner._ingest_events(
         MagicMock(), "ghost", [_raw(), _raw()], source_platform="fake"
     )
@@ -278,6 +331,8 @@ def test_ingest_events_creates_new_and_updates_existing(
 
     create_mock = MagicMock()
     monkeypatch.setattr(runner.events_repo, "create_event", create_mock)
+    upsert_mock = MagicMock()
+    monkeypatch.setattr(runner.artists_repo, "upsert_artist_by_name", upsert_mock)
 
     session = MagicMock()
     raws = [
@@ -293,6 +348,56 @@ def test_ingest_events_creates_new_and_updates_existing(
     assert skipped == 0
     create_mock.assert_called_once()
     session.flush.assert_called_once()
+    # Every RawEvent's artists are funneled through the artists repo so
+    # the enrichment task has rows to work on.
+    assert upsert_mock.call_count == 2
+
+
+def test_ingest_events_passes_genres_to_create_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RawEvent.genres flows into events_repo.create_event on insert."""
+    venue = _FakeVenue()
+    monkeypatch.setattr(
+        runner.venues_repo, "get_venue_by_slug", lambda _s, _slug: venue
+    )
+    monkeypatch.setattr(
+        runner.events_repo,
+        "get_event_by_external_id",
+        lambda _s, _eid, _plat: None,
+    )
+    create_mock = MagicMock()
+    monkeypatch.setattr(runner.events_repo, "create_event", create_mock)
+    monkeypatch.setattr(runner.artists_repo, "upsert_artist_by_name", MagicMock())
+
+    raws = [_raw(title="Show", genres=["indie", "rock"])]
+
+    runner._ingest_events(MagicMock(), venue.slug, raws, source_platform="fake")
+
+    create_mock.assert_called_once()
+    assert create_mock.call_args.kwargs["genres"] == ["indie", "rock"]
+
+
+def test_ingest_events_passes_none_when_no_genres(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty genres list is normalized to None so the column stays default."""
+    venue = _FakeVenue()
+    monkeypatch.setattr(
+        runner.venues_repo, "get_venue_by_slug", lambda _s, _slug: venue
+    )
+    monkeypatch.setattr(
+        runner.events_repo,
+        "get_event_by_external_id",
+        lambda _s, _eid, _plat: None,
+    )
+    create_mock = MagicMock()
+    monkeypatch.setattr(runner.events_repo, "create_event", create_mock)
+    monkeypatch.setattr(runner.artists_repo, "upsert_artist_by_name", MagicMock())
+
+    runner._ingest_events(MagicMock(), venue.slug, [_raw()], source_platform="fake")
+
+    assert create_mock.call_args.kwargs["genres"] is None
 
 
 def test_ingest_events_skips_unchanged_existing(
@@ -319,6 +424,7 @@ def test_ingest_events_skips_unchanged_existing(
     )
     create_mock = MagicMock()
     monkeypatch.setattr(runner.events_repo, "create_event", create_mock)
+    monkeypatch.setattr(runner.artists_repo, "upsert_artist_by_name", MagicMock())
 
     raws = [_raw(title="Same", starts_at=starts)]
     session = MagicMock()
