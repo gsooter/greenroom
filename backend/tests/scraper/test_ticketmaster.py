@@ -14,6 +14,7 @@ import responses
 
 from backend.scraper.platforms.ticketmaster import (
     DISCOVERY_API_URL,
+    TICKETMASTER_GENRE_MAP,
     TicketmasterScraper,
 )
 
@@ -29,6 +30,7 @@ def _event_json(
     images: list[dict[str, Any]] | None = None,
     attractions: list[dict[str, Any]] | None = None,
     info: str | None = "Doors 7pm",
+    classifications: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a minimal event dict shaped like the Discovery API response.
 
@@ -62,6 +64,8 @@ def _event_json(
         data["images"] = images
     if attractions is not None:
         data["_embedded"] = {"attractions": attractions}
+    if classifications is not None:
+        data["classifications"] = classifications
     return data
 
 
@@ -211,6 +215,78 @@ def test_sends_api_key_and_venue_id_as_query_params() -> None:
     assert request_url is not None
     assert "apikey=my-test-key" in request_url
     assert "venueId=KovZpa2ywe" in request_url
+
+
+@responses.activate
+def test_extracts_genre_from_classifications() -> None:
+    """A standard rock classification yields the mapped canonical genre."""
+    payload = _response_json(
+        [
+            _event_json(
+                classifications=[
+                    {
+                        "primary": True,
+                        "segment": {"name": "Music"},
+                        "genre": {"name": "Rock"},
+                        "subGenre": {"name": "Pop"},
+                    }
+                ]
+            )
+        ]
+    )
+    responses.add(responses.GET, DISCOVERY_API_URL, json=payload, status=200)
+
+    event = next(
+        TicketmasterScraper(venue_id="v", venue_name="Test", api_key="k").scrape()
+    )
+    assert "rock" in event.genres
+    assert "pop" in event.genres
+
+
+@responses.activate
+def test_genres_dedupes_and_skips_unknown() -> None:
+    """Unknown genre names are dropped; duplicates collapse to one entry."""
+    payload = _response_json(
+        [
+            _event_json(
+                classifications=[
+                    {
+                        "segment": {"name": "Music"},
+                        "genre": {"name": "Rock"},
+                        "subGenre": {"name": "Rock"},
+                    },
+                    {
+                        "segment": {"name": "Music"},
+                        "genre": {"name": "Undefined"},
+                    },
+                ]
+            )
+        ]
+    )
+    responses.add(responses.GET, DISCOVERY_API_URL, json=payload, status=200)
+
+    event = next(
+        TicketmasterScraper(venue_id="v", venue_name="Test", api_key="k").scrape()
+    )
+    assert event.genres == ["rock"]
+
+
+@responses.activate
+def test_genres_empty_when_no_classifications() -> None:
+    """Events with no classifications come through with empty genres."""
+    payload = _response_json([_event_json()])
+    responses.add(responses.GET, DISCOVERY_API_URL, json=payload, status=200)
+
+    event = next(
+        TicketmasterScraper(venue_id="v", venue_name="Test", api_key="k").scrape()
+    )
+    assert event.genres == []
+
+
+def test_genre_map_covers_common_ticketmaster_genres() -> None:
+    """Sanity check: the genre map includes the genres we most often see."""
+    for tm_name in ("Rock", "Alternative", "Pop", "Country", "Hip-Hop/Rap"):
+        assert tm_name.lower() in TICKETMASTER_GENRE_MAP
 
 
 @responses.activate
