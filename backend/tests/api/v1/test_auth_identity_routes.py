@@ -410,6 +410,7 @@ def test_exchange_session_auto_provisions_missing_user(
     create = MagicMock(return_value=created)
     monkeypatch.setattr(route, "get_db", lambda: MagicMock())
     monkeypatch.setattr(route.users_repo, "get_user_by_id", lambda _s, _uid: None)
+    monkeypatch.setattr(route.users_repo, "get_user_by_email", lambda _s, _e: None)
     monkeypatch.setattr(route.users_repo, "create_user", create)
     monkeypatch.setattr(route.users_repo, "update_last_login", MagicMock())
     monkeypatch.setattr(
@@ -426,6 +427,31 @@ def test_exchange_session_auto_provisions_missing_user(
     assert result["token"] == token
     assert result["user"]["id"] == str(user_id)
     create.assert_called_once()
+
+
+def test_exchange_session_rejects_when_email_belongs_to_different_id(
+    monkeypatch: pytest.MonkeyPatch,
+    knuckles_test_key: rsa.RSAPrivateKey,
+    stub_knuckles_jwks: str,
+) -> None:
+    """A legacy row with the claimed email blocks auto-provisioning."""
+    user_id = uuid.uuid4()
+    legacy = User(id=uuid.uuid4(), email="dup@example.test", is_active=True)
+    monkeypatch.setattr(route, "get_db", lambda: MagicMock())
+    monkeypatch.setattr(route.users_repo, "get_user_by_id", lambda _s, _uid: None)
+    monkeypatch.setattr(route.users_repo, "get_user_by_email", lambda _s, _e: legacy)
+
+    token = mint_knuckles_token(
+        signing_key=knuckles_test_key,
+        kid=stub_knuckles_jwks,
+        user_id=user_id,
+        email="dup@example.test",
+    )
+    from backend.core.exceptions import AppError
+
+    with pytest.raises(AppError) as exc_info:
+        route._exchange_session({"data": {"access_token": token}})
+    assert exc_info.value.status_code == 409
 
 
 def test_exchange_session_rejects_deactivated_user(
