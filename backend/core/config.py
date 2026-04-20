@@ -35,9 +35,20 @@ class Settings(BaseSettings):
         tidal_client_id: Tidal Developer Platform client id (Phase 5).
         tidal_client_secret: Tidal Developer Platform client secret.
         tidal_redirect_uri: Tidal OAuth redirect URI.
-        apple_music_developer_token: Apple MusicKit developer token —
-            signed ES256 JWT minted offline and rotated via env
-            (Phase 5).
+        apple_music_team_id: Apple Developer Program team ID (10-char
+            string shown top-right in the Apple developer portal).
+        apple_music_key_id: MusicKit key identifier (10-char string
+            printed next to the downloaded .p8 file).
+        apple_music_private_key: The MusicKit .p8 private key contents
+            (``-----BEGIN PRIVATE KEY-----...`` PEM). Prefer the inline
+            value in prod; ``apple_music_private_key_path`` is a dev
+            convenience that loads the key from disk at startup.
+        apple_music_private_key_path: Optional filesystem path to the
+            .p8 file. Used only when ``apple_music_private_key`` is
+            empty — loaded once at startup.
+        apple_music_bundle_id: MusicKit identifier registered in the
+            Apple developer portal (e.g. ``music.com.greenroom.web``).
+            Required on every developer-token mint.
         knuckles_url: Base URL of the Knuckles identity service (no
             trailing slash). Empty during local dev when the legacy
             HS256 path is still in use.
@@ -106,8 +117,12 @@ class Settings(BaseSettings):
     tidal_client_secret: str = ""
     tidal_redirect_uri: str = ""
 
-    # Apple Music (Phase 5)
-    apple_music_developer_token: str = ""
+    # Apple Music (Phase 5 — pending Apple Developer Program approval)
+    apple_music_team_id: str = ""
+    apple_music_key_id: str = ""
+    apple_music_private_key: str = ""
+    apple_music_private_key_path: str = ""
+    apple_music_bundle_id: str = ""
 
     # Knuckles identity service
     knuckles_url: str = ""
