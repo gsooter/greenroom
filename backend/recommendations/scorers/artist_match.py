@@ -18,8 +18,9 @@ lookup.
 
 from __future__ import annotations
 
-import unicodedata
 from typing import TYPE_CHECKING, Any
+
+from backend.core.text import normalize_artist_name as _normalize
 
 if TYPE_CHECKING:
     from backend.data.models.events import Event
@@ -29,23 +30,7 @@ SCORER_NAME = "artist_match"
 _ID_MATCH_SCORE = 1.0
 _NAME_MATCH_SCORE = 0.85
 
-
-def _normalize(name: str) -> str:
-    """Lowercase + strip diacritics + collapse whitespace.
-
-    Matches "Beyoncé", "beyonce", " Beyonce  " to the same key so a
-    Ticketmaster listing that spells artists differently than Spotify
-    still matches.
-
-    Args:
-        name: Raw artist name string.
-
-    Returns:
-        A normalized lookup key.
-    """
-    stripped = unicodedata.normalize("NFKD", name)
-    ascii_only = "".join(c for c in stripped if not unicodedata.combining(c))
-    return " ".join(ascii_only.lower().split())
+__all__ = ["SCORER_NAME", "ArtistMatchScorer", "_normalize"]
 
 
 class ArtistMatchScorer:
