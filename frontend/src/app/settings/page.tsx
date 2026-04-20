@@ -11,16 +11,21 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { startSpotifyOAuth } from "@/lib/api/auth";
+import {
+  connectAppleMusic,
+  getAppleMusicDeveloperToken,
+  startSpotifyOAuth,
+  startTidalOAuth,
+} from "@/lib/api/auth";
 import {
   completePasskeyRegistration,
   startPasskeyRegistration,
 } from "@/lib/api/auth-identity";
 import { ApiRequestError } from "@/lib/api/client";
 import { listCities } from "@/lib/api/cities";
-import { deleteMe, updateMe } from "@/lib/api/me";
-import { getMyTopArtists } from "@/lib/api/recommendations";
+import { deleteMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
 import { useRequireAuth } from "@/lib/auth";
+import { authorizeAppleMusic } from "@/lib/musickit";
 import {
   decodeRegistrationOptions,
   encodeRegistrationCredential,
@@ -29,7 +34,8 @@ import {
 import type {
   City,
   DigestFrequency,
-  SpotifyTopArtist,
+  MusicConnectionState,
+  MusicProvider,
   UserPatch,
 } from "@/types";
 
@@ -50,26 +56,25 @@ export default function SettingsPage(): JSX.Element {
   );
   const [error, setError] = useState<string | null>(null);
 
-  const [topArtists, setTopArtists] = useState<SpotifyTopArtist[]>([]);
-  const [topArtistsSyncedAt, setTopArtistsSyncedAt] = useState<string | null>(
-    null,
-  );
+  const [connections, setConnections] = useState<MusicConnectionState[]>([]);
+
+  const loadConnections = useCallback(async (): Promise<void> => {
+    if (!token) return;
+    try {
+      const res = await getMyMusicConnections(token);
+      setConnections(res.connections);
+    } catch {
+      /* best-effort read */
+    }
+  }, [token]);
 
   useEffect(() => {
     void listCities().then((list) => setCities(list));
   }, []);
 
   useEffect(() => {
-    if (!token) return;
-    void getMyTopArtists(token)
-      .then((res) => {
-        setTopArtists(res.artists);
-        setTopArtistsSyncedAt(res.synced_at);
-      })
-      .catch(() => {
-        /* top-artists is a best-effort read; do nothing on failure */
-      });
-  }, [token]);
+    void loadConnections();
+  }, [loadConnections]);
 
   useEffect(() => {
     if (!user) return;
@@ -226,8 +231,9 @@ export default function SettingsPage(): JSX.Element {
       <hr className="my-10 border-border" />
 
       <ConnectedServicesSection
-        topArtists={topArtists}
-        topArtistsSyncedAt={topArtistsSyncedAt}
+        token={token}
+        connections={connections}
+        onConnectionChange={() => void loadConnections()}
       />
 
       <hr className="my-10 border-border" />
@@ -256,30 +262,130 @@ export default function SettingsPage(): JSX.Element {
   );
 }
 
-function ConnectedServicesSection({
-  topArtists,
-  topArtistsSyncedAt,
-}: {
-  topArtists: SpotifyTopArtist[];
-  topArtistsSyncedAt: string | null;
-}): JSX.Element {
-  const [connecting, setConnecting] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const isConnected = topArtists.length > 0 || Boolean(topArtistsSyncedAt);
+const PROVIDER_LABEL: Record<MusicProvider, string> = {
+  spotify: "Spotify",
+  tidal: "Tidal",
+  apple_music: "Apple Music",
+};
 
-  async function handleConnect(): Promise<void> {
-    setConnecting(true);
+const PROVIDER_PITCH: Record<MusicProvider, string> = {
+  spotify: "Link Spotify to power personalized picks.",
+  tidal: "Connect Tidal to add your favorite artists to the recommender.",
+  apple_music: "Connect Apple Music to add your library to the recommender.",
+};
+
+// Each service exposes a different "which artists do we pull" signal
+// because its API surface differs. Shown as a small caption so users
+// know what's feeding the recommender rather than assuming parity.
+const PROVIDER_SIGNAL_NOTE: Record<MusicProvider, string> = {
+  spotify: "Uses your top and recently-played artists.",
+  apple_music: "Uses artists saved in your library.",
+  tidal: "Uses artists in your favorites collection.",
+};
+
+function connectionByProvider(
+  connections: MusicConnectionState[],
+  provider: MusicProvider,
+): MusicConnectionState | undefined {
+  return connections.find((c) => c.provider === provider);
+}
+
+function providerStatusMessage(
+  provider: MusicProvider,
+  state: MusicConnectionState | undefined,
+): string {
+  if (!state || !state.connected) return PROVIDER_PITCH[provider];
+  if (state.artist_count === 0) {
+    return state.synced_at
+      ? `Connected, but your library looked empty on ${formatSyncedAt(state.synced_at)}.`
+      : "Connected, but we couldn't pull your library. We'll retry on your next visit.";
+  }
+  const when = state.synced_at ? formatSyncedAt(state.synced_at) : "recently";
+  return `Connected. ${state.artist_count} artists synced ${when}.`;
+}
+
+function ConnectedServicesSection({
+  token,
+  connections,
+  onConnectionChange,
+}: {
+  token: string | null;
+  connections: MusicConnectionState[];
+  onConnectionChange: () => void;
+}): JSX.Element {
+  const [spotifyConnecting, setSpotifyConnecting] = useState<boolean>(false);
+  const [tidalConnecting, setTidalConnecting] = useState<boolean>(false);
+  const [appleConnecting, setAppleConnecting] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const spotifyState = connectionByProvider(connections, "spotify");
+  const tidalState = connectionByProvider(connections, "tidal");
+  const appleState = connectionByProvider(connections, "apple_music");
+
+  async function handleSpotifyConnect(): Promise<void> {
+    if (!token) {
+      setError("You need to be signed in to connect Spotify.");
+      return;
+    }
+    setSpotifyConnecting(true);
     setError(null);
     try {
-      const { authorize_url } = await startSpotifyOAuth();
+      const { authorize_url } = await startSpotifyOAuth(token);
       window.location.href = authorize_url;
     } catch (err) {
-      setConnecting(false);
+      setSpotifyConnecting(false);
       setError(
         err instanceof Error
           ? err.message
           : "Could not start Spotify connection.",
       );
+    }
+  }
+
+  async function handleTidalConnect(): Promise<void> {
+    if (!token) {
+      setError("You need to be signed in to connect Tidal.");
+      return;
+    }
+    setTidalConnecting(true);
+    setError(null);
+    try {
+      const { authorize_url } = await startTidalOAuth(token);
+      window.location.href = authorize_url;
+    } catch (err) {
+      setTidalConnecting(false);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not start Tidal connection.",
+      );
+    }
+  }
+
+  async function handleAppleMusicConnect(): Promise<void> {
+    if (!token) {
+      setError("You need to be signed in to connect Apple Music.");
+      return;
+    }
+    setAppleConnecting(true);
+    setError(null);
+    try {
+      const { developer_token } = await getAppleMusicDeveloperToken(token);
+      const mut = await authorizeAppleMusic({
+        developerToken: developer_token,
+        appName: "Greenroom",
+        appBuild: "1.0.0",
+      });
+      await connectAppleMusic(token, mut);
+      onConnectionChange();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not connect Apple Music.",
+      );
+    } finally {
+      setAppleConnecting(false);
     }
   }
 
@@ -293,58 +399,90 @@ function ConnectedServicesSection({
         Greenroom works without them.
       </p>
 
-      <div className="mt-4 rounded-lg border border-border bg-bg-white p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-text-primary">Spotify</p>
-            <p className="mt-1 text-xs text-text-secondary">
-              {isConnected
-                ? `Connected. Last synced ${
-                    topArtistsSyncedAt
-                      ? formatSyncedAt(topArtistsSyncedAt)
-                      : "recently"
-                  }.`
-                : "Not connected. Link Spotify to power personalized picks."}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleConnect()}
-            disabled={connecting}
-            className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {connecting
-              ? "Redirecting…"
-              : isConnected
-                ? "Reconnect"
-                : "Connect Spotify"}
-          </button>
-        </div>
-        {error ? (
-          <p className="mt-3 text-xs text-blush-accent" role="alert">
-            {error}
-          </p>
-        ) : null}
+      <ServiceCard
+        provider="spotify"
+        state={spotifyState}
+        busy={spotifyConnecting}
+        onConnect={() => void handleSpotifyConnect()}
+      />
 
-        {topArtists.length > 0 ? (
-          <div className="mt-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
-              Your rotation
-            </p>
-            <ul className="mt-2 flex flex-wrap gap-2">
-              {topArtists.slice(0, 24).map((artist) => (
-                <li
-                  key={`${artist.id ?? artist.name}`}
-                  className="rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent"
-                >
-                  {artist.name}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-      </div>
+      <ServiceCard
+        provider="tidal"
+        state={tidalState}
+        busy={tidalConnecting}
+        onConnect={() => void handleTidalConnect()}
+      />
+
+      <ServiceCard
+        provider="apple_music"
+        state={appleState}
+        busy={appleConnecting}
+        onConnect={() => void handleAppleMusicConnect()}
+      />
+
+      {error ? (
+        <p className="mt-3 text-xs text-blush-accent" role="alert">
+          {error}
+        </p>
+      ) : null}
     </section>
+  );
+}
+
+function ServiceCard({
+  provider,
+  state,
+  busy,
+  onConnect,
+}: {
+  provider: MusicProvider;
+  state: MusicConnectionState | undefined;
+  busy: boolean;
+  onConnect: () => void;
+}): JSX.Element {
+  const label = PROVIDER_LABEL[provider];
+  const connected = Boolean(state?.connected);
+  const busyLabel = provider === "apple_music" ? "Authorizing…" : "Redirecting…";
+  const artists = state?.artists ?? [];
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-bg-white p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-text-primary">{label}</p>
+          <p className="mt-1 text-xs text-text-secondary">
+            {providerStatusMessage(provider, state)}
+          </p>
+          <p className="mt-1 text-[11px] italic text-text-secondary/80">
+            {PROVIDER_SIGNAL_NOTE[provider]}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onConnect}
+          disabled={busy}
+          className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? busyLabel : connected ? "Reconnect" : `Connect ${label}`}
+        </button>
+      </div>
+      {artists.length > 0 ? (
+        <div className="mt-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+            Your rotation
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {artists.map((artist) => (
+              <li
+                key={`${provider}-${artist.id ?? artist.name}`}
+                className="rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent"
+              >
+                {artist.name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
