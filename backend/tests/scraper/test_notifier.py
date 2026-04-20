@@ -1,8 +1,9 @@
 """Unit tests for :mod:`backend.scraper.notifier`.
 
-Notifier dispatches to Slack via ``requests.post`` and falls back to
-SendGrid. Tests patch both seams and exercise the success/failure
-branches plus the env-gated no-op branches.
+Notifier dispatches to Slack via ``requests.post`` and falls back to the
+``services.email.send_email`` seam for Resend delivery. Tests patch both
+seams and exercise the success/failure branches plus the env-gated no-op
+branches.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+from backend.core.exceptions import EMAIL_DELIVERY_FAILED, AppError
 from backend.scraper import notifier
 
 
@@ -24,13 +26,6 @@ class _FakeSlackResponse:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise requests.HTTPError(f"HTTP {self.status_code}")
-
-
-class _FakeSendGridResponse:
-    """Stand-in for the sendgrid library's response object."""
-
-    def __init__(self, *, status_code: int = 202) -> None:
-        self.status_code = status_code
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +140,7 @@ def test_email_alert_noop_when_alert_email_unconfigured(
     """Placeholder ``x@x.com`` recipient short-circuits to False."""
     settings = MagicMock()
     settings.alert_email = "x@x.com"
-    settings.sendgrid_api_key = "real-key"
+    settings.resend_api_key = "real-key"
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
     assert (
@@ -153,13 +148,13 @@ def test_email_alert_noop_when_alert_email_unconfigured(
     )
 
 
-def test_email_alert_noop_when_sendgrid_key_unconfigured(
+def test_email_alert_noop_when_resend_key_unconfigured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Placeholder ``x`` sendgrid key short-circuits to False."""
+    """Placeholder ``x`` resend key short-circuits to False."""
     settings = MagicMock()
     settings.alert_email = "alerts@example.test"
-    settings.sendgrid_api_key = "x"
+    settings.resend_api_key = "x"
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
     assert (
@@ -167,26 +162,24 @@ def test_email_alert_noop_when_sendgrid_key_unconfigured(
     )
 
 
-def test_email_alert_returns_false_on_exception(
+def test_email_alert_returns_false_when_send_email_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Any exception during SendGrid send is swallowed and reported False."""
+    """AppError from ``send_email`` is swallowed and reported as False."""
     settings = MagicMock()
     settings.alert_email = "alerts@example.test"
-    settings.sendgrid_api_key = "SG.real"
-    settings.sendgrid_from_email = "from@example.test"
+    settings.resend_api_key = "re_real"
+    settings.resend_from_email = "from@example.test"
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
-    # Patch the sendgrid module imported inside the function so .send raises.
-    import sendgrid
+    def boom(**_kw: object) -> None:
+        raise AppError(
+            code=EMAIL_DELIVERY_FAILED,
+            message="resend down",
+            status_code=502,
+        )
 
-    class _BoomClient:
-        def __init__(self, *_a: object, **_k: object) -> None: ...
-
-        def send(self, _mail: object) -> None:
-            raise RuntimeError("sendgrid down")
-
-    monkeypatch.setattr(sendgrid, "SendGridAPIClient", _BoomClient)
+    monkeypatch.setattr(notifier, "send_email", boom)
 
     assert (
         notifier._send_email_alert(
@@ -196,29 +189,30 @@ def test_email_alert_returns_false_on_exception(
     )
 
 
-def test_email_alert_returns_true_on_2xx(
+def test_email_alert_returns_true_on_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A 202 from SendGrid maps to True."""
+    """A successful ``send_email`` call maps to True and carries the full body."""
     settings = MagicMock()
     settings.alert_email = "alerts@example.test"
-    settings.sendgrid_api_key = "SG.real"
-    settings.sendgrid_from_email = "from@example.test"
+    settings.resend_api_key = "re_real"
+    settings.resend_from_email = "from@example.test"
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
-    import sendgrid
+    send_mock = MagicMock(return_value=None)
+    monkeypatch.setattr(notifier, "send_email", send_mock)
 
-    class _OkClient:
-        def __init__(self, *_a: object, **_k: object) -> None: ...
-
-        def send(self, _mail: object) -> _FakeSendGridResponse:
-            return _FakeSendGridResponse(status_code=202)
-
-    monkeypatch.setattr(sendgrid, "SendGridAPIClient", _OkClient)
-
-    assert (
-        notifier._send_email_alert(
-            title="t", message="m", severity="warning", details={"k": "v"}
-        )
-        is True
+    result = notifier._send_email_alert(
+        title="scraper down",
+        message="zero events",
+        severity="error",
+        details={"venue": "black-cat"},
     )
+
+    assert result is True
+    send_mock.assert_called_once()
+    kwargs = send_mock.call_args.kwargs
+    assert kwargs["to"] == "alerts@example.test"
+    assert kwargs["subject"] == "[Greenroom Scraper] scraper down"
+    assert "zero events" in kwargs["text_body"]
+    assert "venue: black-cat" in kwargs["text_body"]

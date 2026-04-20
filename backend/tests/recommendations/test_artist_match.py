@@ -29,6 +29,8 @@ class _FakeUser:
 
     spotify_top_artists: list[dict[str, Any]] | None = None
     spotify_recent_artists: list[dict[str, Any]] | None = None
+    tidal_top_artists: list[dict[str, Any]] | None = None
+    apple_top_artists: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -118,9 +120,7 @@ def test_score_ignores_non_dict_entries_in_top_artists() -> None:
 def test_score_ignores_non_string_event_artists() -> None:
     """Scraper rows occasionally emit non-string artists; don't crash."""
     user = _FakeUser(spotify_top_artists=[{"name": "Real Band"}])
-    event = _FakeEvent(
-        artists=[None, 42, "Real Band"]  # type: ignore[list-item]
-    )
+    event = _FakeEvent(artists=[None, 42, "Real Band"])  # type: ignore[list-item]
     result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 0.85
@@ -150,3 +150,39 @@ def test_score_multiple_matches_keeps_best_and_returns_all() -> None:
     assert result["score"] == 1.0
     matches = {m["match"] for m in result["matched_artists"]}
     assert matches == {"spotify_id", "artist_name"}
+
+
+def test_score_matches_tidal_artist_by_name() -> None:
+    """A name in the Tidal cache alone should still score on name match."""
+    user = _FakeUser(
+        tidal_top_artists=[{"id": "t-1", "name": "Tidal Only"}],
+    )
+    event = _FakeEvent(artists=["Tidal Only"])
+    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    assert result is not None
+    assert result["score"] == 0.85
+
+
+def test_score_matches_apple_music_artist_by_name() -> None:
+    """A name in the Apple Music cache alone should score on name match."""
+    user = _FakeUser(
+        apple_top_artists=[{"id": "a-1", "name": "Apple Only"}],
+    )
+    event = _FakeEvent(artists=["Apple Only"])
+    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    assert result is not None
+    assert result["score"] == 0.85
+
+
+def test_score_unions_caches_across_all_providers() -> None:
+    """Each provider's cache contributes to the same lookup tables."""
+    user = _FakeUser(
+        spotify_top_artists=[{"name": "Spot"}],
+        tidal_top_artists=[{"name": "Tide"}],
+        apple_top_artists=[{"name": "Appl"}],
+    )
+    event = _FakeEvent(artists=["Tide", "Appl"])
+    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    assert result is not None
+    matched_names = {m["name"] for m in result["matched_artists"]}
+    assert matched_names == {"Tide", "Appl"}

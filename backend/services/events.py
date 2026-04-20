@@ -209,15 +209,17 @@ def _serialize_venue_with_city(event: Event) -> dict[str, Any] | None:
         "id": str(event.venue.id),
         "name": event.venue.name,
         "slug": event.venue.slug,
-        "city": {
-            "id": str(city.id),
-            "name": city.name,
-            "slug": city.slug,
-            "state": city.state,
-            "region": city.region,
-        }
-        if city is not None
-        else None,
+        "city": (
+            {
+                "id": str(city.id),
+                "name": city.name,
+                "slug": city.slug,
+                "state": city.state,
+                "region": city.region,
+            }
+            if city is not None
+            else None
+        ),
     }
 
 

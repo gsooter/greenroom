@@ -90,6 +90,22 @@ def get_my_top_artists() -> tuple[dict[str, Any], int]:
     }, 200
 
 
+@api_v1.route("/me/music-connections", methods=["GET"])
+@require_auth
+def get_my_music_connections() -> tuple[dict[str, Any], int]:
+    """Return the caller's music-service connection state.
+
+    Settings reads this once on load to render a card per provider —
+    "connected | last synced | N artists" — so Tidal and Apple Music
+    reflect backend truth instead of transient client flags.
+
+    Returns:
+        Tuple of JSON body ``{data: {connections: [...]}}`` and 200.
+    """
+    user = get_current_user()
+    return {"data": {"connections": users_service.list_music_connections(user)}}, 200
+
+
 @api_v1.route("/me", methods=["DELETE"])
 @require_auth
 def delete_me() -> tuple[dict[str, Any], int]:

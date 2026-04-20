@@ -67,17 +67,19 @@ def test_update_last_login_sets_timestamp(
 
 
 # ---------------------------------------------------------------------------
-# OAuth provider
+# Music-service connection
 # ---------------------------------------------------------------------------
 
 
-def test_oauth_create_get_and_update(
+def test_music_connection_create_get_and_update(
     session: Session, make_user: Callable[..., User]
 ) -> None:
     user = make_user()
-    assert users_repo.get_oauth_provider(session, OAuthProvider.SPOTIFY, "sp1") is None
+    assert (
+        users_repo.get_music_connection(session, OAuthProvider.SPOTIFY, "sp1") is None
+    )
 
-    oauth = users_repo.create_oauth_provider(
+    connection = users_repo.create_music_connection(
         session,
         user_id=user.id,
         provider=OAuthProvider.SPOTIFY,
@@ -88,26 +90,26 @@ def test_oauth_create_get_and_update(
         scopes="user-read-email",
         provider_data={"country": "US"},
     )
-    assert oauth.id is not None
+    assert connection.id is not None
 
-    fetched = users_repo.get_oauth_provider(session, OAuthProvider.SPOTIFY, "sp1")
-    assert fetched is not None and fetched.id == oauth.id
+    fetched = users_repo.get_music_connection(session, OAuthProvider.SPOTIFY, "sp1")
+    assert fetched is not None and fetched.id == connection.id
 
     # access_token rotation only.
-    users_repo.update_oauth_tokens(session, oauth, access_token="at2")
-    assert oauth.access_token == "at2"
-    assert oauth.refresh_token == "rt"
+    users_repo.update_music_connection_tokens(session, connection, access_token="at2")
+    assert connection.access_token == "at2"
+    assert connection.refresh_token == "rt"
 
     new_expiry = datetime.now(UTC) + timedelta(hours=2)
-    users_repo.update_oauth_tokens(
+    users_repo.update_music_connection_tokens(
         session,
-        oauth,
+        connection,
         access_token="at3",
         refresh_token="rt2",
         token_expires_at=new_expiry,
     )
-    assert oauth.refresh_token == "rt2"
-    assert oauth.token_expires_at.replace(microsecond=0) == (
+    assert connection.refresh_token == "rt2"
+    assert connection.token_expires_at.replace(microsecond=0) == (
         new_expiry.replace(microsecond=0)
     )
 

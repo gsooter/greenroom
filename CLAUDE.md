@@ -8,17 +8,20 @@ Read it fully before writing any code. When in doubt, check here first.
 ## Project Overview
 
 A Washington DC concert aggregator with Spotify-powered recommendations.
-Venues are scraped nightly. Users authenticate via Spotify OAuth. The browse
-experience is fully public and server-side rendered for SEO and AI discoverability.
-Personalization (recommendations, saved shows, digests) requires login.
+Venues are scraped nightly. Users sign in through the Knuckles identity
+service (magic-link, Google, Apple, or passkey) and can then connect
+Spotify as a music service to power recommendations. The browse
+experience is fully public and server-side rendered for SEO and AI
+discoverability. Personalization (recommendations, saved shows, digests)
+requires login.
 
 **Stack:**
 - Frontend: Next.js (App Router) deployed on Vercel
 - Backend: Flask REST API deployed on Railway
 - Database: PostgreSQL (Railway managed)
 - Queue: Celery + Redis (Railway, same project as Flask)
-- Auth: Spotify OAuth 2.0 + JWT
-- Email: SendGrid
+- Auth: Knuckles identity service (RS256 JWTs via JWKS); Spotify OAuth 2.0 as a music-service connect
+- Email: Resend
 - Analytics: PostHog (self-hosted on Railway)
 
 ---
@@ -600,10 +603,27 @@ Settings. The app fails loudly at startup if a required variable is missing.
 
 Required variables (never hardcode these):
 ```
-# Spotify
+# Knuckles (identity service)
+KNUCKLES_URL
+KNUCKLES_CLIENT_ID
+KNUCKLES_CLIENT_SECRET
+
+# Spotify (music-service connect)
 SPOTIFY_CLIENT_ID
 SPOTIFY_CLIENT_SECRET
 SPOTIFY_REDIRECT_URI
+
+# Tidal (music-service connect — Phase 5)
+TIDAL_CLIENT_ID
+TIDAL_CLIENT_SECRET
+TIDAL_REDIRECT_URI
+
+# Apple Music (music-service connect — Phase 5)
+APPLE_MUSIC_TEAM_ID
+APPLE_MUSIC_KEY_ID
+APPLE_MUSIC_PRIVATE_KEY           # PEM-encoded .p8 contents (preferred)
+APPLE_MUSIC_PRIVATE_KEY_PATH      # dev convenience, loads from disk
+APPLE_MUSIC_BUNDLE_ID
 
 # Database
 DATABASE_URL
@@ -611,13 +631,12 @@ DATABASE_URL
 # Redis
 REDIS_URL
 
-# JWT
+# JWT (signing the short-lived Spotify OAuth state token)
 JWT_SECRET_KEY
-JWT_EXPIRY_SECONDS
 
-# SendGrid
-SENDGRID_API_KEY
-SENDGRID_FROM_EMAIL
+# Resend
+RESEND_API_KEY
+RESEND_FROM_EMAIL
 
 # Ticketmaster
 TICKETMASTER_API_KEY

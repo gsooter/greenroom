@@ -89,7 +89,12 @@ def generate_for_user(
     """
     users_repo.delete_recommendations_for_user(session, user.id)
 
-    if not user.spotify_top_artists and not user.spotify_recent_artists:
+    if not (
+        user.spotify_top_artists
+        or user.spotify_recent_artists
+        or user.tidal_top_artists
+        or user.apple_top_artists
+    ):
         return 0
 
     events = _fetch_scoreable_events(session)

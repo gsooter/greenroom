@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from backend.core.exceptions import NotFoundError, ValidationError
-from backend.data.models.users import DigestFrequency
+from backend.data.models.users import DigestFrequency, OAuthProvider
 from backend.services import users as users_service
 
 # ---------------------------------------------------------------------------
@@ -234,6 +234,168 @@ def test_serialize_user_renders_uuids_and_enums_as_strings() -> None:
     assert payload["genre_preferences"] == ["indie"]
     assert payload["notification_settings"] == {"email": True}
     assert payload["city_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# list_music_connections
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FakeMusicConnection:
+    """Minimal stand-in for :class:`MusicServiceConnection`."""
+
+    provider: OAuthProvider
+
+
+@dataclass
+class _FakeMusicUser:
+    """User stand-in exposing only fields ``list_music_connections`` reads."""
+
+    music_connections: list[_FakeMusicConnection]
+    spotify_top_artists: list[dict[str, Any]] | None
+    spotify_synced_at: object | None
+    tidal_top_artists: list[dict[str, Any]] | None
+    tidal_synced_at: object | None
+    apple_top_artists: list[dict[str, Any]] | None
+    apple_synced_at: object | None
+
+
+def test_list_music_connections_marks_only_linked_providers_connected() -> None:
+    """Presence of a MusicServiceConnection row drives the connected flag."""
+    user = _FakeMusicUser(
+        music_connections=[_FakeMusicConnection(provider=OAuthProvider.SPOTIFY)],
+        spotify_top_artists=None,
+        spotify_synced_at=None,
+        tidal_top_artists=None,
+        tidal_synced_at=None,
+        apple_top_artists=None,
+        apple_synced_at=None,
+    )
+    result = users_service.list_music_connections(user)  # type: ignore[arg-type]
+    providers = {row["provider"]: row["connected"] for row in result}
+    assert providers == {"spotify": True, "tidal": False, "apple_music": False}
+
+
+def test_list_music_connections_reports_sync_snapshot_and_count() -> None:
+    """Connected-with-data provider reports count + ISO synced_at."""
+    from datetime import UTC, datetime
+
+    synced = datetime(2026, 4, 20, 3, 16, tzinfo=UTC)
+    user = _FakeMusicUser(
+        music_connections=[
+            _FakeMusicConnection(provider=OAuthProvider.APPLE_MUSIC),
+        ],
+        spotify_top_artists=None,
+        spotify_synced_at=None,
+        tidal_top_artists=None,
+        tidal_synced_at=None,
+        apple_top_artists=[{"id": "a1"}, {"id": "a2"}],
+        apple_synced_at=synced,
+    )
+    result = users_service.list_music_connections(user)  # type: ignore[arg-type]
+    apple = next(r for r in result if r["provider"] == "apple_music")
+    assert apple["connected"] is True
+    assert apple["artist_count"] == 2
+    assert apple["synced_at"] == synced.isoformat()
+
+
+def test_list_music_connections_handles_connected_empty_library() -> None:
+    """Connected provider with no cache rows reports count=0, synced_at=None.
+
+    Surfaces "connected but empty/failed sync" to the UI so the user
+    isn't stuck looking at a no-op button.
+    """
+    user = _FakeMusicUser(
+        music_connections=[_FakeMusicConnection(provider=OAuthProvider.TIDAL)],
+        spotify_top_artists=None,
+        spotify_synced_at=None,
+        tidal_top_artists=None,
+        tidal_synced_at=None,
+        apple_top_artists=None,
+        apple_synced_at=None,
+    )
+    result = users_service.list_music_connections(user)  # type: ignore[arg-type]
+    tidal = next(r for r in result if r["provider"] == "tidal")
+    assert tidal["connected"] is True
+    assert tidal["artist_count"] == 0
+    assert tidal["synced_at"] is None
+
+
+def test_list_music_connections_returns_all_providers_in_stable_order() -> None:
+    """The UI relies on stable ordering: Spotify, Tidal, Apple Music."""
+    user = _FakeMusicUser(
+        music_connections=[],
+        spotify_top_artists=None,
+        spotify_synced_at=None,
+        tidal_top_artists=None,
+        tidal_synced_at=None,
+        apple_top_artists=None,
+        apple_synced_at=None,
+    )
+    result = users_service.list_music_connections(user)  # type: ignore[arg-type]
+    assert [row["provider"] for row in result] == [
+        "spotify",
+        "tidal",
+        "apple_music",
+    ]
+
+
+def test_list_music_connections_caps_artist_preview_at_24() -> None:
+    """The chip row on settings is bounded — don't ship a 200-artist payload."""
+    cached = [{"id": f"a{i}", "name": f"Artist {i}"} for i in range(50)]
+    user = _FakeMusicUser(
+        music_connections=[_FakeMusicConnection(provider=OAuthProvider.APPLE_MUSIC)],
+        spotify_top_artists=None,
+        spotify_synced_at=None,
+        tidal_top_artists=None,
+        tidal_synced_at=None,
+        apple_top_artists=cached,
+        apple_synced_at=None,
+    )
+    result = users_service.list_music_connections(user)  # type: ignore[arg-type]
+    apple = next(r for r in result if r["provider"] == "apple_music")
+    assert apple["artist_count"] == 50  # full count from cache
+    assert len(apple["artists"]) == 24  # but preview is capped
+    assert apple["artists"][0]["name"] == "Artist 0"
+    assert apple["artists"][23]["name"] == "Artist 23"
+
+
+def test_list_music_connections_sanitizes_artist_preview_fields() -> None:
+    """A malformed cached artist row falls back to safe defaults, not a crash."""
+    cached: list[dict[str, Any]] = [
+        {
+            "id": "ok",
+            "name": "Valid Artist",
+            "genres": ["rock", 7, "indie"],
+            "image_url": "https://cdn.example/img.jpg",
+        },
+        {"id": None, "name": 42, "genres": "not-a-list", "image_url": 99},
+    ]
+    user = _FakeMusicUser(
+        music_connections=[_FakeMusicConnection(provider=OAuthProvider.SPOTIFY)],
+        spotify_top_artists=cached,
+        spotify_synced_at=None,
+        tidal_top_artists=None,
+        tidal_synced_at=None,
+        apple_top_artists=None,
+        apple_synced_at=None,
+    )
+    result = users_service.list_music_connections(user)  # type: ignore[arg-type]
+    spotify = next(r for r in result if r["provider"] == "spotify")
+    artists = spotify["artists"]
+    assert artists[0] == {
+        "id": "ok",
+        "name": "Valid Artist",
+        "genres": ["rock", "indie"],
+        "image_url": "https://cdn.example/img.jpg",
+    }
+    assert artists[1] == {
+        "id": None,
+        "name": "",
+        "genres": [],
+        "image_url": None,
+    }
 
 
 def test_serialize_user_surfaces_defaults_when_optional_fields_null() -> None:

@@ -51,9 +51,7 @@ describe("SaveEventButton", () => {
 
     fireEvent.click(screen.getByRole("button"));
 
-    expect(showToast).toHaveBeenCalledWith(
-      "Sign in with Spotify to save shows.",
-    );
+    expect(showToast).toHaveBeenCalledWith("Sign in to save shows.");
     expect(toggle).not.toHaveBeenCalled();
   });
 

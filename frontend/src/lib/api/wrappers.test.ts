@@ -10,12 +10,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  completeAppleOAuth,
+  completeGoogleOAuth,
+  completePasskeyAuthentication,
+  completePasskeyRegistration,
+  logout,
+  refreshSession,
+  requestMagicLink,
+  startAppleOAuth,
+  startGoogleOAuth,
+  startPasskeyAuthentication,
+  startPasskeyRegistration,
+  verifyMagicLink,
+} from "@/lib/api/auth-identity";
+import {
   completeSpotifyOAuth,
+  completeTidalOAuth,
+  connectAppleMusic,
+  getAppleMusicDeveloperToken,
   startSpotifyOAuth,
+  startTidalOAuth,
 } from "@/lib/api/auth";
 import { getCityBySlug, listCities } from "@/lib/api/cities";
 import { getEvent, listEvents } from "@/lib/api/events";
-import { deleteMe, getMe, updateMe } from "@/lib/api/me";
+import { deleteMe, getMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
 import {
   getMyTopArtists,
   listRecommendations,
@@ -46,9 +64,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function lastCall(): { url: URL; init: RequestInit } {
+type CapturedInit = Omit<RequestInit, "headers"> & {
+  headers: Record<string, string>;
+};
+
+function lastCall(): { url: URL; init: CapturedInit } {
   const call = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]!;
-  return { url: new URL(String(call[0])), init: call[1] ?? {} };
+  const init = (call[1] ?? {}) as RequestInit;
+  return {
+    url: new URL(String(call[0])),
+    init: {
+      ...init,
+      headers: (init.headers ?? {}) as Record<string, string>,
+    },
+  };
 }
 
 describe("api/events", () => {
@@ -154,26 +183,301 @@ describe("api/me", () => {
     expect(out).toBeUndefined();
     expect(lastCall().init.method).toBe("DELETE");
   });
+
+  it("getMyMusicConnections hits the connections endpoint with the token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { connections: [] } }),
+    );
+    const out = await getMyMusicConnections("tok");
+    expect(out).toEqual({ connections: [] });
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/music-connections");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
 });
 
 describe("api/auth", () => {
-  it("startSpotifyOAuth unwraps the envelope", async () => {
+  it("startSpotifyOAuth forwards the bearer token and unwraps the envelope", async () => {
     fetchMock.mockResolvedValueOnce(
       json({ data: { authorize_url: "https://acct/spot", state: "xyz" } }),
     );
-    const out = await startSpotifyOAuth();
+    const out = await startSpotifyOAuth("tok");
     expect(out.state).toBe("xyz");
+    expect(lastCall().init.headers.Authorization).toBe("Bearer tok");
   });
 
-  it("completeSpotifyOAuth posts code + state and unwraps", async () => {
-    fetchMock.mockResolvedValueOnce(
-      json({ data: { token: "t", user: { id: "u-1" } } }),
-    );
-    const out = await completeSpotifyOAuth("code-1", "state-1");
-    expect(out.token).toBe("t");
+  it("completeSpotifyOAuth posts code + state with the bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { user: { id: "u-1" } } }));
+    const out = await completeSpotifyOAuth("tok", "code-1", "state-1");
+    expect(out.user.id).toBe("u-1");
     const { init } = lastCall();
     expect(init.method).toBe("POST");
     expect(init.body).toBe(JSON.stringify({ code: "code-1", state: "state-1" }));
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("startTidalOAuth GETs the start endpoint with the bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { authorize_url: "https://acct/tidal", state: "t-xyz" } }),
+    );
+    const out = await startTidalOAuth("tok");
+    expect(out.state).toBe("t-xyz");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/tidal/start");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("completeTidalOAuth posts code + state with the bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { user: { id: "u-2" } } }));
+    const out = await completeTidalOAuth("tok", "c", "s");
+    expect(out.user.id).toBe("u-2");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/tidal/complete");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ code: "c", state: "s" }));
+  });
+
+  it("getAppleMusicDeveloperToken GETs the mint endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { developer_token: "dev-jwt" } }),
+    );
+    const out = await getAppleMusicDeveloperToken("tok");
+    expect(out.developer_token).toBe("dev-jwt");
+    expect(lastCall().url.pathname).toBe(
+      "/api/v1/auth/apple-music/developer-token",
+    );
+  });
+
+  it("connectAppleMusic POSTs the MUT under the music_user_token key", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { user: { id: "u-3" } } }));
+    const out = await connectAppleMusic("tok", "mut-123");
+    expect(out.user.id).toBe("u-3");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/apple-music/connect");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ music_user_token: "mut-123" }));
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+});
+
+describe("api/auth-identity", () => {
+  it("requestMagicLink POSTs the email", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { email_sent: true } }));
+    const out = await requestMagicLink("user@example.com");
+    expect(out.email_sent).toBe(true);
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/magic-link/request");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ email: "user@example.com" }));
+  });
+
+  it("verifyMagicLink POSTs the token and unwraps the session", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          token: "jwt",
+          token_expires_at: null,
+          refresh_token: null,
+          refresh_token_expires_at: null,
+          user: { id: "u-1" },
+        },
+      }),
+    );
+    const out = await verifyMagicLink("raw-token");
+    expect(out.token).toBe("jwt");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/magic-link/verify");
+    expect(init.body).toBe(JSON.stringify({ token: "raw-token" }));
+  });
+
+  it("startGoogleOAuth GETs the start endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { authorize_url: "https://acct/g", state: "g-xyz" } }),
+    );
+    const out = await startGoogleOAuth();
+    expect(out.authorize_url).toBe("https://acct/g");
+    expect(lastCall().url.pathname).toBe("/api/v1/auth/google/start");
+  });
+
+  it("completeGoogleOAuth POSTs code + state", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          token: "jwt",
+          token_expires_at: null,
+          refresh_token: null,
+          refresh_token_expires_at: null,
+          user: { id: "u-g" },
+        },
+      }),
+    );
+    const out = await completeGoogleOAuth("g-code", "g-state");
+    expect(out.user.id).toBe("u-g");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/google/complete");
+    expect(init.body).toBe(JSON.stringify({ code: "g-code", state: "g-state" }));
+  });
+
+  it("startAppleOAuth GETs the start endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { authorize_url: "https://appleid/a", state: "a-xyz" } }),
+    );
+    const out = await startAppleOAuth();
+    expect(out.state).toBe("a-xyz");
+    expect(lastCall().url.pathname).toBe("/api/v1/auth/apple/start");
+  });
+
+  it("completeAppleOAuth POSTs code, state, and null user when omitted", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          token: "jwt",
+          token_expires_at: null,
+          refresh_token: null,
+          refresh_token_expires_at: null,
+          user: { id: "u-a" },
+        },
+      }),
+    );
+    await completeAppleOAuth("a-code", "a-state");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/apple/complete");
+    expect(init.body).toBe(
+      JSON.stringify({ code: "a-code", state: "a-state", user: null }),
+    );
+  });
+
+  it("completeAppleOAuth forwards the first-sign-in user payload", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          token: "jwt",
+          token_expires_at: null,
+          refresh_token: null,
+          refresh_token_expires_at: null,
+          user: { id: "u-a" },
+        },
+      }),
+    );
+    const userBlob = { name: { firstName: "Ada" } };
+    await completeAppleOAuth("a-code", "a-state", userBlob);
+    const { init } = lastCall();
+    expect(init.body).toBe(
+      JSON.stringify({ code: "a-code", state: "a-state", user: userBlob }),
+    );
+  });
+
+  it("startPasskeyRegistration requires a token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { options: { challenge: "c" }, state: "p-state" } }),
+    );
+    const out = await startPasskeyRegistration("tok");
+    expect(out.state).toBe("p-state");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/passkey/register/start");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("completePasskeyRegistration POSTs credential + state + name", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { registered: true } }));
+    const credential = { id: "cred-1" } as unknown as Parameters<
+      typeof completePasskeyRegistration
+    >[1];
+    const out = await completePasskeyRegistration(
+      "tok",
+      credential,
+      "p-state",
+      "MacBook",
+    );
+    expect(out.registered).toBe(true);
+    const { init } = lastCall();
+    expect(init.body).toBe(
+      JSON.stringify({ credential, state: "p-state", name: "MacBook" }),
+    );
+  });
+
+  it("completePasskeyRegistration defaults name to null when omitted", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { registered: true } }));
+    const credential = { id: "cred-2" } as unknown as Parameters<
+      typeof completePasskeyRegistration
+    >[1];
+    await completePasskeyRegistration("tok", credential, "p-state");
+    const { init } = lastCall();
+    expect(init.body).toBe(
+      JSON.stringify({ credential, state: "p-state", name: null }),
+    );
+  });
+
+  it("startPasskeyAuthentication POSTs anonymously", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { options: { challenge: "c" }, state: "p-state" } }),
+    );
+    await startPasskeyAuthentication();
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/passkey/authenticate/start");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBeUndefined();
+  });
+
+  it("completePasskeyAuthentication POSTs credential + state", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          token: "jwt",
+          token_expires_at: null,
+          refresh_token: null,
+          refresh_token_expires_at: null,
+          user: { id: "u-p" },
+        },
+      }),
+    );
+    const credential = { id: "cred-3" } as unknown as Parameters<
+      typeof completePasskeyAuthentication
+    >[0];
+    const out = await completePasskeyAuthentication(credential, "p-state");
+    expect(out.user.id).toBe("u-p");
+    const { init } = lastCall();
+    expect(init.body).toBe(
+      JSON.stringify({ credential, state: "p-state" }),
+    );
+  });
+
+  it("refreshSession POSTs the refresh_token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          token: "jwt-2",
+          token_expires_at: null,
+          refresh_token: "new-refresh",
+          refresh_token_expires_at: null,
+          user: { id: "u-r" },
+        },
+      }),
+    );
+    const out = await refreshSession("old-refresh");
+    expect(out.refresh_token).toBe("new-refresh");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/refresh");
+    expect(init.body).toBe(JSON.stringify({ refresh_token: "old-refresh" }));
+  });
+
+  it("logout POSTs with the refresh token when supplied", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await logout("tok", "rt-1");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/auth/logout");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+    expect(init.body).toBe(JSON.stringify({ refresh_token: "rt-1" }));
+  });
+
+  it("logout POSTs without a body when no refresh token is supplied", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await logout("tok");
+    const { init } = lastCall();
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
   });
 });
 

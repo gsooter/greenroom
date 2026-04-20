@@ -14,18 +14,27 @@ from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from flask.testing import FlaskClient
 
 from backend.app import create_app
 from backend.core import auth as auth_module
 from backend.core import database as database_module
-from backend.core.auth import issue_token
 from backend.data.models.users import User
+from backend.tests.conftest import mint_knuckles_token
 
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[FlaskClient]:
-    """Flask test client with a MagicMock-backed session factory."""
+    """Flask test client with a MagicMock-backed session factory.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture, used to swap the
+            DB session factory.
+
+    Yields:
+        A configured Flask test client.
+    """
     app = create_app()
     app.config["TESTING"] = True
 
@@ -40,14 +49,31 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[FlaskClient]:
 
 @pytest.fixture
 def authed_client(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+    client: FlaskClient,
+    monkeypatch: pytest.MonkeyPatch,
+    knuckles_test_key: rsa.RSAPrivateKey,
+    stub_knuckles_jwks: str,
 ) -> tuple[FlaskClient, User, Callable[[], dict[str, str]]]:
     """Flask test client pre-wired to pass ``@require_auth``.
 
-    Returns a tuple of (client, stub user, header-builder). The stub
-    user is a real ``User`` instance (passes the isinstance check) but
-    is never written to a session. ``users_repo.get_user_by_id`` is
-    stubbed to hand it back so the decorator completes successfully.
+    Mints a Knuckles-style RS256 access token signed by the session
+    test key, with the JWKS endpoint stubbed so verification succeeds.
+    The stub user is a real ``User`` instance (passes the isinstance
+    check) but is never written to a session;
+    ``users_repo.get_user_by_id`` is stubbed to hand it back so the
+    decorator completes successfully.
+
+    Args:
+        client: Base Flask test client.
+        monkeypatch: pytest's monkeypatch fixture.
+        knuckles_test_key: Session-scoped RSA key for signing tokens.
+        stub_knuckles_jwks: Returns the kid the JWKS publishes the
+            test key under, also installs the JWKS stub.
+
+    Returns:
+        Tuple of (client, stub user, header builder). Calling the
+        builder returns an ``Authorization`` header dict ready to
+        pass to ``client.get(..., headers=headers())``.
     """
     stub = User(
         id=uuid.uuid4(),
@@ -56,9 +82,20 @@ def authed_client(
         is_active=True,
     )
     monkeypatch.setattr(auth_module.users_repo, "get_user_by_id", lambda _s, _uid: stub)
-    token = issue_token(stub.id)
+    token = mint_knuckles_token(
+        signing_key=knuckles_test_key,
+        kid=stub_knuckles_jwks,
+        user_id=stub.id,
+        email=stub.email,
+    )
 
     def make_headers() -> dict[str, str]:
+        """Return an Authorization header dict for the stubbed user.
+
+        Returns:
+            Mapping with a single ``Authorization: Bearer <token>``
+            entry.
+        """
         return {"Authorization": f"Bearer {token}"}
 
     return client, stub, make_headers

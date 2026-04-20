@@ -45,8 +45,8 @@ jobs:
       SPOTIFY_REDIRECT_URI: http://localhost/callback
       JWT_SECRET_KEY: test-jwt-secret
       JWT_EXPIRY_SECONDS: "3600"
-      SENDGRID_API_KEY: test
-      SENDGRID_FROM_EMAIL: test@example.com
+      RESEND_API_KEY: test
+      RESEND_FROM_EMAIL: test@example.com
       TICKETMASTER_API_KEY: test
       SEATGEEK_CLIENT_ID: test
       SEATGEEK_CLIENT_SECRET: test
@@ -90,7 +90,6 @@ jobs:
       NEXT_PUBLIC_API_URL: http://localhost:5001
       NEXT_PUBLIC_BASE_URL: http://localhost:3000
       NEXT_PUBLIC_POSTHOG_KEY: ""
-      NEXT_PUBLIC_SPOTIFY_LOGIN_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -7,7 +7,12 @@
  */
 
 import { fetchJson } from "@/lib/api/client";
-import type { Envelope, User, UserPatch } from "@/types";
+import type {
+  Envelope,
+  MusicConnectionsResponse,
+  User,
+  UserPatch,
+} from "@/types";
 
 export async function getMe(token: string): Promise<User> {
   const res = await fetchJson<Envelope<User>>("/api/v1/me", { token });
@@ -25,4 +30,14 @@ export async function updateMe(token: string, patch: UserPatch): Promise<User> {
 
 export async function deleteMe(token: string): Promise<void> {
   await fetchJson<void>("/api/v1/me", { method: "DELETE", token });
+}
+
+export async function getMyMusicConnections(
+  token: string,
+): Promise<MusicConnectionsResponse> {
+  const res = await fetchJson<Envelope<MusicConnectionsResponse>>(
+    "/api/v1/me/music-connections",
+    { token },
+  );
+  return res.data;
 }

@@ -2,14 +2,12 @@
  * Spotify OAuth callback — `GET /api/auth/callback/spotify`.
  *
  * Spotify redirects here with `?code=...&state=...` after the user
- * approves the consent screen. We POST both values to the backend's
- * `/auth/spotify/complete`, store the returned JWT via AuthContext,
- * and send the user to `/for-you`.
- *
- * This route lives under `app/api/.../page.tsx` (not `route.ts`) on
- * purpose: we need `AuthContext.login(token)` to write localStorage,
- * which is a browser-only capability. A server route handler could
- * not call into the client-side auth store.
+ * approves the consent screen. After the Knuckles cutover Spotify is a
+ * *connect* flow, not a sign-in: the caller is already authenticated,
+ * and `/auth/spotify/complete` just links the MusicServiceConnection
+ * and returns the refreshed user. We forward the current session token
+ * as the Bearer credential, refresh AuthContext so the UI picks up the
+ * new connection state, and send the user back to `/settings`.
  */
 
 "use client";
@@ -25,7 +23,7 @@ type Status = "pending" | "error";
 
 export default function SpotifyCallbackPage(): JSX.Element {
   return (
-    <Suspense fallback={<CallbackShell message="Finishing sign-in…" />}>
+    <Suspense fallback={<CallbackShell message="Finishing connection…" />}>
       <SpotifyCallbackInner />
     </Suspense>
   );
@@ -36,7 +34,7 @@ function CallbackShell({ message }: { message: string }): JSX.Element {
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
       <div className="w-full rounded-2xl border border-border bg-bg-surface p-8 text-center shadow-sm">
         <h1 className="text-lg font-semibold text-text-primary">
-          Signing you in…
+          Connecting Spotify…
         </h1>
         <p className="mt-2 text-sm text-text-secondary">{message}</p>
       </div>
@@ -47,14 +45,15 @@ function CallbackShell({ message }: { message: string }): JSX.Element {
 function SpotifyCallbackInner(): JSX.Element {
   const router = useRouter();
   const params = useSearchParams();
-  const { login } = useAuth();
+  const { token, isLoading, refreshUser } = useAuth();
 
   const [status, setStatus] = useState<Status>("pending");
-  const [message, setMessage] = useState<string>("Finishing sign-in…");
+  const [message, setMessage] = useState<string>("Finishing connection…");
   const hasRun = useRef(false);
 
   useEffect(() => {
     if (hasRun.current) return;
+    if (isLoading) return;
     hasRun.current = true;
 
     const spotifyError = params.get("error");
@@ -65,7 +64,7 @@ function SpotifyCallbackInner(): JSX.Element {
       setStatus("error");
       setMessage(
         spotifyError === "access_denied"
-          ? "Spotify sign-in was cancelled."
+          ? "Spotify connection was cancelled."
           : `Spotify returned an error: ${spotifyError}`,
       );
       return;
@@ -76,21 +75,27 @@ function SpotifyCallbackInner(): JSX.Element {
       return;
     }
 
+    if (!token) {
+      setStatus("error");
+      setMessage("Your session expired — please sign in and retry.");
+      return;
+    }
+
     void (async () => {
       try {
-        const { token } = await completeSpotifyOAuth(code, state);
-        await login(token);
-        router.replace("/for-you");
+        await completeSpotifyOAuth(token, code, state);
+        await refreshUser();
+        router.replace("/settings");
       } catch (err) {
         setStatus("error");
         setMessage(
           err instanceof Error
             ? err.message
-            : "Could not complete Spotify sign-in.",
+            : "Could not complete Spotify connection.",
         );
       }
     })();
-  }, [params, login, router]);
+  }, [isLoading, params, token, refreshUser, router]);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
@@ -98,23 +103,23 @@ function SpotifyCallbackInner(): JSX.Element {
         {status === "pending" ? (
           <>
             <h1 className="text-lg font-semibold text-text-primary">
-              Signing you in…
+              Connecting Spotify…
             </h1>
             <p className="mt-2 text-sm text-text-secondary">{message}</p>
           </>
         ) : (
           <>
             <h1 className="text-lg font-semibold text-text-primary">
-              Sign-in didn&apos;t complete
+              Spotify connection didn&apos;t complete
             </h1>
             <p className="mt-2 text-sm text-blush-accent" role="alert">
               {message}
             </p>
             <Link
-              href="/login"
+              href="/settings"
               className="mt-4 inline-block rounded-lg bg-green-primary px-4 py-2 text-sm font-medium text-text-inverse hover:bg-green-dark"
             >
-              Try again
+              Back to settings
             </Link>
           </>
         )}

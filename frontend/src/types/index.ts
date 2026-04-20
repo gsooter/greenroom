@@ -188,3 +188,17 @@ export interface SpotifyTopArtistsResponse {
   artists: SpotifyTopArtist[];
   synced_at: string | null;
 }
+
+export type MusicProvider = "spotify" | "tidal" | "apple_music";
+
+export interface MusicConnectionState {
+  provider: MusicProvider;
+  connected: boolean;
+  synced_at: string | null;
+  artist_count: number;
+  artists: SpotifyTopArtist[];
+}
+
+export interface MusicConnectionsResponse {
+  connections: MusicConnectionState[];
+}

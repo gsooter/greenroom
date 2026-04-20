@@ -1,9 +1,11 @@
-"""SQLAlchemy ORM models for users and OAuth providers.
+"""SQLAlchemy ORM models for users and connected music services.
 
-Spotify OAuth is the only login method at launch (Decision 003).
-The provider table pattern is implemented from day one so adding
-Google or Apple OAuth later requires no schema migration — just
-a new provider type in user_oauth_providers.
+After the Knuckles cutover (Decision 030), identity lives entirely in
+Knuckles — local magic-link, Google, Apple, and passkey tables are gone.
+Greenroom keeps the ``users`` row as a profile + preferences record whose
+``id`` is the Knuckles user UUID, and the ``music_service_connections``
+table as the link to connected music services (Spotify today; Apple
+Music and Tidal in Phase 5).
 """
 
 import enum
@@ -29,15 +31,17 @@ if TYPE_CHECKING:
 
 
 class OAuthProvider(enum.StrEnum):
-    """Supported OAuth provider types.
+    """Supported music-service provider types.
 
-    Only SPOTIFY is active at launch. Others defined for future
-    expansion without schema migration (Decision 003).
+    After Decision 030, identity providers (google/apple/passkey) live
+    in Knuckles; this enum only enumerates the music services Greenroom
+    connects to. Apple Music and Tidal ship in Phase 5 — values are
+    defined here so later phases stay data-only.
     """
 
     SPOTIFY = "spotify"
-    GOOGLE = "google"
-    APPLE = "apple"
+    APPLE_MUSIC = "apple_music"
+    TIDAL = "tidal"
 
 
 class DigestFrequency(enum.StrEnum):
@@ -49,15 +53,19 @@ class DigestFrequency(enum.StrEnum):
 
 
 class User(TimestampMixin, Base):
-    """A registered user of the platform.
+    """A Greenroom profile record keyed by its Knuckles user UUID.
 
-    Users authenticate via Spotify OAuth. Their Spotify listening
-    data powers recommendations, saved shows, and email digests.
+    Knuckles is the identity anchor (Decision 030); ``users.id`` equals
+    the Knuckles user's UUID, and this row stores only Greenroom-specific
+    fields: preferences, Spotify caches, and digest settings. The profile
+    is created lazily on the first authenticated request.
 
     Attributes:
-        id: Unique identifier for the user.
-        email: User's email address from their OAuth provider.
-        display_name: User's display name from their OAuth provider.
+        id: Knuckles user UUID. Primary key; also the ``sub`` claim on
+            every Knuckles-issued access token.
+        email: User's email address, mirrored from Knuckles for
+            display and digest sending.
+        display_name: User's display name.
         avatar_url: URL to the user's profile image.
         city_id: Optional preferred city for filtering events.
         digest_frequency: Email digest preference.
@@ -81,7 +89,11 @@ class User(TimestampMixin, Base):
             ``spotify_top_artists``.
         spotify_synced_at: Last time spotify_top_* / spotify_recent_*
             fields were refreshed.
-        oauth_providers: Relationship to linked OAuth providers.
+        onboarding_completed_at: Timestamp set once when the user has
+            finished the post-signup onboarding flow (Phase 4 genre
+            picker). Null means the app should show onboarding on next
+            visit; a non-null value means skip/don't re-show.
+        music_connections: Relationship to connected music services.
         saved_events: Relationship to user's saved events.
         recommendations: Relationship to user's recommendations.
     """
@@ -134,9 +146,30 @@ class User(TimestampMixin, Base):
     spotify_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    tidal_top_artist_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(100)), nullable=True
+    )
+    tidal_top_artists: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    tidal_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    apple_top_artist_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(100)), nullable=True
+    )
+    apple_top_artists: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    apple_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
-    oauth_providers: Mapped[list["UserOAuthProvider"]] = relationship(
+    music_connections: Mapped[list["MusicServiceConnection"]] = relationship(
         back_populates="user",
         lazy="selectin",
         cascade="all, delete-orphan",
@@ -161,16 +194,18 @@ class User(TimestampMixin, Base):
         return f"<User {self.email}>"
 
 
-class UserOAuthProvider(TimestampMixin, Base):
-    """A linked OAuth provider for a user.
+class MusicServiceConnection(TimestampMixin, Base):
+    """A connected music-service link for a user.
 
-    Provider table pattern (Decision 003) — adding a new OAuth provider
-    (Google, Apple) requires only inserting a new row, no schema change.
+    Provider-table pattern (Decision 003) — adding a new music service
+    (Apple Music, Tidal) is a row-level insert, not a schema change.
+    Identity providers are handled by Knuckles; this table never holds
+    a login-only provider after Decision 030.
 
     Attributes:
-        id: Unique identifier for the provider link.
+        id: Unique identifier for the connection row.
         user_id: Foreign key to the user.
-        provider: OAuth provider type (spotify, google, apple).
+        provider: Music-service provider type (spotify, apple_music, tidal).
         provider_user_id: User's ID on the provider platform.
         access_token: Current OAuth access token (encrypted at rest).
         refresh_token: OAuth refresh token (encrypted at rest).
@@ -180,7 +215,7 @@ class UserOAuthProvider(TimestampMixin, Base):
         user: Relationship to the parent user.
     """
 
-    __tablename__ = "user_oauth_providers"
+    __tablename__ = "music_service_connections"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -210,16 +245,16 @@ class UserOAuthProvider(TimestampMixin, Base):
 
     # Relationships
     user: Mapped["User"] = relationship(
-        back_populates="oauth_providers",
+        back_populates="music_connections",
     )
 
     def __repr__(self) -> str:
-        """Return a string representation of the UserOAuthProvider.
+        """Return a string representation of the MusicServiceConnection.
 
         Returns:
             String representation with provider type and user ID.
         """
-        return f"<UserOAuthProvider {self.provider.value} user={self.user_id}>"
+        return f"<MusicServiceConnection {self.provider.value} user={self.user_id}>"
 
 
 class SavedEvent(TimestampMixin, Base):
