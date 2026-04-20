@@ -17,7 +17,7 @@ from backend.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
-from backend.data.models.users import DigestFrequency, User
+from backend.data.models.users import DigestFrequency, OAuthProvider, User
 from backend.data.repositories import cities as cities_repo
 from backend.data.repositories import users as users_repo
 
@@ -128,6 +128,90 @@ def serialize_user(user: User) -> dict[str, Any]:
             user.last_login_at.isoformat() if user.last_login_at else None
         ),
         "created_at": user.created_at.isoformat(),
+    }
+
+
+_ARTIST_PREVIEW_LIMIT = 24
+
+
+def list_music_connections(user: User) -> list[dict[str, Any]]:
+    """Return per-provider connection state for the settings UI.
+
+    For each supported music service, reports whether the user has a
+    :class:`MusicServiceConnection` row and when their artist cache was
+    last synced. Also returns a slim preview of up to
+    :data:`_ARTIST_PREVIEW_LIMIT` cached artists so the settings page
+    can render the same "Your rotation" chips it shows for Spotify
+    across every provider.
+
+    Args:
+        user: The authenticated user.
+
+    Returns:
+        Ordered list of
+        ``{provider, connected, synced_at, artist_count, artists}``
+        dicts in display order (Spotify, Tidal, Apple Music). ``artists``
+        entries expose only ``{id, name, genres, image_url}`` — the same
+        slim shape the per-service sync helpers already persist.
+    """
+    cache_map: dict[OAuthProvider, tuple[list[dict[str, Any]] | None, Any]] = {
+        OAuthProvider.SPOTIFY: (user.spotify_top_artists, user.spotify_synced_at),
+        OAuthProvider.TIDAL: (user.tidal_top_artists, user.tidal_synced_at),
+        OAuthProvider.APPLE_MUSIC: (
+            user.apple_top_artists,
+            user.apple_synced_at,
+        ),
+    }
+    connected_providers = {c.provider for c in user.music_connections}
+    order = [
+        OAuthProvider.SPOTIFY,
+        OAuthProvider.TIDAL,
+        OAuthProvider.APPLE_MUSIC,
+    ]
+    result: list[dict[str, Any]] = []
+    for provider in order:
+        artists, synced_at = cache_map[provider]
+        cached = artists or []
+        result.append(
+            {
+                "provider": provider.value,
+                "connected": provider in connected_providers,
+                "synced_at": synced_at.isoformat() if synced_at else None,
+                "artist_count": len(cached),
+                "artists": [
+                    _slim_artist_preview(a)
+                    for a in cached[:_ARTIST_PREVIEW_LIMIT]
+                    if isinstance(a, dict)
+                ],
+            }
+        )
+    return result
+
+
+def _slim_artist_preview(artist: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a cached artist dict to the four fields the chip row uses.
+
+    The three per-service sync helpers already store this shape, but we
+    re-project here so a malformed row (missing name, extra keys) cannot
+    leak through the settings endpoint.
+
+    Args:
+        artist: Raw cached artist dict from a provider-specific column.
+
+    Returns:
+        Dict with ``id``, ``name``, ``genres``, and ``image_url``. Missing
+        values fall back to sensible defaults so the UI need not guard.
+    """
+    name = artist.get("name")
+    genres = artist.get("genres")
+    image_url = artist.get("image_url")
+    return {
+        "id": artist.get("id"),
+        "name": name if isinstance(name, str) else "",
+        "genres": [g for g in genres if isinstance(g, str)]
+        if isinstance(genres, list)
+        else [],
+        "image_url": image_url if isinstance(image_url, str) else None,
     }
 
 

@@ -61,7 +61,12 @@ def list_recommendations_for_user(
     if (
         total == 0
         and lazy_generate
-        and (user.spotify_top_artists or user.spotify_recent_artists)
+        and (
+            user.spotify_top_artists
+            or user.spotify_recent_artists
+            or user.tidal_top_artists
+            or user.apple_top_artists
+        )
     ):
         rec_engine.generate_for_user(session, user)
         session.commit()

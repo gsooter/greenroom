@@ -31,6 +31,4 @@ export const config = {
   publicApiUrl,
   baseUrl: requireEnv("NEXT_PUBLIC_BASE_URL", process.env.NEXT_PUBLIC_BASE_URL),
   posthogKey: process.env.NEXT_PUBLIC_POSTHOG_KEY ?? "",
-  spotifyLoginEnabled:
-    process.env.NEXT_PUBLIC_SPOTIFY_LOGIN_ENABLED === "true",
 } as const;

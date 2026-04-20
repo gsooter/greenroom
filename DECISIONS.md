@@ -267,7 +267,7 @@ matters, keeping analytics data internal is meaningful.
 ### 012 — SendGrid for Email
 
 **Date:** 2026-04-16
-**Status:** Decided
+**Status:** Superseded by Decision 032
 
 **Decision:** SendGrid for all transactional email and digest sending.
 
@@ -560,7 +560,7 @@ never populate it. This is documented TM behavior, not a bug to chase.
 **Date:** 2026-04-18
 **Status:** Decided
 
-**Decision:** SendGrid-powered weekly email digests (`backend/services/notifications.py`,
+**Decision:** Resend-powered weekly email digests (`backend/services/notifications.py`,
 digest Celery beat entry, `/api/v1/users/me/digest-preview` endpoint) are
 explicitly excluded from the MVP launch. `services/notifications.py` stays as a
 one-line stub. Users can still set `digest_frequency` on their profile in
@@ -568,7 +568,7 @@ one-line stub. Users can still set `digest_frequency` on their profile in
 when the feature ships — but no email actually sends until after launch.
 
 **Rationale:**
-A transactional-email pipeline is four separate workstreams (SendGrid account
+A transactional-email pipeline is four separate workstreams (Resend account
 provisioning, HTML template, Celery schedule + job, unsubscribe flow) and each
 one has its own failure surface. Shipping it poorly — stale data, broken
 unsubscribe, bad template — actively damages the retention story it's supposed
@@ -594,7 +594,7 @@ layering email on top.
   exercised end-to-end before the feature lights up. The dropdown does not
   need a warning label; users never see a "we don't actually send these yet"
   state because nobody is promised an email.
-- `SENDGRID_API_KEY` is still listed in env vars but is allowed to be a
+- `RESEND_API_KEY` is still listed in env vars but is allowed to be a
   placeholder at launch; production can leave it unset until the digest
   ships.
 - v1.1 trigger: 50 active users OR a week of observed return-rate data,
@@ -770,6 +770,524 @@ once we have a minute to look at the actual failure log.
 - When picked up: debug the pre-deploy failure log, wire the command on
   `web` only (not `worker`/`beat`), and verify with an empty smoke-test
   migration. Once stable, this entry moves to **Decided**.
+
+---
+
+### 026 — Greenroom Becomes Its Own Identity Anchor
+
+**Date:** 2026-04-19
+**Status:** Decided (supersedes Decision 003)
+
+**Decision:** Users authenticate against a Greenroom account, not a
+Spotify account. Four identity paths ship in Phase 1: WebAuthn passkey
+(primary, listed first in the UI), "Sign in with Apple", "Sign in with
+Google", and an email magic-link. Spotify remains a fully functional
+*connected music service* that users attach from `/settings` after they
+already have an account; the sync pipeline (`services/spotify.py`,
+`spotify_top_artist_ids`, etc.) is unchanged — only the auth surface
+moves.
+
+**Rationale:**
+Decision 003 made Spotify the only login because the MVP was a
+concert-only app and every logged-in feature needed Spotify data. That
+coupling now blocks three concrete things: (1) non-Spotify music
+services (Apple Music, Tidal) can never be the anchor, so a user who
+lives in Apple Music has to create a throwaway Spotify account to use
+the app; (2) passkeys and Sign-in-with-Apple are the industry baseline
+in 2026 — asking a signed-in user to also hand over Spotify scopes
+before the app does anything is worse conversion than the Spotify-only
+data is worth; (3) artist following (Phase 2) and genre preferences
+(Phase 4) give logged-in users meaningful personalization with zero
+music-service connection, so "login requires Spotify" is no longer a
+product truth.
+
+**Provider migration:** existing Spotify-authed users are not broken.
+Their `users` row already has `email`, and their `user_oauth_providers`
+row with `provider=spotify` already carries a stable `provider_user_id`.
+JWTs have always carried the internal Greenroom `users.id` as their
+`sub` (see `core/auth.issue_token`), so no session invalidation is
+needed. The Spotify callback becomes a "log in *or* connect Spotify"
+flow based on the caller's auth state.
+
+**Alternatives considered:**
+- Keep Spotify as the only login and add Google/Apple in a later phase
+  — rejected: blocks Apple Music/Tidal users from the app entirely.
+- Email/password as the primary method — rejected: passkeys and
+  magic-links together cover every real user journey without the
+  password-reset/credential-stuffing overhead.
+- Social-only (Google + Apple) with no email path — rejected: magic
+  links are critical for users who don't want a third party to know
+  they use the app, and for desktop-first users without a passkey.
+
+**Consequences:**
+- `user_oauth_providers` gains `passkey` (identity) plus `apple_music`
+  and `tidal` (connected music, Phase 5) enum values in the
+  `20260419_auth_identity_overhaul` migration.
+- New tables `magic_link_tokens` (hashed one-time tokens, 15-minute TTL)
+  and `passkey_credentials` (WebAuthn public keys + sign counts).
+- `users.password_hash` is added as a nullable column. The magic-link
+  and passkey paths never populate it; it exists so a future
+  password-reset fallback can be added without another migration.
+- `services/auth.py` is the single home for all identity flows.
+  `services/spotify.py` is now connection-only — no JWT issuance paths.
+- Frontend `/login` becomes a 4-button stack (passkey first, then
+  Apple, Google, email). Spotify connect moves to `/settings` under
+  "Connected services".
+
+---
+
+### 027 — Magic-Link Tokens Are Hashed At Rest
+
+**Date:** 2026-04-19
+**Status:** Decided
+
+**Decision:** The only value stored in `magic_link_tokens.token_hash` is
+the SHA-256 hex digest of the raw token. The raw token exists exactly
+twice: once in the outgoing email URL and once in memory during the
+verify request. Verification hashes the incoming value and looks up by
+the hash column.
+
+**Rationale:**
+A magic-link token is a short-lived password-equivalent. If the database
+is compromised, an attacker with plaintext tokens has a 15-minute window
+to log in as any user with a pending link. Storing the hash reduces that
+to "hash must be inverted before the TTL expires," which is
+computationally infeasible for a 32-byte random secret. The cost is
+trivial — one SHA-256 per request.
+
+**Alternatives considered:**
+- Encrypt the token with an app-level key — rejected: the key lives in
+  the same environment, so a breach that reads the DB can usually read
+  the key too. Hashing has no decryption path by construction.
+- Store plaintext and rely on short TTL alone — rejected: the TTL helps
+  against *replayed* attacks but not against *concurrent* disclosure.
+
+**Consequences:**
+- `generate_magic_link(email)` returns the raw token (for the email
+  body) and inserts only the hash. The raw value is never persisted.
+- `verify_magic_link(token)` hashes the caller-supplied token and
+  looks it up. A pure equality check on the hash column is enough.
+- A nightly `cleanup_expired_magic_links` Celery task deletes rows
+  whose `expires_at` is more than 24 hours old so the table stays
+  small.
+
+---
+
+### 028 — Auth Extracted Into a Standalone Knuckles Service
+
+**Date:** 2026-04-19
+**Status:** Decided (supersedes the Greenroom-owned portions of Decisions 003 and 026)
+
+**Decision:** All identity and authentication work moves out of Greenroom
+into a separate service named **Knuckles**, deployed on its own Railway
+project with its own Postgres. Knuckles owns every identity table (`users`,
+`user_oauth_providers`, `magic_link_tokens`, `passkey_credentials`), every
+identity endpoint (magic-link, Google, Apple, WebAuthn registration + auth,
+token refresh, logout, `/me`, connected services), and JWT minting. JWTs
+are signed **RS256** and consumers (Greenroom first, other apps later)
+validate them locally via a **JWKS endpoint** Knuckles publishes. Every
+app that talks to Knuckles registers as an `app_client` with its own
+client id + secret so JWTs carry an `app_client_id` claim and tenancy is
+explicit. Greenroom keeps a minimal local `users` table — `id`,
+`display_name`, `avatar_url`, `created_at` — keyed by the Knuckles user
+id, plus the music-data columns the recommendation engine needs
+(`spotify_top_artist_ids`, `spotify_recent_artist_ids`, genre preferences,
+notification settings).
+
+**Rationale:**
+Auth is not Greenroom-specific and never should have lived inside the
+concert aggregator's repo. The product roadmap already assumes other
+apps (a reading-list tool, a personal CRM, possibly others) that will
+want the same login surface, the same social sign-in buttons, the same
+passkey support, and — critically — the same user identity so one
+person isn't maintaining four separate account rosters. Every week auth
+lives in Greenroom is a week of "which identity decisions are
+Greenroom-specific and which are universal" that has to be untangled
+later. Extracting now, before the auth code has grown a long tail of
+app-specific couplings, is the cheapest moment to pay this cost. The
+RS256 + JWKS choice is the standard pattern for this shape: consumers
+fetch the signing key once, validate offline per request, and only hit
+Knuckles for the ceremonies themselves. The `app_clients` table makes
+multi-tenancy explicit from day one instead of bolting it on once a
+second consumer exists.
+
+**Spotify split — corrected 2026-04-19:** The initial framing of
+this decision put Spotify OAuth inside Knuckles as a "connected
+service." That was wrong. Music-service OAuth is a Greenroom concern
+and stays in Greenroom entirely (see Decision 029). Knuckles is
+identity-only: magic-link, Google, Apple, WebAuthn. It never sees a
+Spotify credential, never runs the Spotify OAuth round trip, and
+never exposes a token-handoff endpoint.
+
+**Alternatives considered:**
+- **Leave auth in Greenroom and copy-paste into each future app** —
+  rejected; guaranteed drift, four different magic-link TTLs, four
+  different passkey RP IDs, and a user who exists in every app's
+  database under a different primary key.
+- **Use a managed auth provider (Auth0, Clerk, WorkOS, Supabase Auth)**
+  — considered seriously. Rejected because the per-MAU pricing crosses
+  into "real money" quickly for a small hobby portfolio, the passkey
+  and magic-link UX on the self-hosted path is already wired, and
+  owning the identity primitives means the schema can be shaped for
+  the apps (app_clients, refresh-token rotation, strict-by-default
+  audience claims) without bending to a vendor's model.
+- **Keep HS256 with a shared secret across apps** — rejected; any app
+  that can *validate* a JWT can also *mint* one, so a compromise of
+  the Greenroom env vars becomes a compromise of every other app on
+  the same secret. RS256 + JWKS keeps signing authority in Knuckles
+  alone.
+- **Do the extraction gradually, leaving auth in both places during
+  migration** — rejected; dual-write on identity is the standard way
+  to ship a "which system is the source of truth" bug. One cutover is
+  shorter and less error-prone than a migration window.
+
+**Consequences:**
+- **A new repo and Railway project** — Knuckles is a sibling deployment,
+  not a Greenroom subdirectory. The Knuckles repo has its own CI,
+  migrations, tests, and on-call story.
+- **Greenroom loses 1100+ lines of auth service code, plus the routes,
+  tests, migrations, and frontend context that rely on it.** The remaining
+  Greenroom `users` table is a foreign-key target only; no identity
+  logic lives server-side in the aggregator anymore.
+- **Greenroom's `core/auth.py` becomes a JWKS verifier.** It fetches
+  Knuckles' public key on boot (with an on-disk fallback cache for
+  resilience), validates RS256 JWTs per request, and extracts `sub`
+  as the Knuckles user id. No signing happens in Greenroom ever again.
+- **Refresh-token rotation exists for the first time.** Knuckles issues
+  1h access + 30d refresh tokens, rotates on use, and invalidates old
+  refresh tokens on logout. The frontend needs a refresh hook before
+  access-token expiry.
+- **Existing Greenroom JWTs become invalid at cutover.** HS256 tokens
+  signed with the Greenroom JWT secret will not validate against
+  Knuckles' public key. Every user signs in again on first visit
+  post-migration. Acceptable: the user count is tiny and the magic-link
+  / passkey path is already fast.
+- **Greenroom env gains `KNUCKLES_URL` and `KNUCKLES_CLIENT_ID` (plus
+  `KNUCKLES_CLIENT_SECRET` for server-to-server calls). It loses
+  `JWT_SECRET_KEY`, `GOOGLE_*`, `APPLE_*`, `WEBAUTHN_*`, `RESEND_*`
+  (for magic-link delivery — that moves with auth). Spotify env vars
+  (`SPOTIFY_*`) stay in Greenroom — see Decision 029.**
+- **Data migration runs once:** existing Greenroom `users` rows are
+  copied into Knuckles with preserved UUIDs; `google` and `apple`
+  provider rows are copied into Knuckles; `spotify` (and future
+  `apple_music` / `tidal`) provider rows are migrated into Greenroom's
+  new `music_service_connections` table; magic-link and passkey rows
+  move to Knuckles. Greenroom's local `users` table is rewritten to
+  the minimal shape with the same UUIDs as foreign keys. Saved
+  events, recommendations, and notification settings keep their
+  `user_id` references unchanged.
+- **Frontend auth context (`frontend/src/lib/auth.tsx`) repoints to
+  Knuckles.** Login, register, passkey ceremony, and session refresh
+  all talk to `KNUCKLES_URL`; the Greenroom API only receives an
+  `Authorization: Bearer <jwt>` header and never participates in the
+  auth round trip.
+- **`AUTH_MIGRATION.md` is the working plan** and tracks what's moved,
+  what's left, and the operational checklist for cutover. It should
+  be deleted once the migration is complete and this decision entry
+  remains as the permanent record.
+
+---
+
+### 029 — Music-Service OAuth Stays In Greenroom; Knuckles Is Identity-Only
+
+**Date:** 2026-04-19
+**Status:** Decided (clarifies the scope of Decision 028)
+
+**Decision:** Spotify, Apple Music, Tidal, and any other music-service
+OAuth lives entirely in Greenroom. Greenroom owns a new local
+`music_service_connections` table (`id`, `user_id` = Knuckles UUID,
+`service`, `access_token`, `refresh_token`, `token_expires_at`,
+`scopes`, `created_at`). Greenroom owns the OAuth routes at
+`backend/api/v1/music/` and the settings UI for connect/disconnect.
+Knuckles never sees any music-service credential, runs any music-
+service ceremony, or exposes any music-service endpoint. Knuckles'
+`user_oauth_providers.provider` enum is restricted to `{google, apple}`.
+
+**Rationale:**
+A centralized auth service is only valuable if its surface stays small
+and universal across consumers. The moment Knuckles knows about
+Spotify, every future consuming app has to reason about "does my app
+use Spotify or not" when asking Knuckles for a user. That couples
+Knuckles to a specific product's data model and turns it from
+identity-infrastructure into a leaky shared backend. Music-service
+tokens also have a fundamentally different lifecycle — they refresh
+frequently, they carry per-app scopes, and the data they gate (listening
+history, library) is only meaningful inside the consuming app's feature
+set. Keeping music services in Greenroom means one app owns the full
+picture of one concern, rather than two apps sharing an awkward split
+across an HTTP boundary. This decision also removes the server-to-server
+Spotify token handoff endpoint that Decision 028 originally proposed —
+a nice simplification because no credential ever leaves Greenroom.
+
+**Alternatives considered:**
+- **Knuckles owns the Spotify OAuth round trip, Greenroom fetches
+  tokens server-to-server** (the original Decision 028 framing) —
+  rejected per the rationale above. Adds a failure mode without
+  removing any coupling; Knuckles still knows Spotify exists.
+- **Spotify-only hybrid: Knuckles holds Spotify credentials because
+  Decision 026 called Spotify a "connected service"** — rejected.
+  The word "connected service" from Decision 026 was about Greenroom
+  UX ("after you sign in, you may connect Spotify"), not about where
+  the OAuth lives. This decision pins the infrastructure question
+  explicitly.
+- **Leave all auth in Greenroom** — rejected. That contradicts
+  Decision 028; the extraction is still the right call. This decision
+  is about the *scope* of what moves, not whether anything moves.
+
+**Consequences:**
+- Knuckles' `CLAUDE.md` and `DECISIONS.md` encode music-service
+  exclusion as a hard rule. A future Claude Code session that tries
+  to add `spotify` / `apple_music` / `tidal` to Knuckles will see
+  the rule at the top of CLAUDE.md and must reject the change.
+- Greenroom introduces `music_service_connections` in a fresh
+  migration as part of Phase 2 of the Knuckles cutover. The old
+  `user_oauth_providers` rows for music services are migrated into
+  the new table; Google/Apple rows go to Knuckles.
+- `backend/api/v1/auth.py` (Spotify routes) is not deleted — it's
+  renamed/rewired to `backend/api/v1/music/spotify.py`, pointed at
+  the new table, and no longer issues JWTs. The JWT issuance is
+  gone because Spotify OAuth doesn't create a new Greenroom user
+  account anymore; an unauthenticated user must first sign in via
+  Knuckles (magic-link / Google / Apple / passkey) before they can
+  connect Spotify.
+- `backend/services/spotify.py` (sync path) stays put; it reads the
+  current access token from `music_service_connections` instead of
+  `user_oauth_providers`. No Knuckles HTTP call on the sync path.
+- `SPOTIFY_CLIENT_ID / _SECRET / _REDIRECT_URI` stay in Greenroom's
+  environment — they do not appear in any Knuckles env file.
+
+---
+
+### 030 — Greenroom Verifies Knuckles Tokens Locally Against a Cached JWKS
+
+**Date:** 2026-04-19
+**Status:** Decided
+
+**Decision:** Greenroom validates every incoming access token against
+the Knuckles JWKS in-process. The JWKS is fetched once over HTTP,
+cached in memory keyed by ``kid`` for one hour, and re-fetched
+immediately on a cache miss (Knuckles key rotation). Greenroom never
+calls Knuckles to validate a token on the request path.
+
+**Rationale:** This is the standard RS256 + JWKS pattern and is the
+whole reason Knuckles publishes a JWKS in the first place. Local
+verification keeps the auth check on Greenroom's hot path at
+microseconds (an asymmetric signature verify, no network) and means
+Knuckles being briefly unreachable does not 503 the entire
+authenticated surface of Greenroom. The kid-miss-refresh path makes
+key rotation safe without coordinated deploys: Knuckles starts
+issuing tokens with a new ``kid``, the first such token Greenroom
+sees triggers a JWKS refresh, and verification proceeds.
+
+**Alternatives considered:**
+- **Token introspection (call Knuckles ``/v1/auth/introspect`` per
+  request)** — rejected. Adds a synchronous network hop to every
+  authenticated Greenroom request, couples uptime to Knuckles
+  uptime, and defeats the entire purpose of asymmetric signing.
+  Reasonable for opaque tokens, wasteful for JWTs.
+- **Use ``jwt.PyJWKClient`` directly** — rejected. Convenient but
+  caches keys forever (no TTL knob) and has no controllable
+  rotation refresh. The custom cache here is ~30 lines and we
+  control the failure modes.
+- **No caching, fetch JWKS per verify** — rejected. Same network-
+  coupling problem as introspection plus much higher latency.
+
+**Consequences:**
+- A new ``backend.core.knuckles_client`` module owns the JWKS cache
+  and the small HTTP client used for app-client proxy calls
+  (magic-link start, token exchange, passkey ceremonies).
+  ``backend.core.auth`` is not modified yet — this commit is
+  additive. Wiring ``require_auth`` to call
+  :func:`verify_knuckles_token` is the next step in the cutover.
+- Three new env vars in Greenroom: ``KNUCKLES_URL``,
+  ``KNUCKLES_CLIENT_ID``, ``KNUCKLES_CLIENT_SECRET``. A fourth
+  optional one (``KNUCKLES_JWKS_CACHE_TTL_SECONDS``) defaults to
+  3600. All four ship as empty strings / defaults so the module
+  imports cleanly even before the Knuckles app-client is registered.
+- A disk-cached JWKS fallback for "Knuckles down at process start"
+  is deferred to Phase 3 hardening; the in-memory cache is
+  sufficient until then because tokens already in flight remain
+  verifiable through one hour of Knuckles downtime.
+- ``PyJWT`` dependency upgraded to ``PyJWT[crypto]`` so the
+  ``cryptography`` extras (RS256 verify) are pinned explicitly
+  rather than picked up transitively.
+
+---
+
+### 031 — Greenroom Users Are Lazily Provisioned From Knuckles Claims
+
+**Date:** 2026-04-19
+**Status:** Decided
+
+**Decision:** Greenroom does not keep a pre-populated user directory.
+The first authenticated request from a Knuckles-signed token with a
+``sub`` that has no matching Greenroom ``users`` row inserts that row
+on the fly, keyed by the Knuckles user UUID, using ``email`` (and
+``name`` when present) from the token claims. After Decision 030 the
+legacy HS256 ``issue_token`` / ``verify_token`` helpers are also
+removed; Greenroom no longer signs or verifies any token format
+except the Knuckles-issued RS256 access tokens that flow through
+``verify_knuckles_token``. The Spotify OAuth routes shift from a
+sign-in flow to a connect flow — both endpoints now require an
+existing Knuckles session and the happy path returns only the updated
+user profile, never a session token.
+
+**Rationale:** Two of Greenroom's concerns collapse into one step
+this way. (1) There is no "sync users from Knuckles" background job
+to keep correct — the first real authenticated request does it for
+free. (2) ``require_auth`` always produces a concrete ``User`` row
+for downstream code, so no view has to defensively handle "token
+valid but no local profile yet." The Spotify-connect reframing falls
+out naturally: with Knuckles as the sole identity issuer, Spotify
+OAuth cannot be a sign-in path without Greenroom re-entering the
+token-minting business it just exited.
+
+**Alternatives considered:**
+- **Pre-provision on the Knuckles side via a webhook/outbound event
+  on signup.** Rejected. It introduces an at-least-once delivery
+  problem (retries, duplicate handling, backfill for missed events)
+  to solve a problem the first real request already solves for
+  free. Webhooks earn their keep for cross-service state that *must*
+  be consistent before the user acts, which this is not.
+- **Error out with 401 until a user manually "activates" their
+  Greenroom profile.** Rejected. The extra screen adds zero value —
+  the account already exists in Knuckles and the user already
+  consented at signup there. A silent first-hit provision matches
+  the mental model.
+- **Keep the legacy HS256 ``issue_token`` helper around as dead
+  code "just in case."** Rejected. ``require_auth`` is the only
+  caller that mattered; leaving unused token-issuance helpers in a
+  security-adjacent module is an invitation to reintroduce a
+  parallel auth path by accident.
+
+**Consequences:**
+- ``backend.core.auth.issue_token`` and ``verify_token`` are gone,
+  along with ``backend/tests/core/test_auth.py``. ``require_auth``
+  is now the whole surface of the module.
+- ``users_repo.create_user`` accepts an optional ``user_id`` so the
+  provision path can pin the PK to the Knuckles UUID. Existing
+  callers that omit it keep their old behavior (fresh UUID).
+- Knuckles must include the ``email`` claim on every access token
+  it issues — Greenroom treats a missing email as an invalid token
+  because it cannot stand up a profile without one. A future
+  ``/v1/auth/me``-style enrichment from Knuckles would remove that
+  constraint; until then, the claim requirement is hard.
+- The Spotify routes now 401 unauthenticated callers. The frontend
+  "connect Spotify" UI must attach the existing Knuckles bearer to
+  both ``/auth/spotify/start`` and ``/auth/spotify/complete``, and
+  stop expecting a ``token`` field in the complete response.
+- ``/auth/spotify/complete`` rejects re-linking a Spotify profile
+  that already points at a different Greenroom user with a 409.
+  That blocks the account-takeover path where an attacker re-
+  consents through their own Knuckles login.
+
+---
+
+### 032 — Greenroom Proxies Knuckles Identity Endpoints Server-Side
+
+**Date:** 2026-04-19
+**Status:** Decided
+
+**Decision:** The browser never talks to Knuckles. Every identity
+ceremony the frontend needs — magic-link start/verify, Google
+start/complete, Apple start/complete, passkey register begin/complete,
+passkey sign-in begin/complete — is exposed on Greenroom at the
+existing ``/api/v1/auth/*`` paths and forwarded to Knuckles from the
+server via ``backend.core.knuckles_client.post``. Greenroom's
+server-side env holds the ``X-Client-Id`` / ``X-Client-Secret``
+pair; the secret never appears in a bundle, a cookie, or a response
+body. The session-completing proxies (``magic-link/verify``,
+``google/complete``, ``apple/complete``, ``passkey/authenticate/complete``)
+verify the Knuckles-issued access token, lazily provision the
+Greenroom ``users`` row, and return a normalized ``{token, user}``
+envelope that the frontend AuthContext already consumes.
+
+**Rationale:** Knuckles Decision 007 is explicit: every Knuckles
+auth endpoint requires app-client credentials and there is no
+"public-client" escape hatch. Respecting that from Greenroom is the
+default-safe posture — a compromised SPA bundle cannot by itself
+mint tokens, because the bundle never held the secret in the first
+place. The server-side proxy path also keeps the frontend API surface
+stable (the existing ``auth-identity.ts`` client is unchanged), so
+nothing the user sees or bookmarks has to move.
+
+**Alternatives considered:**
+- **Point the frontend at ``NEXT_PUBLIC_KNUCKLES_URL`` directly and
+  add a "public client" mode to Knuckles.** Rejected. It would
+  require reversing Knuckles Decision 007, weakening the security
+  model for every consuming app, not just Greenroom. Public clients
+  also force origin-allowlist + PKCE plumbing on Knuckles that the
+  confidential-client path sidesteps entirely.
+- **Split identity into two bundles — one public (no secret) and one
+  confidential (Greenroom's).** Rejected. Doubles the deploy surface
+  and the config drift risk for one frontend's convenience.
+- **Have the frontend call Knuckles directly with the secret baked
+  into the bundle.** Rejected on sight — it leaks the secret to every
+  browser tab and to any script injected into the SPA.
+
+**Consequences:**
+- ``backend/api/v1/auth_identity.py`` is the authoritative list of
+  identity proxies. New Knuckles auth endpoints have to be added
+  here before the frontend can call them.
+- ``knuckles_client.post`` now accepts a ``bearer_token`` kwarg so
+  proxies for Knuckles' bearer-auth endpoints (passkey register) can
+  forward the caller's token alongside the app-client headers.
+- Greenroom owns the ``redirect_url`` for each ceremony, filled in
+  from ``settings.frontend_base_url``. The frontend no longer sends
+  a redirect URL at all — one less field the SPA can tamper with.
+- The normalized ``{token, user}`` envelope now only surfaces the
+  access token; the Knuckles refresh token stays on the Knuckles
+  response and is dropped at the proxy boundary. Refresh-token
+  handling is deferred to a later decision; until then a session
+  lives exactly as long as the Knuckles access-token TTL.
+- The ``/auth/logout`` endpoint is unchanged and still lives in
+  ``auth_session.py`` — it is a no-op server-side and does not need
+  to round-trip to Knuckles.
+
+---
+
+### 033 — Resend Replaces SendGrid for Transactional Email
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** Greenroom and Knuckles both send transactional email
+through Resend. SendGrid is removed as a dependency from both repos.
+The DB column `email_digest_log.sendgrid_message_id` is renamed to
+`provider_message_id` so a future provider change does not require
+another schema migration.
+
+**Rationale:**
+Resend's developer ergonomics are meaningfully better than SendGrid's
+for the volume Greenroom actually sends: a single HTTP endpoint
+(`POST /emails`), one Bearer token, no SDK to carry. The SendGrid SDK
+pulled in a starlette transitive that mypy had to ignore globally;
+dropping it removes that override. Resend's free tier (3,000/mo,
+100/day) comfortably covers the MVP digest + scraper-alert traffic.
+
+**Alternatives considered:**
+- Stay on SendGrid — rejected; the SDK adds weight and the API
+  surface is larger than we use.
+- Use the SendGrid REST API directly without the SDK — rejected; it
+  avoids the SDK dependency but keeps us on a provider whose free
+  tier was recently cut and whose deliverability story for
+  transactional-only senders has regressed.
+- AWS SES — rejected; SES requires sandbox-exit paperwork and a
+  verified domain with DKIM before any recipient outside a verified
+  allowlist can receive mail. Too much operational setup for the
+  volume.
+
+**Consequences:**
+- `services/email.py` in both repos calls `POST
+  https://api.resend.com/emails` directly via `requests`. No SDK.
+- `backend/scraper/notifier.py` routes its email fallback through
+  the same `send_email` seam — the scraper no longer carries its own
+  SendGrid import.
+- `RESEND_API_KEY` / `RESEND_FROM_EMAIL` replace the SendGrid env
+  vars in both repos' `.env.example`, CI workflow, and dev configs.
+- Decision 012 is marked Superseded.
+- Decision 028's env-loss list updated to reference `RESEND_*`
+  instead of `SENDGRID_*` for magic-link delivery moving to Knuckles.
 
 ---
 

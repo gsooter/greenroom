@@ -9,6 +9,7 @@ the existing top-artist caches. The recommendation engine consumes
 both lists so a user who's been listening to someone new this week
 still gets matched even if that artist isn't in their 6-month top 200.
 """
+
 from typing import Sequence, Union
 
 from alembic import op

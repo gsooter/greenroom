@@ -46,9 +46,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function lastCall(): { url: URL; init: RequestInit } {
+type CapturedInit = Omit<RequestInit, "headers"> & {
+  headers: Record<string, string>;
+};
+
+function lastCall(): { url: URL; init: CapturedInit } {
   const call = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]!;
-  return { url: new URL(String(call[0])), init: call[1] ?? {} };
+  const init = (call[1] ?? {}) as RequestInit;
+  return {
+    url: new URL(String(call[0])),
+    init: {
+      ...init,
+      headers: (init.headers ?? {}) as Record<string, string>,
+    },
+  };
 }
 
 describe("api/events", () => {
@@ -157,23 +168,23 @@ describe("api/me", () => {
 });
 
 describe("api/auth", () => {
-  it("startSpotifyOAuth unwraps the envelope", async () => {
+  it("startSpotifyOAuth forwards the bearer token and unwraps the envelope", async () => {
     fetchMock.mockResolvedValueOnce(
       json({ data: { authorize_url: "https://acct/spot", state: "xyz" } }),
     );
-    const out = await startSpotifyOAuth();
+    const out = await startSpotifyOAuth("tok");
     expect(out.state).toBe("xyz");
+    expect(lastCall().init.headers.Authorization).toBe("Bearer tok");
   });
 
-  it("completeSpotifyOAuth posts code + state and unwraps", async () => {
-    fetchMock.mockResolvedValueOnce(
-      json({ data: { token: "t", user: { id: "u-1" } } }),
-    );
-    const out = await completeSpotifyOAuth("code-1", "state-1");
-    expect(out.token).toBe("t");
+  it("completeSpotifyOAuth posts code + state with the bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { user: { id: "u-1" } } }));
+    const out = await completeSpotifyOAuth("tok", "code-1", "state-1");
+    expect(out.user.id).toBe("u-1");
     const { init } = lastCall();
     expect(init.method).toBe("POST");
     expect(init.body).toBe(JSON.stringify({ code: "code-1", state: "state-1" }));
+    expect(init.headers.Authorization).toBe("Bearer tok");
   });
 });
 

@@ -40,7 +40,7 @@ export default function SaveEventButton({
       event.preventDefault();
       event.stopPropagation();
       if (!isAuthenticated) {
-        showToast("Sign in with Spotify to save shows.");
+        showToast("Sign in to save shows.");
         return;
       }
       void toggle(eventId);

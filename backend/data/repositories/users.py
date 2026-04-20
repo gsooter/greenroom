@@ -1,6 +1,6 @@
-"""Repository functions for user, OAuth provider, and saved event access.
+"""Repository functions for user, music-service connection, and saved event access.
 
-All database queries related to users, their OAuth providers,
+All database queries related to users, their connected music services,
 saved events, and recommendations are defined here.
 """
 
@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session
 
 from backend.data.models.recommendations import Recommendation
 from backend.data.models.users import (
+    MusicServiceConnection,
     OAuthProvider,
     SavedEvent,
     User,
-    UserOAuthProvider,
 )
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,7 @@ def create_user(
     session: Session,
     *,
     email: str,
+    user_id: uuid.UUID | None = None,
     display_name: str | None = None,
     avatar_url: str | None = None,
     city_id: uuid.UUID | None = None,
@@ -64,6 +65,10 @@ def create_user(
     Args:
         session: Active SQLAlchemy session.
         email: User's email address.
+        user_id: Optional explicit primary key. After Decision 030 the
+            auto-provision path passes the Knuckles ``sub`` so Greenroom
+            ``users.id`` stays identical to the Knuckles user UUID. When
+            ``None``, SQLAlchemy generates a fresh UUID.
         display_name: User's display name.
         avatar_url: URL to user's profile image.
         city_id: Optional preferred city UUID.
@@ -72,6 +77,7 @@ def create_user(
         The newly created User instance.
     """
     user = User(
+        id=user_id if user_id is not None else uuid.uuid4(),
         email=email,
         display_name=display_name,
         avatar_url=avatar_url,
@@ -120,36 +126,36 @@ def update_last_login(session: Session, user: User) -> User:
 
 
 # ---------------------------------------------------------------------------
-# OAuth provider queries
+# Music-service connection queries
 # ---------------------------------------------------------------------------
 
 
-def get_oauth_provider(
+def get_music_connection(
     session: Session,
     provider: OAuthProvider,
     provider_user_id: str,
-) -> UserOAuthProvider | None:
-    """Fetch an OAuth provider link by provider type and external user ID.
+) -> MusicServiceConnection | None:
+    """Fetch a music-service connection by provider type and external user ID.
 
-    Used during login to find if a Spotify (or future) account is
-    already linked to a user.
+    Used during the connect flow to find if a Spotify (or other) account
+    is already linked to a user.
 
     Args:
         session: Active SQLAlchemy session.
-        provider: The OAuth provider type.
+        provider: The music-service provider type.
         provider_user_id: User's ID on the provider platform.
 
     Returns:
-        The UserOAuthProvider if found, otherwise None.
+        The MusicServiceConnection if found, otherwise None.
     """
-    stmt = select(UserOAuthProvider).where(
-        UserOAuthProvider.provider == provider,
-        UserOAuthProvider.provider_user_id == provider_user_id,
+    stmt = select(MusicServiceConnection).where(
+        MusicServiceConnection.provider == provider,
+        MusicServiceConnection.provider_user_id == provider_user_id,
     )
     return session.execute(stmt).scalar_one_or_none()
 
 
-def create_oauth_provider(
+def create_music_connection(
     session: Session,
     *,
     user_id: uuid.UUID,
@@ -160,13 +166,13 @@ def create_oauth_provider(
     token_expires_at: datetime | None = None,
     scopes: str | None = None,
     provider_data: dict[str, Any] | None = None,
-) -> UserOAuthProvider:
-    """Create a new OAuth provider link for a user.
+) -> MusicServiceConnection:
+    """Create a new music-service connection for a user.
 
     Args:
         session: Active SQLAlchemy session.
         user_id: UUID of the user to link.
-        provider: The OAuth provider type.
+        provider: The music-service provider type.
         provider_user_id: User's ID on the provider platform.
         access_token: OAuth access token.
         refresh_token: OAuth refresh token.
@@ -175,9 +181,9 @@ def create_oauth_provider(
         provider_data: Additional provider-specific data.
 
     Returns:
-        The newly created UserOAuthProvider instance.
+        The newly created MusicServiceConnection instance.
     """
-    oauth = UserOAuthProvider(
+    connection = MusicServiceConnection(
         user_id=user_id,
         provider=provider,
         provider_user_id=provider_user_id,
@@ -187,38 +193,38 @@ def create_oauth_provider(
         scopes=scopes,
         provider_data=provider_data,
     )
-    session.add(oauth)
+    session.add(connection)
     session.flush()
-    return oauth
+    return connection
 
 
-def update_oauth_tokens(
+def update_music_connection_tokens(
     session: Session,
-    oauth: UserOAuthProvider,
+    connection: MusicServiceConnection,
     *,
     access_token: str,
     refresh_token: str | None = None,
     token_expires_at: datetime | None = None,
-) -> UserOAuthProvider:
-    """Update OAuth tokens after a token refresh.
+) -> MusicServiceConnection:
+    """Update OAuth tokens on a music-service connection after a refresh.
 
     Args:
         session: Active SQLAlchemy session.
-        oauth: The UserOAuthProvider instance to update.
+        connection: The MusicServiceConnection instance to update.
         access_token: New access token.
         refresh_token: New refresh token, if rotated.
         token_expires_at: New token expiry datetime.
 
     Returns:
-        The updated UserOAuthProvider instance.
+        The updated MusicServiceConnection instance.
     """
-    oauth.access_token = access_token
+    connection.access_token = access_token
     if refresh_token is not None:
-        oauth.refresh_token = refresh_token
+        connection.refresh_token = refresh_token
     if token_expires_at is not None:
-        oauth.token_expires_at = token_expires_at
+        connection.token_expires_at = token_expires_at
     session.flush()
-    return oauth
+    return connection
 
 
 # ---------------------------------------------------------------------------

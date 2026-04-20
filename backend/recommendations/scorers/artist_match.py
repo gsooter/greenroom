@@ -1,12 +1,15 @@
 """Artist-match scorer.
 
-Scores an event by direct overlap between the user's top Spotify artists
-and the event's performer list:
+Scores an event by direct overlap between the user's top artists from
+any connected music service (Spotify, Tidal, Apple Music) and the
+event's performer list:
 
 * A Spotify artist-id match is a strong signal → score 1.0.
 * An artist-name match (normalized) is almost as strong → score 0.85.
   Name matching lets us recommend against scraped events that never got
-  Spotify IDs attached, which today is most of them.
+  Spotify IDs attached, which today is most of them — and it is the
+  only way Tidal/Apple Music artists can match, since their provider
+  ids do not overlap with Spotify's.
 
 The per-event breakdown includes the artist name(s) that matched so the
 frontend can render "You listen to X" reason chips without a second
@@ -59,12 +62,13 @@ class ArtistMatchScorer:
     name: str = SCORER_NAME
 
     def __init__(self, user: User) -> None:
-        """Build lookup tables from the user's cached Spotify data.
+        """Build lookup tables from the user's cached music-service data.
 
-        Both the medium-term top-artists list and the recently-played
-        list are merged into the same lookup tables. The user asked for
-        flat 1.0 / 0.85 weights across the two sources for now — we
-        can revisit if we want to nudge recent matches higher later.
+        All connected services contribute to the same lookup tables:
+        Spotify top + recent, Tidal top, Apple Music top. Spotify ids
+        and names land first so they take precedence when a match could
+        come from multiple services (Spotify data is richest for the
+        reason-chip UI).
 
         Args:
             user: The user we're generating recommendations for.
@@ -74,6 +78,8 @@ class ArtistMatchScorer:
         sources: list[list[dict[str, Any]] | None] = [
             user.spotify_top_artists,
             user.spotify_recent_artists,
+            user.tidal_top_artists,
+            user.apple_top_artists,
         ]
         for source in sources:
             for artist in source or []:
