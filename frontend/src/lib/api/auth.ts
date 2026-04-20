@@ -5,10 +5,6 @@
  * Called from client components only — these flows are inherently
  * interactive (browser redirect or MusicKit JS prompt) and cannot be
  * server-rendered.
- *
- * TODO(phase5): the Apple Music helpers below are ready for the
- * MusicKit JS integration, but can only be exercised end-to-end once
- * the Apple Developer Program credentials land in the backend env.
  */
 
 import { fetchJson } from "@/lib/api/client";

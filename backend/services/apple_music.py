@@ -14,23 +14,18 @@ Tidal share. Instead:
 Developer tokens are capped at 6 months but we mint them per-request
 so they're always fresh enough for the browser to use for minutes.
 
-**Pending credentials.** The skeleton below is wired end-to-end but
-every function that touches Apple's API guards on :func:`is_configured`.
-Until the Apple Developer Program approves the account and the
-following env vars are populated, every public function here raises
-``APPLE_MUSIC_AUTH_FAILED`` (503) so the route layer has a clear
-no-op to surface:
+**Runtime contract.** Every public function here guards on
+:func:`is_configured`. When any of the following env vars is missing —
+for example on a CI runner or a local dev box without real Apple
+credentials — each call raises ``APPLE_MUSIC_AUTH_FAILED`` (503) so
+the route layer has a clear no-op to surface rather than ES256-signing
+with a bogus key:
 
 * ``APPLE_MUSIC_TEAM_ID``
 * ``APPLE_MUSIC_KEY_ID``
 * ``APPLE_MUSIC_PRIVATE_KEY``     (PEM of the .p8)  or
   ``APPLE_MUSIC_PRIVATE_KEY_PATH`` (dev convenience — path to .p8)
 * ``APPLE_MUSIC_BUNDLE_ID``
-
-TODO(phase5): re-verify the storefront validation path
-(``/v1/me/storefront``) against Apple's most current docs once the
-end-to-end MusicKit flow has been smoke-tested in prod — the MusicKit
-surface has historically churned on validation endpoints.
 """
 
 from __future__ import annotations

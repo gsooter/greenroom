@@ -10,16 +10,10 @@ JS in the browser. The server's job is to:
    it as a :class:`MusicServiceConnection` row.
 
 Both endpoints sit behind :func:`require_auth` — Apple Music is a
-*connect* flow, not a sign-in. Pending Apple Developer Program
-approval, :func:`apple_music_service.is_configured` returns False and
-every call here surfaces a clear 503.
-
-TODO(phase5): sweep once credentials are live —
-
-* End-to-end test against MusicKit JS in the browser (dev token roundtrip,
-  user-consent prompt, ``/connect`` persistence).
-* Flesh out :func:`apple_music_service.sync_top_artists` to actually
-  hit Apple's library endpoints.
+*connect* flow, not a sign-in. In environments without Apple Developer
+credentials (``APPLE_MUSIC_*`` env vars empty),
+:func:`apple_music_service.is_configured` returns False and every call
+here surfaces a clear 503 instead of signing a JWT with a bogus key.
 """
 
 from __future__ import annotations
