@@ -37,6 +37,8 @@ class _FakeUser:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     spotify_top_artists: list[dict[str, Any]] | None = None
     spotify_recent_artists: list[dict[str, Any]] | None = None
+    tidal_top_artists: list[dict[str, Any]] | None = None
+    apple_top_artists: list[dict[str, Any]] | None = None
 
 
 @dataclass

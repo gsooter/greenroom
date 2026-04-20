@@ -146,6 +146,24 @@ class User(TimestampMixin, Base):
     spotify_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    tidal_top_artist_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(100)), nullable=True
+    )
+    tidal_top_artists: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    tidal_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    apple_top_artist_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(100)), nullable=True
+    )
+    apple_top_artists: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    apple_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
