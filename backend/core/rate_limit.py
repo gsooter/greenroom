@@ -118,7 +118,7 @@ def _check_and_increment(
     pipe = client.pipeline()
     pipe.incr(cache_key, 1)
     pipe.ttl(cache_key)
-    results = cast("list[Any]", pipe.execute())
+    results = pipe.execute()
     current = int(results[0])
     ttl = int(results[1])
     if current == 1 or ttl < 0:

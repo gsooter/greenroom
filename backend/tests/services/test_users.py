@@ -363,7 +363,7 @@ def test_list_music_connections_caps_artist_preview_at_24() -> None:
 
 def test_list_music_connections_sanitizes_artist_preview_fields() -> None:
     """A malformed cached artist row falls back to safe defaults, not a crash."""
-    cached = [
+    cached: list[dict[str, Any]] = [
         {
             "id": "ok",
             "name": "Valid Artist",
