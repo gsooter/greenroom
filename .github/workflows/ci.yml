@@ -90,7 +90,6 @@ jobs:
       NEXT_PUBLIC_API_URL: http://localhost:5001
       NEXT_PUBLIC_BASE_URL: http://localhost:3000
       NEXT_PUBLIC_POSTHOG_KEY: ""
-      NEXT_PUBLIC_SPOTIFY_LOGIN_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
