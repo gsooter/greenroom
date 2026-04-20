@@ -733,10 +733,10 @@ button would be UX theatre.
 
 ---
 
-### 025 — Railway Pre-Deploy Migrations (Deferred)
+### 025 — Railway Pre-Deploy Migrations (Superseded by Decision 034)
 
 **Date:** 2026-04-18
-**Status:** Deferred
+**Status:** Superseded
 
 **Decision:** Alembic migrations are run manually via `railway run alembic upgrade head`
 (or via Railway web-service shell) at MVP launch. Wiring them into a Railway
@@ -746,30 +746,9 @@ is deferred until the first attempt — configured as
 diagnosed (it failed on first attempt with an opaque "Pre-deploy command
 failed" message that needs log inspection).
 
-**Rationale:**
-At current cadence (one developer, low migration frequency) the manual step
-is acceptable and arguably safer — the migration output is read directly
-before the new image goes live. Automating it is still the right long-term
-call (it protects against "forgot to migrate" bugs that only surface in
-runtime), but shipping it broken adds more risk than it removes. Revisit
-once we have a minute to look at the actual failure log.
-
-**Alternatives considered:**
-- Ship a broken pre-deploy command and debug under pressure — rejected.
-- Put the migration in the `web` service's start command — rejected; every
-  replica would race on startup, and Railway scales web independently.
-- Run migrations from CI on merge-to-main — rejected; the `DATABASE_URL`
-  would need to be exposed to GitHub Actions, enlarging the secrets blast
-  radius for marginal value over pre-deploy.
-
-**Consequences:**
-- Every new migration requires one manual `railway run` invocation before
-  (or immediately after) the deploy that depends on it. Forgetting this
-  results in a 500-ing web service on the new schema references — bad but
-  obvious and quick to fix.
-- When picked up: debug the pre-deploy failure log, wire the command on
-  `web` only (not `worker`/`beat`), and verify with an empty smoke-test
-  migration. Once stable, this entry moves to **Decided**.
+**Superseded:** See Decision 034. Migrations now run in the prod image's
+CMD rather than as a Railway Pre-Deploy Command, sidestepping the opaque
+Pre-Deploy failure entirely.
 
 ---
 
@@ -1291,6 +1270,60 @@ dropping it removes that override. Resend's free tier (3,000/mo,
 
 ---
 
+### 034 — Migrations Run From the Prod Image CMD
+
+**Date:** 2026-04-20
+**Status:** Decided (supersedes Decision 025)
+
+**Decision:** The prod stage of `backend/Dockerfile` runs
+`alembic upgrade head` immediately before `gunicorn` starts, so every
+Railway deploy applies pending migrations as part of container startup.
+The Railway Pre-Deploy Command is not used.
+
+**Rationale:**
+Decision 025 deferred automation because the Railway Pre-Deploy Command
+approach failed with an opaque error that would have taken real debugging
+time to unpack. Putting the migration in the image's CMD gets the same
+"no deploy ships on a stale schema" guarantee with no Railway-specific
+configuration — the image is self-contained and the migration output
+appears inline in the `web` service logs. Railway runs a single instance
+of the web service in this project, so the startup-race concern that
+motivated the original Pre-Deploy preference is moot; the `worker` and
+`beat` services use a different image target (`dev`/base) and do not
+run migrations.
+
+This was picked up after a magic-link sign-in 500'd in prod because a
+pending migration (`add_tidal_and_apple_music_top_artist_caches_to_users`)
+had not been applied. Manual `railway run alembic upgrade head` was
+blocked by Pydantic Settings refusing to import without every env var
+populated, so the shortest path to a correct state was to let the
+deploying image run its own migrations.
+
+**Alternatives considered:**
+- **Return to Railway Pre-Deploy Command** — rejected for now; the
+  opaque failure mode from Decision 025 has not been diagnosed and the
+  CMD approach already meets the correctness bar.
+- **Run migrations from CI on merge-to-main** — rejected; `DATABASE_URL`
+  would have to be exposed to GitHub Actions, and CI-driven migrations
+  can race a slow deploy.
+- **Keep migrations manual and document the step** — rejected; Decision
+  025's manual path just got caught by the exact failure mode it warned
+  about.
+
+**Consequences:**
+- If the web service scales to more than one replica, migrations will
+  race on startup. Before enabling horizontal scale, move the migration
+  step to a one-shot Railway job or re-adopt Pre-Deploy.
+- A migration that fails will block the container from starting —
+  the deploy fails loudly, which is the desired behavior. Gunicorn
+  never serves traffic against a half-migrated schema.
+- The CMD uses shell form (`cd ... && alembic ... && cd ... && gunicorn ...`)
+  so ``${PORT:-5001}`` expands as expected and the Alembic config path
+  resolves against `/app/backend`. Keep it shell form if touching this
+  line.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
@@ -1304,4 +1337,3 @@ These are known future choices that do not need to be made yet.
 | Social features (friend activity) | Community size makes it valuable |
 | Affiliate ticket links | If monetization becomes desirable |
 | Full-text search engine (Elasticsearch) | PostgreSQL text search becomes a bottleneck |
-| Automated Railway pre-deploy migrations | Once pre-deploy failure log (2026-04-18) is diagnosed — see Decision 025 |
