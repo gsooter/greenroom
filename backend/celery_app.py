@@ -36,6 +36,7 @@ def _build_app() -> Celery:
         include=[
             "backend.scraper.runner",
             "backend.scraper.watchdogs.dc9_dice_widget",
+            "backend.services.artist_enrichment_tasks",
             "backend.services.spotify_tasks",
         ],
     )
@@ -80,6 +81,16 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "task": ("backend.scraper.watchdogs.dc9_dice_widget.check_dc9_dice_widget"),
             "schedule": crontab(hour=5, minute=0, day_of_week=1),
             "options": {"expires": 60 * 60},
+        },
+        # Drains the artist enrichment backlog. Runs at 05:00 ET so it
+        # slots in after the 04:00 scraper pass has landed fresh rows
+        # but well before the morning traffic peak.
+        "enrich-unenriched-artists-nightly": {
+            "task": (
+                "backend.services.artist_enrichment_tasks.enrich_unenriched_artists"
+            ),
+            "schedule": crontab(hour=5, minute=30),
+            "options": {"expires": 60 * 60 * 3},
         },
     }
 
