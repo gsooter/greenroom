@@ -1,12 +1,12 @@
 /**
- * Spotify OAuth callback — `GET /api/auth/callback/spotify`.
+ * Tidal OAuth callback — `GET /api/auth/callback/tidal`.
  *
- * Spotify redirects here with `?code=...&state=...` after the user
- * approves the consent screen. After the Knuckles cutover Spotify is a
- * *connect* flow, not a sign-in: the caller is already authenticated,
- * and `/auth/spotify/complete` just links the MusicServiceConnection
- * and returns the refreshed user. We forward the current session token
- * as the Bearer credential, refresh AuthContext so the UI picks up the
+ * Tidal redirects here with `?code=...&state=...` after the user
+ * approves the consent screen. Tidal is a *connect* flow (parallel to
+ * Spotify): the caller is already authenticated and
+ * `/auth/tidal/complete` just links the MusicServiceConnection and
+ * returns the refreshed user. We forward the current session token as
+ * the Bearer credential, refresh AuthContext so the UI picks up the
  * new connection state, and send the user back to `/settings`.
  */
 
@@ -16,15 +16,15 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
-import { completeSpotifyOAuth } from "@/lib/api/auth";
+import { completeTidalOAuth } from "@/lib/api/auth";
 import { useAuth } from "@/lib/auth";
 
 type Status = "pending" | "error";
 
-export default function SpotifyCallbackPage(): JSX.Element {
+export default function TidalCallbackPage(): JSX.Element {
   return (
     <Suspense fallback={<CallbackShell message="Finishing connection…" />}>
-      <SpotifyCallbackInner />
+      <TidalCallbackInner />
     </Suspense>
   );
 }
@@ -34,7 +34,7 @@ function CallbackShell({ message }: { message: string }): JSX.Element {
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
       <div className="w-full rounded-2xl border border-border bg-bg-surface p-8 text-center shadow-sm">
         <h1 className="text-lg font-semibold text-text-primary">
-          Connecting Spotify…
+          Connecting Tidal…
         </h1>
         <p className="mt-2 text-sm text-text-secondary">{message}</p>
       </div>
@@ -42,7 +42,7 @@ function CallbackShell({ message }: { message: string }): JSX.Element {
   );
 }
 
-function SpotifyCallbackInner(): JSX.Element {
+function TidalCallbackInner(): JSX.Element {
   const router = useRouter();
   const params = useSearchParams();
   const { token, isLoading, refreshUser } = useAuth();
@@ -56,16 +56,16 @@ function SpotifyCallbackInner(): JSX.Element {
     if (isLoading) return;
     hasRun.current = true;
 
-    const spotifyError = params.get("error");
+    const tidalError = params.get("error");
     const code = params.get("code");
     const state = params.get("state");
 
-    if (spotifyError) {
+    if (tidalError) {
       setStatus("error");
       setMessage(
-        spotifyError === "access_denied"
-          ? "Spotify connection was cancelled."
-          : `Spotify returned an error: ${spotifyError}`,
+        tidalError === "access_denied"
+          ? "Tidal connection was cancelled."
+          : `Tidal returned an error: ${tidalError}`,
       );
       return;
     }
@@ -83,7 +83,7 @@ function SpotifyCallbackInner(): JSX.Element {
 
     void (async () => {
       try {
-        await completeSpotifyOAuth(token, code, state);
+        await completeTidalOAuth(token, code, state);
         await refreshUser();
         router.replace("/settings");
       } catch (err) {
@@ -91,7 +91,7 @@ function SpotifyCallbackInner(): JSX.Element {
         setMessage(
           err instanceof Error
             ? err.message
-            : "Could not complete Spotify connection.",
+            : "Could not complete Tidal connection.",
         );
       }
     })();
@@ -103,14 +103,14 @@ function SpotifyCallbackInner(): JSX.Element {
         {status === "pending" ? (
           <>
             <h1 className="text-lg font-semibold text-text-primary">
-              Connecting Spotify…
+              Connecting Tidal…
             </h1>
             <p className="mt-2 text-sm text-text-secondary">{message}</p>
           </>
         ) : (
           <>
             <h1 className="text-lg font-semibold text-text-primary">
-              Spotify connection didn&apos;t complete
+              Tidal connection didn&apos;t complete
             </h1>
             <p className="mt-2 text-sm text-blush-accent" role="alert">
               {message}
