@@ -545,6 +545,16 @@ def _resolve_user(access_token: str) -> User:
                 message="Access token is missing an email claim.",
                 status_code=401,
             )
+        existing = users_repo.get_user_by_email(session, email)
+        if existing is not None:
+            raise AppError(
+                code=INVALID_TOKEN,
+                message=(
+                    "A Greenroom user with this email already exists under a "
+                    "different id. Reconcile the legacy row before signing in."
+                ),
+                status_code=409,
+            )
         display_name = claims.get("name")
         return users_repo.create_user(
             session,

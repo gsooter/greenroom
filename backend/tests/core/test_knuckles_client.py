@@ -84,6 +84,10 @@ class _StubResponse:
     payload: Any
     text: str = ""
 
+    @property
+    def content(self) -> bytes:
+        return b"" if self.payload is None else b"stub"
+
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             import requests as _requests
@@ -526,3 +530,27 @@ def test_post_with_no_body_sends_empty_object(
     knuckles_client.post("/v1/auth/passkey/sign-in/begin")
 
     assert captured["json"] == {}
+
+
+def test_post_handles_empty_response_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """204 No Content (and other empty bodies) return ``{}`` instead of crashing.
+
+    Knuckles's ``/v1/logout`` returns no body; calling ``response.json()``
+    on that would blow up with a ``JSONDecodeError``. The client returns
+    an empty dict so callers that don't care about the body can proceed.
+    """
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        headers: dict[str, str],
+        timeout: int,
+    ) -> _StubResponse:
+        return _StubResponse(status_code=204, payload=None)
+
+    monkeypatch.setattr(knuckles_client.requests, "post", fake_post)
+
+    assert knuckles_client.post("/v1/logout") == {}
