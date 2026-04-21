@@ -16,6 +16,7 @@ import RegionBadge from "@/components/ui/RegionBadge";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
 import VenueStructuredData from "@/components/seo/VenueStructuredData";
 import VenueComments from "@/components/venues/VenueComments";
+import VenueMapSnapshot from "@/components/venues/VenueMapSnapshot";
 import { ApiNotFoundError } from "@/lib/api/client";
 import { getVenueBySlug } from "@/lib/api/venues";
 import {
@@ -125,6 +126,10 @@ export default async function VenueDetailPage({
             ) : null}
           </div>
         </div>
+
+        {venue.latitude !== null && venue.longitude !== null ? (
+          <VenueMapSnapshot slug={venue.slug} venueName={venue.name} />
+        ) : null}
 
         <section className="flex flex-col gap-4">
           <div className="flex items-end justify-between">

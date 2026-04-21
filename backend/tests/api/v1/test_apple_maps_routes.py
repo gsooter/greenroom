@@ -88,3 +88,141 @@ def test_mapkit_token_surfaces_unavailable_error(
     assert resp.status_code == 503
     body = resp.get_json()
     assert body["error"]["code"] == APPLE_MAPS_UNAVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# GET /venues/<slug>/map-snapshot
+# ---------------------------------------------------------------------------
+
+
+class _StubVenue:
+    """Minimal venue stand-in — has just the geocoded attrs the route reads."""
+
+    def __init__(
+        self,
+        *,
+        latitude: float | None = 38.9,
+        longitude: float | None = -77.0,
+    ) -> None:
+        self.latitude = latitude
+        self.longitude = longitude
+
+
+def test_map_snapshot_returns_signed_url(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_get_venue(_session: Any, slug: str) -> _StubVenue:
+        captured["slug"] = slug
+        return _StubVenue()
+
+    def _fake_build(**kwargs: Any) -> str:
+        captured["build_kwargs"] = kwargs
+        return "https://snapshot.apple-mapkit.com/api/v1/snapshot?foo=bar&signature=x"
+
+    monkeypatch.setattr(route.venues_repo, "get_venue_by_slug", _fake_get_venue)
+    monkeypatch.setattr(route.service, "build_snapshot_url", _fake_build)
+
+    resp = client.get("/api/v1/venues/black-cat/map-snapshot")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["data"] == {
+        "url": "https://snapshot.apple-mapkit.com/api/v1/snapshot?foo=bar&signature=x",
+        "width": 600,
+        "height": 400,
+    }
+    assert captured["slug"] == "black-cat"
+    assert captured["build_kwargs"]["latitude"] == 38.9
+    assert captured["build_kwargs"]["longitude"] == -77.0
+    assert captured["build_kwargs"]["width"] == 600
+    assert captured["build_kwargs"]["height"] == 400
+    assert captured["build_kwargs"]["color_scheme"] == "light"
+
+
+def test_map_snapshot_forwards_custom_dimensions_and_scheme(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_build(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "https://snapshot.apple-mapkit.com/api/v1/snapshot?signature=x"
+
+    monkeypatch.setattr(
+        route.venues_repo, "get_venue_by_slug", lambda _s, _slug: _StubVenue()
+    )
+    monkeypatch.setattr(route.service, "build_snapshot_url", _fake_build)
+
+    resp = client.get(
+        "/api/v1/venues/black-cat/map-snapshot"
+        "?width=320&height=200&zoom=13.5&scheme=dark&label=BC"
+    )
+    assert resp.status_code == 200
+    assert captured["width"] == 320
+    assert captured["height"] == 200
+    assert captured["zoom"] == 13.5
+    assert captured["color_scheme"] == "dark"
+    assert captured["annotation_label"] == "BC"
+
+
+def test_map_snapshot_falls_back_to_defaults_on_bad_numeric_args(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_build(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "https://snapshot.apple-mapkit.com/api/v1/snapshot?signature=x"
+
+    monkeypatch.setattr(
+        route.venues_repo, "get_venue_by_slug", lambda _s, _slug: _StubVenue()
+    )
+    monkeypatch.setattr(route.service, "build_snapshot_url", _fake_build)
+
+    resp = client.get("/api/v1/venues/black-cat/map-snapshot?width=abc&zoom=xx")
+    assert resp.status_code == 200
+    assert captured["width"] == 600
+    assert captured["zoom"] == 15.0
+
+
+def test_map_snapshot_404_when_slug_missing(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(route.venues_repo, "get_venue_by_slug", lambda _s, _slug: None)
+    resp = client.get("/api/v1/venues/does-not-exist/map-snapshot")
+    assert resp.status_code == 404
+    assert resp.get_json()["error"]["code"] == "VENUE_NOT_FOUND"
+
+
+def test_map_snapshot_404_when_venue_has_no_coordinates(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        route.venues_repo,
+        "get_venue_by_slug",
+        lambda _s, _slug: _StubVenue(latitude=None, longitude=None),
+    )
+    resp = client.get("/api/v1/venues/black-cat/map-snapshot")
+    assert resp.status_code == 404
+    assert resp.get_json()["error"]["code"] == "VENUE_NOT_FOUND"
+
+
+def test_map_snapshot_surfaces_unavailable_error(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _raise(**_kwargs: Any) -> str:
+        raise AppError(
+            code=APPLE_MAPS_UNAVAILABLE,
+            message="Apple Maps is not configured on this environment.",
+            status_code=503,
+        )
+
+    monkeypatch.setattr(
+        route.venues_repo, "get_venue_by_slug", lambda _s, _slug: _StubVenue()
+    )
+    monkeypatch.setattr(route.service, "build_snapshot_url", _raise)
+
+    resp = client.get("/api/v1/venues/black-cat/map-snapshot")
+    assert resp.status_code == 503
+    assert resp.get_json()["error"]["code"] == APPLE_MAPS_UNAVAILABLE

@@ -217,3 +217,149 @@ def test_mint_mapkit_token_raises_when_key_path_unreadable(
         service.mint_mapkit_token(redis_client=None)
     assert exc.value.status_code == 500
     assert exc.value.code == APPLE_MAPS_UNAVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# build_snapshot_url
+# ---------------------------------------------------------------------------
+
+
+def _parse_snapshot_url(url: str) -> dict[str, str]:
+    """Return the query params of a signed snapshot URL as a dict.
+
+    Args:
+        url: The full signed snapshot URL.
+
+    Returns:
+        Mapping of query param name to value (the signature included).
+    """
+    from urllib.parse import parse_qsl, urlsplit
+
+    parts = urlsplit(url)
+    return dict(parse_qsl(parts.query))
+
+
+def test_build_snapshot_url_includes_credentials_and_signature() -> None:
+    url = service.build_snapshot_url(
+        latitude=38.9,
+        longitude=-77.0,
+        redis_client=None,
+    )
+    assert url.startswith("https://snapshot.apple-mapkit.com/api/v1/snapshot?")
+    params = _parse_snapshot_url(url)
+    assert params["teamId"] == "TESTTEAM01"
+    assert params["keyId"] == "TESTMAP001"
+    assert params["center"] == "38.900000,-77.000000"
+    assert params["size"] == "600x400"
+    assert params["scale"] == "2"
+    assert params["colorScheme"] == "light"
+    # Unpadded url-safe base64 of a 64-byte ECDSA P-256 output is 86 chars.
+    assert len(params["signature"]) == 86
+    assert "=" not in params["signature"]
+
+
+def test_build_snapshot_url_verifies_against_public_key() -> None:
+    import base64
+    from urllib.parse import urlsplit
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import (
+        encode_dss_signature,
+    )
+
+    url = service.build_snapshot_url(
+        latitude=10.0,
+        longitude=20.0,
+        redis_client=None,
+    )
+    parts = urlsplit(url)
+    # The signature is computed over path+query MINUS ``signature=``
+    # itself; reconstruct that canonical string.
+    query_without_sig = "&".join(
+        pair for pair in parts.query.split("&") if not pair.startswith("signature=")
+    )
+    to_verify = f"{parts.path}?{query_without_sig}".encode("ascii")
+
+    signature_b64 = dict(p.split("=", 1) for p in parts.query.split("&"))["signature"]
+    padded = signature_b64 + "=" * (-len(signature_b64) % 4)
+    signature_bytes = base64.urlsafe_b64decode(padded)
+    r = int.from_bytes(signature_bytes[:32], "big")
+    s = int.from_bytes(signature_bytes[32:], "big")
+    der = encode_dss_signature(r, s)
+
+    private_key = serialization.load_pem_private_key(
+        APPLE_MAPKIT_TEST_PEM.encode("ascii"),
+        password=None,
+    )
+    assert isinstance(private_key, ec.EllipticCurvePrivateKey)
+    private_key.public_key().verify(der, to_verify, ec.ECDSA(hashes.SHA256()))
+
+
+def test_build_snapshot_url_raises_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APPLE_MAPKIT_TEAM_ID", "")
+    with pytest.raises(AppError) as exc:
+        service.build_snapshot_url(latitude=0.0, longitude=0.0, redis_client=None)
+    assert exc.value.code == APPLE_MAPS_UNAVAILABLE
+    assert exc.value.status_code == 503
+
+
+def test_build_snapshot_url_clamps_dimensions() -> None:
+    url = service.build_snapshot_url(
+        latitude=0.0,
+        longitude=0.0,
+        width=5000,
+        height=5000,
+        redis_client=None,
+    )
+    params = _parse_snapshot_url(url)
+    assert params["size"] == "640x640"
+
+
+def test_build_snapshot_url_coerces_invalid_scheme_to_light() -> None:
+    url = service.build_snapshot_url(
+        latitude=0.0,
+        longitude=0.0,
+        color_scheme="lavender",
+        redis_client=None,
+    )
+    params = _parse_snapshot_url(url)
+    assert params["colorScheme"] == "light"
+
+
+def test_build_snapshot_url_includes_pin_annotation_when_labeled() -> None:
+    url = service.build_snapshot_url(
+        latitude=1.0,
+        longitude=2.0,
+        annotation_label="GR",
+        redis_client=None,
+    )
+    params = _parse_snapshot_url(url)
+    assert "annotations" in params
+    assert "glyphText" in params["annotations"]
+    assert "GR" in params["annotations"]
+
+
+def test_build_snapshot_url_caches_and_returns_same_url() -> None:
+    fake = _FakeRedis()
+    first = service.build_snapshot_url(latitude=5.0, longitude=5.0, redis_client=fake)
+    second = service.build_snapshot_url(latitude=5.0, longitude=5.0, redis_client=fake)
+    # ECDSA signatures embed fresh randomness, so without the cache two
+    # calls disagree. Equality proves the cache served the second call.
+    assert first == second
+    stored_ttl = next(iter(fake.expirations.values()))
+    assert stored_ttl == 24 * 60 * 60
+
+
+def test_build_snapshot_url_buckets_cache_by_zoom_and_size() -> None:
+    fake = _FakeRedis()
+    a = service.build_snapshot_url(
+        latitude=0.0, longitude=0.0, zoom=12, redis_client=fake
+    )
+    b = service.build_snapshot_url(
+        latitude=0.0, longitude=0.0, zoom=18, redis_client=fake
+    )
+    assert a != b
+    assert len(fake.store) == 2
