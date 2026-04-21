@@ -235,3 +235,106 @@ def test_verify_place_propagates_unavailable_error(
     )
     assert resp.status_code == 503
     assert resp.get_json()["error"]["code"] == APPLE_MAPS_UNAVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# GET /maps/tonight
+# ---------------------------------------------------------------------------
+
+
+def _tonight_envelope(*, count: int = 1, date: str = "2026-04-20") -> dict[str, Any]:
+    """Return a fake envelope with ``count`` identical pin rows.
+
+    Args:
+        count: Number of pin rows to include.
+        date: ISO date string for ``meta.date``.
+
+    Returns:
+        A service-shaped envelope dict the route can return verbatim.
+    """
+    row = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "slug": "phoebe-bridgers-930-club",
+        "title": "Phoebe Bridgers",
+        "starts_at": "2026-04-20T20:00:00+00:00",
+        "artists": ["Phoebe Bridgers"],
+        "genres": ["indie"],
+        "image_url": "https://example.test/img.jpg",
+        "ticket_url": "https://tickets.test/x",
+        "min_price": 35.0,
+        "max_price": 65.0,
+        "venue": {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "name": "9:30 Club",
+            "slug": "930-club",
+            "latitude": 38.9187,
+            "longitude": -77.0311,
+        },
+    }
+    return {"data": [row] * count, "meta": {"count": count, "date": date}}
+
+
+def test_tonight_map_returns_service_envelope(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Route passes the envelope through untouched with a 200."""
+    captured: dict[str, Any] = {}
+
+    def _fake_list(_session: Any, **kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return _tonight_envelope()
+
+    monkeypatch.setattr(route.events_service, "list_tonight_map_events", _fake_list)
+    resp = client.get("/api/v1/maps/tonight")
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["meta"]["count"] == 1
+    assert body["data"][0]["venue"]["latitude"] == 38.9187
+    assert captured["genres"] is None
+
+
+def test_tonight_map_forwards_genres_filter(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A comma-separated `genres` query arg is parsed into a list."""
+    captured: dict[str, Any] = {}
+
+    def _fake_list(_session: Any, **kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return _tonight_envelope(count=0)
+
+    monkeypatch.setattr(route.events_service, "list_tonight_map_events", _fake_list)
+    resp = client.get("/api/v1/maps/tonight?genres=indie,punk,indie")
+
+    assert resp.status_code == 200
+    assert captured["genres"] == ["indie", "punk"]
+
+
+def test_tonight_map_treats_blank_genres_as_no_filter(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_list(_session: Any, **kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return _tonight_envelope(count=0)
+
+    monkeypatch.setattr(route.events_service, "list_tonight_map_events", _fake_list)
+    resp = client.get("/api/v1/maps/tonight?genres=%20%20")
+
+    assert resp.status_code == 200
+    assert captured["genres"] is None
+
+
+def test_tonight_map_is_public(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No auth header required — the map is a public surface."""
+    monkeypatch.setattr(
+        route.events_service,
+        "list_tonight_map_events",
+        lambda _s, **_k: _tonight_envelope(count=0, date="2026-04-20"),
+    )
+    resp = client.get("/api/v1/maps/tonight")
+    assert resp.status_code == 200

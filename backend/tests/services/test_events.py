@@ -34,6 +34,8 @@ class _FakeVenue:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     name: str = "9:30 Club"
     slug: str = "930-club"
+    latitude: float | None = 38.9187
+    longitude: float | None = -77.0311
     city: _FakeCity | None = field(default_factory=_FakeCity)
 
 
@@ -229,3 +231,176 @@ def test_format_feed_line_handles_venue_unloaded() -> None:
     event = _FakeEvent(venue=None)
     line = events_service._format_feed_line(event)  # type: ignore[arg-type]
     assert "@ TBA" in line
+
+
+# ---------------------------------------------------------------------------
+# list_tonight_map_events
+# ---------------------------------------------------------------------------
+
+
+def _tonight_event(
+    *,
+    starts_at: datetime,
+    latitude: float | None = 38.9187,
+    longitude: float | None = -77.0311,
+    title: str = "Phoebe Bridgers",
+    genres: list[str] | None = None,
+) -> _FakeEvent:
+    """Build a tonight-map-shaped event with adjustable coordinates and time.
+
+    Args:
+        starts_at: Event start time.
+        latitude: Venue latitude; pass ``None`` to test the coord filter.
+        longitude: Venue longitude; pass ``None`` to test the coord filter.
+        title: Event title.
+        genres: Event genres; defaults to ``["indie"]``.
+
+    Returns:
+        A populated :class:`_FakeEvent` with a venue that carries coords.
+    """
+    venue = _FakeVenue(latitude=latitude, longitude=longitude)
+    return _FakeEvent(
+        title=title,
+        starts_at=starts_at,
+        venue=venue,
+        genres=genres if genres is not None else ["indie"],
+    )
+
+
+def test_list_tonight_map_events_computes_et_day_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The date window passed to the repo is `today` in ET, not UTC."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    # 2026-04-20 03:30 UTC == 2026-04-19 23:30 ET (still "tonight" in DC).
+    now_utc = datetime(2026, 4, 20, 3, 30, tzinfo=UTC)
+
+    events_service.list_tonight_map_events(MagicMock(), now_utc=now_utc)
+
+    from datetime import date
+
+    assert captured["date_from"] == date(2026, 4, 19)
+    assert captured["date_to"] == date(2026, 4, 19)
+    assert captured["region"] == "DMV"
+
+
+def test_list_tonight_map_events_drops_events_without_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Venues without lat/lng can't be pinned so they're filtered out."""
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+    pinned = _tonight_event(starts_at=today, title="Pinned")
+    no_lat = _tonight_event(starts_at=today, title="NoLat", latitude=None)
+    no_lng = _tonight_event(starts_at=today, title="NoLng", longitude=None)
+    no_venue = _FakeEvent(starts_at=today, title="NoVenue", venue=None)
+
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([pinned, no_lat, no_lng, no_venue], 4),
+    )
+    result = events_service.list_tonight_map_events(MagicMock(), now_utc=today)
+
+    assert result["meta"]["count"] == 1
+    assert [e["title"] for e in result["data"]] == ["Pinned"]
+
+
+def test_list_tonight_map_events_serializes_pin_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each row carries the fields the map UI needs — coords, genres, price."""
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+    event = _tonight_event(starts_at=today, genres=["indie", "rock"])
+
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([event], 1),
+    )
+    payload = events_service.list_tonight_map_events(MagicMock(), now_utc=today)
+    row = payload["data"][0]
+
+    assert row["id"] == str(event.id)
+    assert row["title"] == "Phoebe Bridgers"
+    assert row["slug"] == event.slug
+    assert row["starts_at"] == today.isoformat()
+    assert row["artists"] == ["Phoebe Bridgers"]
+    assert row["genres"] == ["indie", "rock"]
+    assert row["image_url"] == event.image_url
+    assert row["min_price"] == 35.0
+    assert row["venue"] == {
+        "id": str(event.venue.id),
+        "name": "9:30 Club",
+        "slug": "930-club",
+        "latitude": 38.9187,
+        "longitude": -77.0311,
+    }
+
+
+def test_list_tonight_map_events_forwards_genres_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+
+    events_service.list_tonight_map_events(
+        MagicMock(), now_utc=today, genres=["indie", "punk"]
+    )
+    assert captured["genres"] == ["indie", "punk"]
+
+
+def test_list_tonight_map_events_meta_includes_date_and_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+    event = _tonight_event(starts_at=today)
+
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([event], 1),
+    )
+    payload = events_service.list_tonight_map_events(MagicMock(), now_utc=today)
+
+    assert payload["meta"] == {"count": 1, "date": "2026-04-20"}
+
+
+def test_list_tonight_map_events_empty_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A day with no events returns an empty envelope, not None."""
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([], 0),
+    )
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+    payload = events_service.list_tonight_map_events(MagicMock(), now_utc=today)
+
+    assert payload == {"data": [], "meta": {"count": 0, "date": "2026-04-20"}}
+
+
+def test_list_tonight_map_events_default_now_is_utc_now(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting now_utc uses the real clock; we just check it doesn't crash."""
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([], 0),
+    )
+    payload = events_service.list_tonight_map_events(MagicMock())
+    assert payload["meta"]["count"] == 0
+    assert isinstance(payload["meta"]["date"], str)

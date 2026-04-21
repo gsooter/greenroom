@@ -5,14 +5,17 @@ functions and never access the repository layer directly.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
 from backend.core.exceptions import EVENT_NOT_FOUND, NotFoundError, ValidationError
 from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.repositories import events as events_repo
+
+_ET_ZONE = ZoneInfo("America/New_York")
 
 
 def get_event(session: Session, event_id: uuid.UUID) -> Event:
@@ -261,6 +264,108 @@ def format_event_feed(events: list[Event], generated_at: datetime) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def list_tonight_map_events(
+    session: Session,
+    *,
+    region: str = "DMV",
+    now_utc: datetime | None = None,
+    genres: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return the envelope of today's pinnable events for the map surface.
+
+    "Tonight" is defined as the current calendar day in Eastern time (the
+    DMV region), so events scheduled late in the evening still count as
+    tonight even when the UTC wallclock has rolled into the next day.
+    Venues without coordinates are dropped because the map UI has no way
+    to render them.
+
+    Args:
+        session: Active SQLAlchemy session.
+        region: City region filter — defaults to ``"DMV"`` since this is
+            the DC map. Exposed so the same function can be exercised
+            from tests or other regions later.
+        now_utc: Clock anchor in UTC. Injected in tests to pin the ET
+            day window; defaults to :func:`datetime.now` in production.
+        genres: Optional genre overlap filter for the filter bar.
+
+    Returns:
+        Standard envelope dict ``{"data": [...], "meta": {...}}`` where
+        each row carries enough shape to render a map pin plus a
+        preview card: id, slug, title, artists, genres, image_url,
+        min_price, starts_at, and a venue block with latitude and
+        longitude.
+    """
+    anchor = (now_utc or datetime.now(UTC)).astimezone(_ET_ZONE)
+    today = anchor.date()
+
+    events, _total = events_repo.list_events(
+        session,
+        region=region,
+        date_from=today,
+        date_to=today,
+        genres=genres,
+        status=EventStatus.CONFIRMED,
+        page=1,
+        per_page=100,
+    )
+    pins = [_serialize_tonight_event(event) for event in events if _has_coords(event)]
+    return {
+        "data": pins,
+        "meta": {"count": len(pins), "date": today.isoformat()},
+    }
+
+
+def _has_coords(event: Event) -> bool:
+    """Return True when the event's venue can be placed on a map.
+
+    Args:
+        event: Event instance with its venue relationship loaded.
+
+    Returns:
+        True if the venue relationship is present and both ``latitude``
+        and ``longitude`` are non-null.
+    """
+    venue = event.venue
+    return (
+        venue is not None and venue.latitude is not None and venue.longitude is not None
+    )
+
+
+def _serialize_tonight_event(event: Event) -> dict[str, Any]:
+    """Serialize an event into the compact shape the map surface consumes.
+
+    Drops moderation-only fields (raw_data, source_url, external_id) and
+    wraps the venue with just the fields the pin and preview card need
+    (name, slug, and the two coordinates the map has to have).
+
+    Args:
+        event: An Event instance whose venue has coordinates.
+
+    Returns:
+        JSON-safe dict for the ``data`` array on ``/maps/tonight``.
+    """
+    venue = event.venue
+    return {
+        "id": str(event.id),
+        "slug": event.slug,
+        "title": event.title,
+        "starts_at": event.starts_at.isoformat() if event.starts_at else None,
+        "artists": event.artists or [],
+        "genres": event.genres or [],
+        "image_url": event.image_url,
+        "ticket_url": event.ticket_url,
+        "min_price": event.min_price,
+        "max_price": event.max_price,
+        "venue": {
+            "id": str(venue.id),
+            "name": venue.name,
+            "slug": venue.slug,
+            "latitude": venue.latitude,
+            "longitude": venue.longitude,
+        },
+    }
 
 
 def _format_feed_line(

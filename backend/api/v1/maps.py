@@ -27,9 +27,11 @@ from typing import Any
 from flask import request
 
 from backend.api.v1 import api_v1
+from backend.core.database import get_db
 from backend.core.exceptions import PLACE_NOT_VERIFIED, AppError
 from backend.core.rate_limit import rate_limit
 from backend.services import apple_maps as service
+from backend.services import events as events_service
 
 
 @api_v1.route("/maps/places/nearby", methods=["GET"])
@@ -142,6 +144,51 @@ def verify_place() -> tuple[dict[str, Any], int]:
             status_code=404,
         )
     return {"data": asdict(place)}, 200
+
+
+@api_v1.route("/maps/tonight", methods=["GET"])
+def tonight_map() -> tuple[dict[str, Any], int]:
+    """Return today's pinnable DMV events for the Tonight map surface.
+
+    Query parameters:
+        genres: Optional comma-separated genre list used to filter the
+            feed. Genre matching is an overlap check in the repo — an
+            event matches when any of its genres appears in the filter.
+
+    Returns:
+        Tuple of the standard envelope and HTTP 200. See
+        :func:`backend.services.events.list_tonight_map_events` for
+        the row shape.
+    """
+    session = get_db()
+    genres = _parse_genres_filter(request.args.get("genres"))
+    envelope = events_service.list_tonight_map_events(session, genres=genres)
+    return envelope, 200
+
+
+def _parse_genres_filter(raw: str | None) -> list[str] | None:
+    """Split a comma-separated genres query arg into a non-empty list.
+
+    Args:
+        raw: Raw query-string value, e.g. ``"indie,punk"``, or None.
+
+    Returns:
+        A de-duplicated list of trimmed genre strings, or ``None`` when
+        the parameter is missing or contains only whitespace. Returning
+        ``None`` (rather than ``[]``) keeps the repo's "no filter"
+        behavior distinct from a legit empty filter.
+    """
+    if raw is None or raw.strip() == "":
+        return None
+    seen: set[str] = set()
+    result: list[str] = []
+    for part in raw.split(","):
+        trimmed = part.strip()
+        if not trimmed or trimmed in seen:
+            continue
+        seen.add(trimmed)
+        result.append(trimmed)
+    return result or None
 
 
 def _required_float(name: str) -> float:
