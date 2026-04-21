@@ -233,6 +233,36 @@ export interface MusicConnectionState {
   artists: SpotifyTopArtist[];
 }
 
+export type OnboardingStepName =
+  | "taste"
+  | "venues"
+  | "music_services"
+  | "passkey";
+
+export interface OnboardingState {
+  steps: Record<OnboardingStepName, boolean>;
+  completed: boolean;
+  skipped_entirely_at: string | null;
+  banner: {
+    visible: boolean;
+    dismissed_at: string | null;
+    browse_sessions_since_skipped: number;
+  };
+}
+
+export interface Genre {
+  slug: string;
+  label: string;
+  emoji: string;
+}
+
+export interface ArtistSummary {
+  id: string;
+  name: string;
+  genres: string[];
+  is_followed: boolean;
+}
+
 export interface MusicConnectionsResponse {
   connections: MusicConnectionState[];
 }
