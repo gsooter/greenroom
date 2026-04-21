@@ -18,6 +18,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 
 import { verifyMagicLink } from "@/lib/api/auth-identity";
 import { useAuth } from "@/lib/auth";
+import { resolvePostAuthDestination } from "@/lib/welcome-redirect";
 
 type Status = "pending" | "error";
 
@@ -66,7 +67,7 @@ function MagicLinkVerifyInner(): JSX.Element {
       try {
         const { token: jwt, refresh_token } = await verifyMagicLink(token);
         await login(jwt, refresh_token);
-        router.replace("/for-you");
+        router.replace(await resolvePostAuthDestination(jwt));
       } catch (err) {
         setStatus("error");
         setMessage(

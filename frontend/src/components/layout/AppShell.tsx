@@ -9,6 +9,7 @@
 
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import TopNav from "@/components/layout/TopNav";
+import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -18,6 +19,7 @@ export default function AppShell({ children }: AppShellProps) {
   return (
     <div className="flex min-h-screen flex-col">
       <TopNav />
+      <OnboardingBanner />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-6 sm:pb-10">
         {children}
       </main>
