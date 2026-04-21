@@ -168,11 +168,12 @@ def test_validated_updates_rejects_bad_digest_frequency(
 
 
 def test_validated_updates_cleans_genre_list(fake_session: MagicMock) -> None:
-    """Genre entries are trimmed and empty strings dropped."""
+    """Genre entries are trimmed, deduped, and validated against the canonical set."""
     updates = users_service._validated_updates(
-        fake_session, {"genre_preferences": ["  rock", "", "indie "]}
+        fake_session,
+        {"genre_preferences": ["  indie-rock", "", "jazz ", "indie-rock"]},
     )
-    assert updates == {"genre_preferences": ["rock", "indie"]}
+    assert updates == {"genre_preferences": ["indie-rock", "jazz"]}
 
 
 def test_validated_updates_rejects_non_string_genre(
@@ -181,7 +182,17 @@ def test_validated_updates_rejects_non_string_genre(
     """A non-string entry in ``genre_preferences`` is a ValidationError."""
     with pytest.raises(ValidationError):
         users_service._validated_updates(
-            fake_session, {"genre_preferences": ["rock", 7]}
+            fake_session, {"genre_preferences": ["indie-rock", 7]}
+        )
+
+
+def test_validated_updates_rejects_unknown_genre_slug(
+    fake_session: MagicMock,
+) -> None:
+    """Slugs outside the canonical catalog are rejected."""
+    with pytest.raises(ValidationError):
+        users_service._validated_updates(
+            fake_session, {"genre_preferences": ["country"]}
         )
 
 
@@ -190,7 +201,9 @@ def test_validated_updates_rejects_genre_not_a_list(
 ) -> None:
     """``genre_preferences`` must be a list (or null)."""
     with pytest.raises(ValidationError):
-        users_service._validated_updates(fake_session, {"genre_preferences": "rock"})
+        users_service._validated_updates(
+            fake_session, {"genre_preferences": "indie-rock"}
+        )
 
 
 def test_validated_updates_rejects_bad_notification_settings(

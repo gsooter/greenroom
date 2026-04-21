@@ -17,6 +17,7 @@ from backend.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from backend.core.genres import GENRE_SLUGS
 from backend.data.models.users import DigestFrequency, OAuthProvider, User
 from backend.data.repositories import cities as cities_repo
 from backend.data.repositories import users as users_repo
@@ -208,9 +209,11 @@ def _slim_artist_preview(artist: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": artist.get("id"),
         "name": name if isinstance(name, str) else "",
-        "genres": [g for g in genres if isinstance(g, str)]
-        if isinstance(genres, list)
-        else [],
+        "genres": (
+            [g for g in genres if isinstance(g, str)]
+            if isinstance(genres, list)
+            else []
+        ),
         "image_url": image_url if isinstance(image_url, str) else None,
     }
 
@@ -317,24 +320,40 @@ def _coerce_digest_frequency(value: Any) -> DigestFrequency:
 def _coerce_genre_list(value: Any) -> list[str] | None:
     """Coerce a ``genre_preferences`` patch value to ``list[str] | None``.
 
+    Each submitted slug is validated against
+    :data:`backend.core.genres.GENRE_SLUGS` — unknown slugs are rejected
+    so a client bug or stale UI build cannot write values the backend
+    won't recognize later.
+
     Args:
         value: Raw value from the request body.
 
     Returns:
-        A cleaned list of genre strings, or None if the caller cleared it.
+        A deduped list of known genre slugs, or None if the caller
+        cleared the field.
 
     Raises:
-        ValidationError: If ``value`` is not a list of strings or null.
+        ValidationError: If ``value`` is not a list of strings or any
+            submitted slug is not in the canonical set.
     """
     if value is None:
         return None
     if not isinstance(value, list):
         raise ValidationError("genre_preferences must be an array of strings or null.")
+    seen: set[str] = set()
     cleaned: list[str] = []
     for genre in value:
         if not isinstance(genre, str):
             raise ValidationError("genre_preferences must be an array of strings.")
         trimmed = genre.strip()
-        if trimmed:
-            cleaned.append(trimmed)
+        if not trimmed:
+            continue
+        if trimmed not in GENRE_SLUGS:
+            raise ValidationError(
+                f"genre_preferences contains unknown slug '{trimmed}'."
+            )
+        if trimmed in seen:
+            continue
+        seen.add(trimmed)
+        cleaned.append(trimmed)
     return cleaned

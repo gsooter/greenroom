@@ -36,6 +36,22 @@ def get_artist_by_id(session: Session, artist_id: uuid.UUID) -> Artist | None:
     return session.get(Artist, artist_id)
 
 
+def list_artists_by_ids(session: Session, artist_ids: list[uuid.UUID]) -> list[Artist]:
+    """Batch-fetch artists by a list of primary keys.
+
+    Args:
+        session: Active SQLAlchemy session.
+        artist_ids: UUIDs to load.
+
+    Returns:
+        Artist rows in no guaranteed order. Missing IDs are omitted.
+    """
+    if not artist_ids:
+        return []
+    stmt = select(Artist).where(Artist.id.in_(artist_ids))
+    return list(session.execute(stmt).scalars().all())
+
+
 def get_artist_by_normalized_name(
     session: Session, normalized_name: str
 ) -> Artist | None:
