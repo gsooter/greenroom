@@ -147,7 +147,8 @@ def main(argv: list[str] | None = None) -> int:
         "artist_backfill_complete",
         extra={
             "scanned": summary.scanned,
-            "created": summary.created,
+            # ``created_count`` avoids the reserved LogRecord.created key.
+            "created_count": summary.created,
             "already_present": summary.already_present,
             "skipped_blank": summary.skipped_blank,
             "dry_run": args.dry_run,

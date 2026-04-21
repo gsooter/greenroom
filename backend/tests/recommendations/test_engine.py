@@ -53,6 +53,7 @@ class _FakeEvent:
     )
     artists: list[str] | None = field(default_factory=list)
     spotify_artist_ids: list[str] | None = field(default_factory=list)
+    genres: list[str] | None = field(default_factory=list)
 
 
 @pytest.fixture
