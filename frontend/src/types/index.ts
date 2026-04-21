@@ -189,6 +189,40 @@ export interface SpotifyTopArtistsResponse {
   synced_at: string | null;
 }
 
+export type VenueCommentCategory =
+  | "vibes"
+  | "tickets"
+  | "safety"
+  | "access"
+  | "food_drink"
+  | "other";
+
+export type VenueCommentSort = "top" | "new";
+
+export interface VenueComment {
+  id: string;
+  venue_id: string;
+  user_id: string | null;
+  category: VenueCommentCategory;
+  body: string;
+  likes: number;
+  dislikes: number;
+  viewer_vote: -1 | 1 | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface VenueCommentsResponse {
+  data: VenueComment[];
+  meta: { count: number };
+}
+
+export interface VenueCommentVoteResult {
+  likes: number;
+  dislikes: number;
+  viewer_vote: -1 | 1 | null;
+}
+
 export type MusicProvider = "spotify" | "tidal" | "apple_music";
 
 export interface MusicConnectionState {

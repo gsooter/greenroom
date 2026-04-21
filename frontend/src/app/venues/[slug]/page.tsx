@@ -15,6 +15,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import RegionBadge from "@/components/ui/RegionBadge";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
 import VenueStructuredData from "@/components/seo/VenueStructuredData";
+import VenueComments from "@/components/venues/VenueComments";
 import { ApiNotFoundError } from "@/lib/api/client";
 import { getVenueBySlug } from "@/lib/api/venues";
 import {
@@ -157,6 +158,8 @@ export default async function VenueDetailPage({
             </div>
           )}
         </section>
+
+        <VenueComments slug={venue.slug} />
       </article>
     </>
   );
