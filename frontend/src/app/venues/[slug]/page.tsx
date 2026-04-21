@@ -19,12 +19,10 @@ import GetDirectionsButton from "@/components/venues/GetDirectionsButton";
 import NearbyPois from "@/components/venues/NearbyPois";
 import VenueComments from "@/components/venues/VenueComments";
 import VenueMapSnapshot from "@/components/venues/VenueMapSnapshot";
+import VenueTipsAnchor from "@/components/venues/VenueTipsAnchor";
 import { ApiNotFoundError } from "@/lib/api/client";
 import { getVenueBySlug } from "@/lib/api/venues";
-import {
-  absolutePageUrl,
-  buildVenueDetailMetadata,
-} from "@/lib/metadata";
+import { absolutePageUrl, buildVenueDetailMetadata } from "@/lib/metadata";
 
 export const revalidate = 600;
 
@@ -136,6 +134,7 @@ export default async function VenueDetailPage({
                 </a>
               ) : null}
             </div>
+            <VenueTipsAnchor slug={venue.slug} />
           </div>
         </div>
 

@@ -54,7 +54,9 @@ interface VenueCommentsProps {
   slug: string;
 }
 
-export default function VenueComments({ slug }: VenueCommentsProps): JSX.Element {
+export default function VenueComments({
+  slug,
+}: VenueCommentsProps): JSX.Element {
   const { token, isAuthenticated } = useAuth();
   const { show: showToast } = useToast();
   const [comments, setComments] = useState<VenueComment[]>([]);
@@ -138,8 +140,9 @@ export default function VenueComments({ slug }: VenueCommentsProps): JSX.Element
 
   return (
     <section
+      id="tips"
       aria-labelledby="venue-comments-heading"
-      className="flex flex-col gap-4"
+      className="flex scroll-mt-20 flex-col gap-4"
     >
       <div className="flex items-end justify-between gap-3">
         <h2
@@ -530,7 +533,8 @@ function formatTimestamp(iso: string): string {
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
-    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    year:
+      date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
   });
 }
 
