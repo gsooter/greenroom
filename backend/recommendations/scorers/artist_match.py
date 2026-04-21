@@ -11,21 +11,31 @@ performers don't appear in the user's listening history:
   Spotify IDs attached, which today is most of them — and it is the
   only way Tidal/Apple Music artists can match, since their provider
   ids do not overlap with Spotify's.
-* A genre-only overlap is a soft signal → score 0.5. Used when neither
-  an id nor a name match lands but the event's genre tags intersect the
-  genres of the user's top Spotify artists. This catches e.g. "you
-  listen to a bunch of indie artists and here's an indie show at
-  Black Cat by a band you haven't heard of."
+* A genre-only overlap is a soft signal → score 0.5. This tier fires
+  when neither an id nor a name match lands but the event's genre tags
+  intersect either:
 
-The per-event breakdown includes the artist name(s) or genre(s) that
-matched so the frontend can render "You listen to X" / "Because you
-like <genre>" reason chips without a second lookup.
+  - the genres of the user's top Spotify artists (derived from listening
+    history), or
+  - the substring aliases for the user's onboarding genre picks from
+    :data:`backend.core.genres.GENRE_SPOTIFY_ALIASES` (explicit taste
+    signal, available even before the user connects a music service).
+
+  Either path catches "you said you like indie rock / your top artists
+  are indie acts, and here's an indie show at Black Cat by a band you
+  haven't heard of."
+
+The per-event breakdown includes the artist name(s), genre(s), and
+preference slug(s) that matched so the frontend can render
+"You listen to X" / "Because you like Indie Rock" chips without a
+second lookup.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from backend.core.genres import GENRE_LABELS, GENRE_SPOTIFY_ALIASES
 from backend.core.text import normalize_artist_name as _normalize
 
 if TYPE_CHECKING:
@@ -62,6 +72,13 @@ class ArtistMatchScorer:
         come from multiple services (Spotify data is richest for the
         reason-chip UI).
 
+        Also captures the user's onboarding genre picks as a list of
+        ``(slug, label, aliases)`` tuples so the fallback tier can
+        surface matches for users who haven't connected a music service
+        yet — the taste step is the only strong signal we have about
+        them on day one, and dropping it on the floor leaves the
+        For-You page empty.
+
         Args:
             user: The user we're generating recommendations for.
         """
@@ -91,6 +108,16 @@ class ArtistMatchScorer:
                 for genre in artist.get("genres") or []:
                     if isinstance(genre, str) and genre.strip():
                         self._user_genres.add(genre.strip().lower())
+
+        self._preference_aliases: list[tuple[str, str, tuple[str, ...]]] = []
+        for slug in user.genre_preferences or []:
+            if not isinstance(slug, str):
+                continue
+            aliases = GENRE_SPOTIFY_ALIASES.get(slug)
+            label = GENRE_LABELS.get(slug)
+            if not aliases or not label:
+                continue
+            self._preference_aliases.append((slug, label, aliases))
 
     def score(self, event: Event) -> dict[str, Any] | None:
         """Score a single event for the bound user.
@@ -135,18 +162,59 @@ class ArtistMatchScorer:
                 "matched_artists": matched,
             }
 
+        cleaned_event_genres = [
+            genre.strip()
+            for genre in event.genres or []
+            if isinstance(genre, str) and genre.strip()
+        ]
         matched_genres = [
             genre
-            for genre in event.genres or []
-            if isinstance(genre, str)
-            and genre.strip()
-            and genre.strip().lower() in self._user_genres
+            for genre in cleaned_event_genres
+            if genre.lower() in self._user_genres
         ]
-        if matched_genres:
-            return {
+        matched_preferences = self._match_preference_aliases(cleaned_event_genres)
+
+        if matched_genres or matched_preferences:
+            payload: dict[str, Any] = {
                 "score": _GENRE_MATCH_SCORE,
                 "matched_artists": [],
-                "matched_genres": matched_genres,
             }
+            if matched_genres:
+                payload["matched_genres"] = matched_genres
+            if matched_preferences:
+                payload["matched_preferences"] = matched_preferences
+            return payload
 
         return None
+
+    def _match_preference_aliases(
+        self, cleaned_event_genres: list[str]
+    ) -> list[dict[str, str]]:
+        """Match the event's genre tags against the user's onboarding picks.
+
+        For each preference slug the user selected during onboarding, we
+        check whether any of its substring aliases appears inside any
+        of the event's genre tags (case-insensitive). At most one match
+        per slug is emitted so a user who picked both "alternative" and
+        "indie-rock" and an event tagged "indie rock" doesn't generate
+        two redundant chips for the same underlying signal.
+
+        Args:
+            cleaned_event_genres: Already-whitespace-stripped genre
+                strings from :attr:`Event.genres`.
+
+        Returns:
+            List of ``{slug, label, event_genre}`` dicts — one per
+            matched preference slug. Empty when the user selected no
+            genres or none of their slugs touch this event's tags.
+        """
+        if not self._preference_aliases or not cleaned_event_genres:
+            return []
+        lowered = [(genre, genre.lower()) for genre in cleaned_event_genres]
+        hits: list[dict[str, str]] = []
+        for slug, label, aliases in self._preference_aliases:
+            for original, lower in lowered:
+                if any(alias in lower for alias in aliases):
+                    hits.append({"slug": slug, "label": label, "event_genre": original})
+                    break
+        return hits

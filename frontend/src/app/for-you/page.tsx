@@ -32,27 +32,24 @@ export default function ForYouPage(): JSX.Element {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const load = useCallback(
-    async (activeToken: string): Promise<void> => {
-      setStatus("loading");
-      setErrorMessage(null);
-      try {
-        const page = await listRecommendations(activeToken, {
-          perPage: PER_PAGE,
-        });
-        setRecs(dedupeRecommendations(page.data));
-        setStatus("ready");
-      } catch (err) {
-        setStatus("error");
-        setErrorMessage(
-          err instanceof Error
-            ? err.message
-            : "We couldn't load your recommendations.",
-        );
-      }
-    },
-    [],
-  );
+  const load = useCallback(async (activeToken: string): Promise<void> => {
+    setStatus("loading");
+    setErrorMessage(null);
+    try {
+      const page = await listRecommendations(activeToken, {
+        perPage: PER_PAGE,
+      });
+      setRecs(dedupeRecommendations(page.data));
+      setStatus("ready");
+    } catch (err) {
+      setStatus("error");
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : "We couldn't load your recommendations.",
+      );
+    }
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -165,7 +162,12 @@ function ReasonChips({
   const unique: Recommendation["match_reasons"] = [];
   const seen = new Set<string>();
   for (const reason of reasons) {
-    const key = reason.artist_name.toLowerCase();
+    const key = (
+      reason.artist_name ??
+      reason.genre_slug ??
+      reason.genre ??
+      reason.label
+    ).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(reason);
@@ -176,7 +178,7 @@ function ReasonChips({
     <ul className="flex flex-wrap gap-2">
       {unique.map((reason) => (
         <li
-          key={`${reason.scorer}:${reason.artist_name}`}
+          key={`${reason.scorer}:${reason.kind}:${reason.label}`}
           className="rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent"
         >
           {reason.label}

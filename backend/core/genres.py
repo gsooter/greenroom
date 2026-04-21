@@ -46,3 +46,59 @@ GENRES: tuple[Genre, ...] = (
 )
 
 GENRE_SLUGS: frozenset[str] = frozenset(g["slug"] for g in GENRES)
+
+GENRE_LABELS: dict[str, str] = {g["slug"]: g["label"] for g in GENRES}
+
+# Substring aliases used to match a user's onboarding genre picks against
+# the free-form genre tags that scrapers and Spotify attach to events and
+# artists. Matching is case-insensitive substring containment — an event
+# genre of "indie rock/pop" matches the alias "indie rock", and "post-
+# punk" matches the alias "punk". Aliases are deliberately specific
+# multi-word phrases where possible so that a broad tag like "rock"
+# doesn't sweep every rock-leaning slug into every event.
+#
+# Keep this list conservative: false positives dilute the "Because you
+# like X" chip on the For-You page faster than missing an occasional
+# match does.
+GENRE_SPOTIFY_ALIASES: dict[str, tuple[str, ...]] = {
+    "indie-rock": (
+        "indie rock",
+        "indie pop",
+        "alternative rock",
+        "alt-rock",
+        "alt rock",
+        "shoegaze",
+    ),
+    "hip-hop": ("hip hop", "hip-hop", "rap", "trap", "drill"),
+    "electronic": (
+        "electronic",
+        "edm",
+        "house",
+        "techno",
+        "trance",
+        "dubstep",
+        "drum and bass",
+        "dnb",
+    ),
+    "jazz": ("jazz", "bebop", "swing", "fusion"),
+    "r-and-b": ("r&b", "rnb", "soul", "neo soul", "rhythm and blues"),
+    "folk": (
+        "folk",
+        "singer-songwriter",
+        "singer/songwriter",
+        "americana",
+        "bluegrass",
+    ),
+    "metal": ("metal", "thrash", "doom"),
+    "pop": ("pop",),
+    "funk-soul": ("funk", "soul", "disco"),
+    "classical": ("classical", "orchestral", "baroque", "chamber", "opera"),
+    "punk": ("punk", "emo", "post-punk", "hardcore"),
+    "alternative": (
+        "alternative",
+        "alt rock",
+        "alt-rock",
+        "new wave",
+        "post-rock",
+    ),
+}

@@ -20,6 +20,7 @@ class _FakeUser:
     spotify_recent_artists: list[dict[str, Any]] | None = None
     tidal_top_artists: list[dict[str, Any]] | None = None
     apple_top_artists: list[dict[str, Any]] | None = None
+    genre_preferences: list[str] | None = None
 
 
 @dataclass
@@ -100,7 +101,7 @@ def test_list_recommendations_lazy_generates_when_empty(
 def test_list_recommendations_skips_regen_when_no_cached_artists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """User without Spotify data gets an empty page, not a regen."""
+    """User with no scoreable signal at all gets an empty page, not a regen."""
     user = _FakeUser(spotify_top_artists=None)
     monkeypatch.setattr(
         recs_service.users_repo,
@@ -116,6 +117,43 @@ def test_list_recommendations_skips_regen_when_no_cached_artists(
     assert result == []
     assert total == 0
     generate_mock.assert_not_called()
+
+
+def test_list_recommendations_lazy_generates_for_genre_preferences_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Onboarding taste picks alone must trigger the lazy regen path.
+
+    A freshly onboarded user who hasn't connected a music service has
+    no cached artists but does have genre preferences, and the engine
+    can already score against those. If the service gate here stays
+    stricter than the engine's, For-You will render empty on first
+    paint even though /refresh would work — which is exactly the bug
+    that left the whole taste step feeling broken.
+    """
+    session = MagicMock()
+    user = _FakeUser(genre_preferences=["indie-rock"])
+    calls: list[str] = []
+
+    def fake_list(
+        _s: Any, _u: uuid.UUID, *, page: int, per_page: int
+    ) -> tuple[list[Any], int]:
+        calls.append("list")
+        return ([_FakeRec()], 1) if len(calls) > 1 else ([], 0)
+
+    def fake_generate(_s: Any, _u: _FakeUser) -> int:
+        calls.append("generate")
+        return 3
+
+    monkeypatch.setattr(recs_service.users_repo, "list_recommendations", fake_list)
+    monkeypatch.setattr(recs_service.rec_engine, "generate_for_user", fake_generate)
+    _, total = recs_service.list_recommendations_for_user(
+        session,
+        user,  # type: ignore[arg-type]
+    )
+    assert calls == ["list", "generate", "list"]
+    assert total == 1
+    session.commit.assert_called_once()
 
 
 def test_list_recommendations_lazy_generate_disabled(

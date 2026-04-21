@@ -77,11 +77,14 @@ def generate_for_user(
     responsible for ``session.commit()`` so this composes cleanly with
     both a Flask request and a Celery task.
 
+    The function short-circuits and writes zero rows only when the user
+    has neither cached music-service artists nor any onboarding genre
+    preferences to match on — without either signal the scorers have
+    nothing to compare against and every event would be a cold miss.
+
     Args:
         session: Active SQLAlchemy session.
-        user: The user to generate recommendations for. Must have
-            ``spotify_top_artists`` populated; otherwise the function
-            returns 0 without writing rows.
+        user: The user to generate recommendations for.
         limit: Maximum number of recommendation rows to persist.
 
     Returns:
@@ -94,6 +97,7 @@ def generate_for_user(
         or user.spotify_recent_artists
         or user.tidal_top_artists
         or user.apple_top_artists
+        or user.genre_preferences
     ):
         return 0
 
@@ -214,8 +218,12 @@ def _build_match_reasons(breakdown: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten per-scorer output into a single UI-facing reason list.
 
     The frontend renders one row of chips per card ("You listen to X",
-    "Similar to Y") regardless of which scorer produced them, so the
-    engine collapses the nested breakdown into a flat list up front.
+    "Because you like Indie Rock") regardless of which scorer produced
+    them, so the engine collapses the nested breakdown into a flat list
+    up front. Reasons are ordered strongest-first — artist matches,
+    then onboarding genre picks, then top-artist genre overlap — so the
+    UI can truncate to the first N chips without dropping the best
+    signal.
 
     Args:
         breakdown: The in-progress breakdown dict for one event.
@@ -226,17 +234,50 @@ def _build_match_reasons(breakdown: dict[str, Any]) -> list[dict[str, Any]]:
     """
     reasons: list[dict[str, Any]] = []
     artist_match = breakdown.get("artist_match")
-    if isinstance(artist_match, dict):
-        for matched in artist_match.get("matched_artists", []) or []:
-            name = matched.get("name")
-            if not name:
-                continue
-            reasons.append(
-                {
-                    "scorer": "artist_match",
-                    "kind": matched.get("match", "artist_name"),
-                    "label": f"You listen to {name}",
-                    "artist_name": name,
-                }
-            )
+    if not isinstance(artist_match, dict):
+        return reasons
+
+    for matched in artist_match.get("matched_artists", []) or []:
+        name = matched.get("name")
+        if not name:
+            continue
+        reasons.append(
+            {
+                "scorer": "artist_match",
+                "kind": matched.get("match", "artist_name"),
+                "label": f"You listen to {name}",
+                "artist_name": name,
+            }
+        )
+
+    seen_preference_slugs: set[str] = set()
+    for preference in artist_match.get("matched_preferences", []) or []:
+        if not isinstance(preference, dict):
+            continue
+        slug = preference.get("slug")
+        label = preference.get("label")
+        if not slug or not label or slug in seen_preference_slugs:
+            continue
+        seen_preference_slugs.add(slug)
+        reasons.append(
+            {
+                "scorer": "artist_match",
+                "kind": "genre_preference",
+                "label": f"Because you like {label}",
+                "genre_slug": slug,
+            }
+        )
+
+    for genre in artist_match.get("matched_genres", []) or []:
+        if not isinstance(genre, str) or not genre.strip():
+            continue
+        reasons.append(
+            {
+                "scorer": "artist_match",
+                "kind": "genre_overlap",
+                "label": f"Matches genre: {genre}",
+                "genre": genre,
+            }
+        )
+
     return reasons

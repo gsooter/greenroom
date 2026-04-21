@@ -39,6 +39,7 @@ class _FakeUser:
     spotify_recent_artists: list[dict[str, Any]] | None = None
     tidal_top_artists: list[dict[str, Any]] | None = None
     apple_top_artists: list[dict[str, Any]] | None = None
+    genre_preferences: list[str] | None = None
 
 
 @dataclass
@@ -80,7 +81,7 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
 def test_generate_returns_zero_when_user_has_no_top_artists(
     patched_engine: dict[str, MagicMock],
 ) -> None:
-    """A user without Spotify cache short-circuits before scoring."""
+    """A user with no music cache and no preferences short-circuits."""
     session = MagicMock()
     user = _FakeUser(spotify_top_artists=None)
     result = generate_for_user(session, user)  # type: ignore[arg-type]
@@ -88,6 +89,38 @@ def test_generate_returns_zero_when_user_has_no_top_artists(
     patched_engine["delete"].assert_called_once_with(session, user.id)
     patched_engine["create"].assert_not_called()
     patched_engine["fetch"].assert_not_called()
+
+
+def test_generate_runs_for_user_with_only_genre_preferences(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """Onboarding taste picks alone are enough to enter the scoring loop.
+
+    A freshly onboarded user who hasn't connected Spotify yet still has
+    genre slugs from Step 1 of /welcome. If the engine short-circuits
+    on them, For-You shows zero rows and the graduation moment from
+    onboarding feels broken.
+    """
+    session = MagicMock()
+    user = _FakeUser(genre_preferences=["indie-rock"])
+    event = _FakeEvent(artists=["Unknown"], genres=["indie rock"])
+    patched_engine["fetch"].return_value = [event]
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+
+    assert result == 1
+    call = patched_engine["create"].call_args_list[0]
+    assert call.kwargs["event_id"] == event.id
+    assert call.kwargs["score"] == 0.5
+    reasons = call.kwargs["score_breakdown"]["_match_reasons"]
+    assert reasons == [
+        {
+            "scorer": "artist_match",
+            "kind": "genre_preference",
+            "label": "Because you like Indie Rock",
+            "genre_slug": "indie-rock",
+        }
+    ]
 
 
 def test_generate_clears_prior_rows_before_writing(
@@ -260,6 +293,58 @@ def test_build_match_reasons_handles_missing_artist_match_block() -> None:
     """A breakdown with no artist_match key returns an empty list."""
     assert _build_match_reasons({}) == []
     assert _build_match_reasons({"artist_match": "not-a-dict"}) == []
+
+
+def test_build_match_reasons_surfaces_genre_preferences_and_overlap() -> None:
+    """Preference and top-artist-genre matches produce their own chips."""
+    breakdown = {
+        "artist_match": {
+            "score": 0.5,
+            "matched_artists": [],
+            "matched_preferences": [
+                {"slug": "indie-rock", "label": "Indie Rock", "event_genre": "indie"},
+                {"slug": "indie-rock", "label": "Indie Rock", "event_genre": "pop"},
+                {"slug": "punk", "label": "Punk", "event_genre": "post-punk"},
+            ],
+            "matched_genres": ["shoegaze"],
+        }
+    }
+    reasons = _build_match_reasons(breakdown)
+    assert reasons == [
+        {
+            "scorer": "artist_match",
+            "kind": "genre_preference",
+            "label": "Because you like Indie Rock",
+            "genre_slug": "indie-rock",
+        },
+        {
+            "scorer": "artist_match",
+            "kind": "genre_preference",
+            "label": "Because you like Punk",
+            "genre_slug": "punk",
+        },
+        {
+            "scorer": "artist_match",
+            "kind": "genre_overlap",
+            "label": "Matches genre: shoegaze",
+            "genre": "shoegaze",
+        },
+    ]
+
+
+def test_build_match_reasons_orders_artists_before_preferences() -> None:
+    """Artist chips come first so UI truncation keeps the strongest signal."""
+    breakdown = {
+        "artist_match": {
+            "score": 1.0,
+            "matched_artists": [{"name": "A", "match": "spotify_id"}],
+            "matched_preferences": [
+                {"slug": "punk", "label": "Punk", "event_genre": "punk"}
+            ],
+        }
+    }
+    reasons = _build_match_reasons(breakdown)
+    assert [r["kind"] for r in reasons] == ["spotify_id", "genre_preference"]
 
 
 def test_fetch_scoreable_events_queries_session(

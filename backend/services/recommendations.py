@@ -37,11 +37,18 @@ def list_recommendations_for_user(
 ) -> tuple[list[Recommendation], int]:
     """Return the user's recommendation page, generating on first read.
 
-    If the user has Spotify artists cached but no recommendations yet
-    (typical right after login), regenerate before reading so the
-    For-You page isn't empty on its first paint. Subsequent reads hit
-    the already-persisted list. Callers that want to force a refresh
-    should call :func:`refresh_recommendations_for_user` instead.
+    If the user has any scoreable signal (cached music-service artists
+    or onboarding genre picks) but no recommendations yet — typical
+    right after login or right after completing the taste step — we
+    regenerate before reading so the For-You page isn't empty on its
+    first paint. Subsequent reads hit the already-persisted list.
+    Callers that want to force a refresh should call
+    :func:`refresh_recommendations_for_user` instead.
+
+    Mirror this gate with the inner gate in
+    :func:`backend.recommendations.engine.generate_for_user`: if one
+    lifts, the other must too, otherwise the lazy path pays the cost
+    of running the engine only to have it short-circuit to zero rows.
 
     Args:
         session: Active SQLAlchemy session.
@@ -66,6 +73,7 @@ def list_recommendations_for_user(
             or user.spotify_recent_artists
             or user.tidal_top_artists
             or user.apple_top_artists
+            or user.genre_preferences
         )
     ):
         rec_engine.generate_for_user(session, user)

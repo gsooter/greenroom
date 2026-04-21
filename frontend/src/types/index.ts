@@ -71,12 +71,7 @@ export type EventStatus =
   | "cancelled"
   | "postponed";
 
-export type EventType =
-  | "concert"
-  | "festival"
-  | "dj_set"
-  | "tour"
-  | "other";
+export type EventType = "concert" | "festival" | "dj_set" | "tour" | "other";
 
 export interface EventSummary {
   id: string;
@@ -162,9 +157,16 @@ export interface SavedEvent {
 
 export interface RecommendationMatchReason {
   scorer: "artist_match" | (string & {});
-  kind: "spotify_id" | "artist_name" | (string & {});
+  kind:
+    | "spotify_id"
+    | "artist_name"
+    | "genre_preference"
+    | "genre_overlap"
+    | (string & {});
   label: string;
-  artist_name: string;
+  artist_name?: string;
+  genre_slug?: string;
+  genre?: string;
 }
 
 export interface Recommendation {
