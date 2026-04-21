@@ -16,6 +16,7 @@ import RegionBadge from "@/components/ui/RegionBadge";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
 import VenueStructuredData from "@/components/seo/VenueStructuredData";
 import GetDirectionsButton from "@/components/venues/GetDirectionsButton";
+import NearbyPois from "@/components/venues/NearbyPois";
 import VenueComments from "@/components/venues/VenueComments";
 import VenueMapSnapshot from "@/components/venues/VenueMapSnapshot";
 import { ApiNotFoundError } from "@/lib/api/client";
@@ -140,6 +141,10 @@ export default async function VenueDetailPage({
 
         {venue.latitude !== null && venue.longitude !== null ? (
           <VenueMapSnapshot slug={venue.slug} venueName={venue.name} />
+        ) : null}
+
+        {venue.latitude !== null && venue.longitude !== null ? (
+          <NearbyPois slug={venue.slug} venueName={venue.name} />
         ) : null}
 
         <section className="flex flex-col gap-4">

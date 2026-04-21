@@ -1,13 +1,12 @@
 """Apple Maps route handlers.
 
-Thin endpoints that delegate to :mod:`backend.services.apple_maps`. Two
-public routes today:
+Thin endpoints that delegate to :mod:`backend.services.apple_maps`:
 
 * ``GET /maps/token`` — mints a MapKit JS developer token.
 * ``GET /venues/<slug>/map-snapshot`` — returns a signed static-image
   URL for the venue, cached for 24 hours.
-
-A third endpoint (``/maps/nearby``) lands with Task #67.
+* ``GET /venues/<slug>/nearby`` — Apple Maps Server API ``searchNearby``
+  results within a 400 m radius, cached for 7 days.
 """
 
 from __future__ import annotations
@@ -104,6 +103,70 @@ def venue_map_snapshot(slug: str) -> tuple[dict[str, Any], int]:
         annotation_label=label,
     )
     return {"data": {"url": url, "width": width, "height": height}}, 200
+
+
+@api_v1.route("/venues/<slug>/nearby", methods=["GET"])
+@rate_limit("maps_nearby_ip", limit=60, window_seconds=60)
+def venue_nearby(slug: str) -> tuple[dict[str, Any], int]:
+    """Return restaurants, bars, and cafes within 400 m of a venue.
+
+    Delegates to :func:`backend.services.apple_maps.fetch_nearby_poi`,
+    which hits Apple's ``/v1/searchNearby`` endpoint and caches the
+    normalized result list in Redis for 7 days.
+
+    URL parameters:
+        slug: Venue slug.
+
+    Query parameters:
+        categories: Comma-separated Apple POI categories. Defaults to
+            ``"Restaurant,Bar,Cafe"``. Unknown categories pass through
+            to Apple unchanged.
+        limit: Max POIs to return (after distance sort). Defaults to 12.
+
+    Returns:
+        Tuple of JSON body and HTTP 200 status code. Body shape:
+        ``{"data": [{"name": str, "category": str, "address": str|None,
+        "latitude": float, "longitude": float, "distance_m": int}, ...]}``.
+
+    Raises:
+        AppError: ``VENUE_NOT_FOUND`` (404) if the slug doesn't exist
+            or the venue has no geocoded coordinates.
+        AppError: ``APPLE_MAPS_UNAVAILABLE`` (503) when credentials are
+            not configured; (502) when Apple's API returns an error.
+        RateLimitExceededError: If the caller exceeds the per-IP cap.
+    """
+    session = get_db()
+    venue = venues_repo.get_venue_by_slug(session, slug)
+    if venue is None or venue.latitude is None or venue.longitude is None:
+        raise AppError(
+            code=VENUE_NOT_FOUND,
+            message=f"No mappable venue with slug '{slug}'.",
+            status_code=404,
+        )
+
+    categories = _categories_arg()
+    limit = _int_arg("limit", default=12)
+    results = service.fetch_nearby_poi(
+        latitude=venue.latitude,
+        longitude=venue.longitude,
+        categories=categories,
+        limit=limit,
+    )
+    return {"data": results, "meta": {"count": len(results)}}, 200
+
+
+def _categories_arg() -> tuple[str, ...]:
+    """Parse the ``categories`` query arg into a tuple of Apple POI names.
+
+    Returns:
+        A non-empty tuple. When the arg is missing or empty, defaults
+        to ``("Restaurant", "Bar", "Cafe")``.
+    """
+    raw = request.args.get("categories")
+    if not raw:
+        return ("Restaurant", "Bar", "Cafe")
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    return tuple(parts) if parts else ("Restaurant", "Bar", "Cafe")
 
 
 def _int_arg(name: str, *, default: int) -> int:

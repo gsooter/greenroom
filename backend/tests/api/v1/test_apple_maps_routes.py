@@ -226,3 +226,132 @@ def test_map_snapshot_surfaces_unavailable_error(
     resp = client.get("/api/v1/venues/black-cat/map-snapshot")
     assert resp.status_code == 503
     assert resp.get_json()["error"]["code"] == APPLE_MAPS_UNAVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# GET /venues/<slug>/nearby
+# ---------------------------------------------------------------------------
+
+
+def test_nearby_returns_poi_list_with_count(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Happy path: route wraps the service result in ``{data, meta}``."""
+    captured: dict[str, Any] = {}
+
+    def _fake_fetch(**kwargs: Any) -> list[dict[str, Any]]:
+        captured.update(kwargs)
+        return [
+            {
+                "name": "Bar Pilar",
+                "category": "Bar",
+                "address": "1833 14th St NW",
+                "latitude": 38.9143,
+                "longitude": -77.0321,
+                "distance_m": 120,
+            },
+            {
+                "name": "Pearl Dive",
+                "category": "Restaurant",
+                "address": "1612 14th St NW",
+                "latitude": 38.912,
+                "longitude": -77.0321,
+                "distance_m": 210,
+            },
+        ]
+
+    monkeypatch.setattr(
+        route.venues_repo, "get_venue_by_slug", lambda _s, _slug: _StubVenue()
+    )
+    monkeypatch.setattr(route.service, "fetch_nearby_poi", _fake_fetch)
+
+    resp = client.get("/api/v1/venues/black-cat/nearby")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert len(body["data"]) == 2
+    assert body["meta"]["count"] == 2
+    assert captured["latitude"] == 38.9
+    assert captured["longitude"] == -77.0
+    assert captured["categories"] == ("Restaurant", "Bar", "Cafe")
+    assert captured["limit"] == 12
+
+
+def test_nearby_forwards_custom_categories_and_limit(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_fetch(**kwargs: Any) -> list[dict[str, Any]]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        route.venues_repo, "get_venue_by_slug", lambda _s, _slug: _StubVenue()
+    )
+    monkeypatch.setattr(route.service, "fetch_nearby_poi", _fake_fetch)
+
+    resp = client.get("/api/v1/venues/black-cat/nearby?categories=Cafe,Bakery&limit=5")
+    assert resp.status_code == 200
+    assert captured["categories"] == ("Cafe", "Bakery")
+    assert captured["limit"] == 5
+
+
+def test_nearby_empty_categories_arg_falls_back_to_default(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_fetch(**kwargs: Any) -> list[dict[str, Any]]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        route.venues_repo, "get_venue_by_slug", lambda _s, _slug: _StubVenue()
+    )
+    monkeypatch.setattr(route.service, "fetch_nearby_poi", _fake_fetch)
+
+    resp = client.get("/api/v1/venues/black-cat/nearby?categories=")
+    assert resp.status_code == 200
+    assert captured["categories"] == ("Restaurant", "Bar", "Cafe")
+
+
+def test_nearby_404_when_slug_missing(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(route.venues_repo, "get_venue_by_slug", lambda _s, _slug: None)
+    resp = client.get("/api/v1/venues/nope/nearby")
+    assert resp.status_code == 404
+    assert resp.get_json()["error"]["code"] == "VENUE_NOT_FOUND"
+
+
+def test_nearby_404_when_venue_has_no_coordinates(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        route.venues_repo,
+        "get_venue_by_slug",
+        lambda _s, _slug: _StubVenue(latitude=None, longitude=None),
+    )
+    resp = client.get("/api/v1/venues/black-cat/nearby")
+    assert resp.status_code == 404
+    assert resp.get_json()["error"]["code"] == "VENUE_NOT_FOUND"
+
+
+def test_nearby_surfaces_unavailable_error(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _raise(**_kwargs: Any) -> list[dict[str, Any]]:
+        raise AppError(
+            code=APPLE_MAPS_UNAVAILABLE,
+            message="Apple Maps is not configured on this environment.",
+            status_code=503,
+        )
+
+    monkeypatch.setattr(
+        route.venues_repo, "get_venue_by_slug", lambda _s, _slug: _StubVenue()
+    )
+    monkeypatch.setattr(route.service, "fetch_nearby_poi", _raise)
+
+    resp = client.get("/api/v1/venues/black-cat/nearby")
+    assert resp.status_code == 503
+    assert resp.get_json()["error"]["code"] == APPLE_MAPS_UNAVAILABLE

@@ -363,3 +363,239 @@ def test_build_snapshot_url_buckets_cache_by_zoom_and_size() -> None:
     )
     assert a != b
     assert len(fake.store) == 2
+
+
+# ---------------------------------------------------------------------------
+# fetch_nearby_poi
+# ---------------------------------------------------------------------------
+
+
+class _StubResponse:
+    """Minimal requests-like response double used by the HTTP stub."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        payload: Any = None,
+        json_error: Exception | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.ok = 200 <= status_code < 300
+        self._payload = payload
+        self._json_error = json_error
+
+    def json(self) -> Any:
+        if self._json_error is not None:
+            raise self._json_error
+        return self._payload
+
+
+class _StubHttp:
+    """Records every GET and replays canned responses in order."""
+
+    def __init__(self, responses: list[_StubResponse]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float = 5.0,
+    ) -> _StubResponse:
+        self.calls.append(
+            {"url": url, "params": params or {}, "headers": headers or {}}
+        )
+        return self.responses.pop(0)
+
+
+def _nearby_response() -> _StubResponse:
+    """Build a stubbed ``/searchNearby`` response with two sample POIs."""
+    return _StubResponse(
+        status_code=200,
+        payload={
+            "results": [
+                {
+                    "name": "Ben's Chili Bowl",
+                    "poiCategory": "Restaurant",
+                    "formattedAddressLines": ["1213 U St NW", "Washington, DC"],
+                    "coordinate": {"latitude": 38.9173, "longitude": -77.0287},
+                },
+                {
+                    "name": "The Gibson",
+                    "poiCategory": "Bar",
+                    "formattedAddressLines": ["2009 14th St NW"],
+                    "coordinate": {"latitude": 38.9195, "longitude": -77.0319},
+                },
+                # Too far — gets filtered by the 400m radius cap.
+                {
+                    "name": "Union Station",
+                    "poiCategory": "Landmark",
+                    "formattedAddressLines": ["50 Massachusetts Ave NE"],
+                    "coordinate": {"latitude": 38.8973, "longitude": -77.0063},
+                },
+            ]
+        },
+    )
+
+
+def _token_response() -> _StubResponse:
+    """Canned ``/v1/token`` exchange response."""
+    return _StubResponse(
+        status_code=200,
+        payload={"accessToken": "AT-123", "expiresInSeconds": 1800},
+    )
+
+
+def test_fetch_nearby_poi_exchanges_token_and_parses_results() -> None:
+    http = _StubHttp([_token_response(), _nearby_response()])
+    pois = service.fetch_nearby_poi(
+        latitude=38.917,
+        longitude=-77.032,
+        http_client=http,
+        redis_client=None,
+    )
+    assert [poi["name"] for poi in pois] == ["The Gibson", "Ben's Chili Bowl"]
+    # Distances ascend; the far-away POI was dropped.
+    distances = [poi["distance_m"] for poi in pois]
+    assert distances == sorted(distances)
+    assert all(d <= 400 for d in distances)
+    # First request minted the token; second passed the token as Bearer.
+    assert http.calls[0]["url"].endswith("/v1/token")
+    assert http.calls[1]["url"].endswith("/v1/searchNearby")
+    assert http.calls[1]["headers"]["Authorization"] == "Bearer AT-123"
+    # Categories flow through as a comma-joined include list.
+    assert http.calls[1]["params"]["includePoiCategories"] == "Restaurant,Bar,Cafe"
+
+
+def test_fetch_nearby_poi_caches_access_token_in_redis() -> None:
+    fake = _FakeRedis()
+    http = _StubHttp(
+        [
+            _token_response(),
+            _nearby_response(),
+            # Second call skips the /v1/token exchange — it's the
+            # searchNearby result for a different venue.
+            _nearby_response(),
+        ]
+    )
+    service.fetch_nearby_poi(
+        latitude=38.917,
+        longitude=-77.032,
+        http_client=http,
+        redis_client=fake,
+    )
+    service.fetch_nearby_poi(
+        latitude=38.920,
+        longitude=-77.040,
+        http_client=http,
+        redis_client=fake,
+    )
+    token_calls = [c for c in http.calls if c["url"].endswith("/v1/token")]
+    assert len(token_calls) == 1
+    # Access token cached with a safety-margin TTL.
+    assert fake.expirations["apple_maps:access_token:v1"] == 1800 - 60
+
+
+def test_fetch_nearby_poi_serves_cached_results_without_http() -> None:
+    fake = _FakeRedis()
+    http = _StubHttp([_token_response(), _nearby_response()])
+    first = service.fetch_nearby_poi(
+        latitude=38.917,
+        longitude=-77.032,
+        http_client=http,
+        redis_client=fake,
+    )
+    # Second call consumes no HTTP responses — cache hit.
+    second = service.fetch_nearby_poi(
+        latitude=38.917,
+        longitude=-77.032,
+        http_client=http,
+        redis_client=fake,
+    )
+    assert first == second
+    assert len(http.calls) == 2  # token + initial searchNearby only
+
+
+def test_fetch_nearby_poi_raises_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APPLE_MAPKIT_TEAM_ID", "")
+    with pytest.raises(AppError) as exc:
+        service.fetch_nearby_poi(latitude=0.0, longitude=0.0, redis_client=None)
+    assert exc.value.code == APPLE_MAPS_UNAVAILABLE
+    assert exc.value.status_code == 503
+
+
+def test_fetch_nearby_poi_raises_when_apple_returns_error() -> None:
+    http = _StubHttp([_token_response(), _StubResponse(status_code=500, payload={})])
+    with pytest.raises(AppError) as exc:
+        service.fetch_nearby_poi(
+            latitude=38.917,
+            longitude=-77.032,
+            http_client=http,
+            redis_client=None,
+        )
+    assert exc.value.status_code == 502
+    assert exc.value.code == APPLE_MAPS_UNAVAILABLE
+
+
+def test_fetch_nearby_poi_raises_when_token_exchange_rejected() -> None:
+    http = _StubHttp([_StubResponse(status_code=401, payload={})])
+    with pytest.raises(AppError) as exc:
+        service.fetch_nearby_poi(
+            latitude=38.917,
+            longitude=-77.032,
+            http_client=http,
+            redis_client=None,
+        )
+    assert exc.value.status_code == 502
+    assert exc.value.code == APPLE_MAPS_UNAVAILABLE
+
+
+def test_fetch_nearby_poi_honors_custom_categories_and_limit() -> None:
+    http = _StubHttp([_token_response(), _nearby_response()])
+    pois = service.fetch_nearby_poi(
+        latitude=38.917,
+        longitude=-77.032,
+        categories=("Bar",),
+        limit=1,
+        http_client=http,
+        redis_client=None,
+    )
+    # Limit trims the result list even when more items fit the radius.
+    assert len(pois) == 1
+    assert http.calls[1]["params"]["includePoiCategories"] == "Bar"
+
+
+def test_fetch_nearby_poi_drops_records_missing_coordinates() -> None:
+    http = _StubHttp(
+        [
+            _token_response(),
+            _StubResponse(
+                status_code=200,
+                payload={
+                    "results": [
+                        {"name": "No coords", "poiCategory": "Bar"},
+                        "not-a-dict",
+                        {
+                            "name": "OK",
+                            "poiCategory": "Bar",
+                            "coordinate": {"latitude": 38.917, "longitude": -77.032},
+                            "formattedAddressLines": ["14th & V"],
+                        },
+                    ]
+                },
+            ),
+        ]
+    )
+    pois = service.fetch_nearby_poi(
+        latitude=38.917,
+        longitude=-77.032,
+        http_client=http,
+        redis_client=None,
+    )
+    assert [poi["name"] for poi in pois] == ["OK"]
