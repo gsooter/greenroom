@@ -452,7 +452,6 @@ def _exchange_session(response: dict[str, Any]) -> dict[str, Any]:
         AppError: ``INVALID_TOKEN`` (502) if Knuckles returns a
             malformed response. ``INVALID_TOKEN`` (401) if the token's
             claims are missing fields Greenroom needs to provision.
-        UnauthorizedError: If the resolved user has been deactivated.
     """
     return _session_envelope(response, bump_last_login=True)
 
@@ -477,7 +476,6 @@ def _session_envelope(
         AppError: ``INVALID_TOKEN`` (502) if Knuckles returned no
             access token. ``INVALID_TOKEN`` (401) on claim-validation
             failures.
-        UnauthorizedError: If the resolved user has been deactivated.
     """
     data = _passthrough_data(response)
     access_token = data.get("access_token")
@@ -516,7 +514,6 @@ def _resolve_user(access_token: str) -> User:
     Raises:
         AppError: ``INVALID_TOKEN`` (401) if the token is unverifiable
             or the claim shape is unusable for provisioning.
-        UnauthorizedError: If the resolved user has been deactivated.
     """
     claims = verify_knuckles_token(access_token)
     sub = claims.get("sub")
@@ -563,5 +560,9 @@ def _resolve_user(access_token: str) -> User:
             display_name=display_name if isinstance(display_name, str) else None,
         )
     if not user.is_active:
-        raise UnauthorizedError(message="Authenticated user is deactivated.")
+        # A soft-deleted account that completes a fresh Knuckles exchange
+        # is a returning user — restore the row instead of dead-ending
+        # them on a message they can't act on. Deactivation is a pause,
+        # not a tombstone; every downstream row is still intact.
+        user = users_service.reactivate_user(session, user)
     return user

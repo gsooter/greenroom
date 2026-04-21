@@ -104,6 +104,25 @@ def deactivate_user(session: Session, user: User) -> User:
     return users_repo.update_user(session, user, is_active=False)
 
 
+def reactivate_user(session: Session, user: User) -> User:
+    """Flip ``is_active`` back to True for a returning soft-deleted user.
+
+    Called from the Knuckles session-exchange path when a previously
+    deactivated account signs in again. A fresh successful identity
+    exchange is unambiguous intent to return, and since deactivation
+    is a soft delete — no rows are purged — the account is restored
+    exactly as the user left it (saved events, follows, preferences).
+
+    Args:
+        session: Active SQLAlchemy session.
+        user: The :class:`User` row whose ``is_active`` flag is False.
+
+    Returns:
+        The :class:`User` instance with ``is_active=True``.
+    """
+    return users_repo.update_user(session, user, is_active=True)
+
+
 def serialize_user(user: User) -> dict[str, Any]:
     """Serialize a user for the authenticated ``/me`` endpoint.
 

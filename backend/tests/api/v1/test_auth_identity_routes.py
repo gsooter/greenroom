@@ -454,17 +454,31 @@ def test_exchange_session_rejects_when_email_belongs_to_different_id(
     assert exc_info.value.status_code == 409
 
 
-def test_exchange_session_rejects_deactivated_user(
+def test_exchange_session_reactivates_deactivated_user(
     monkeypatch: pytest.MonkeyPatch,
     knuckles_test_key: rsa.RSAPrivateKey,
     stub_knuckles_jwks: str,
 ) -> None:
-    """A token for a deactivated Greenroom user is refused."""
+    """A soft-deleted user who signs back in is reactivated in place.
+
+    Deactivation is a pause, not a tombstone — saved events, follows,
+    and preferences are all still intact. A fresh Knuckles exchange is
+    unambiguous intent to return, so the row flips back to active and
+    the envelope lands as a normal sign-in instead of a dead-end error.
+    """
     user_id = uuid.uuid4()
     deactivated = User(id=user_id, email="p@example.test", is_active=False)
+    reactivate_mock = MagicMock(
+        side_effect=lambda _s, user: setattr(user, "is_active", True) or user
+    )
     monkeypatch.setattr(route, "get_db", lambda: MagicMock())
     monkeypatch.setattr(
         route.users_repo, "get_user_by_id", lambda _s, _uid: deactivated
+    )
+    monkeypatch.setattr(route.users_service, "reactivate_user", reactivate_mock)
+    monkeypatch.setattr(route.users_repo, "update_last_login", MagicMock())
+    monkeypatch.setattr(
+        route.users_service, "serialize_user", lambda u: {"id": str(u.id)}
     )
 
     token = mint_knuckles_token(
@@ -473,10 +487,11 @@ def test_exchange_session_rejects_deactivated_user(
         user_id=user_id,
         email="p@example.test",
     )
-    from backend.core.exceptions import UnauthorizedError
+    envelope = route._exchange_session({"data": {"access_token": token}})
 
-    with pytest.raises(UnauthorizedError):
-        route._exchange_session({"data": {"access_token": token}})
+    reactivate_mock.assert_called_once()
+    assert envelope["user"] == {"id": str(user_id)}
+    assert deactivated.is_active is True
 
 
 def test_exchange_session_rejects_missing_access_token() -> None:
