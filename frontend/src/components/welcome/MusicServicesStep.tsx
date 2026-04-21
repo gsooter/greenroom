@@ -22,6 +22,8 @@ import { getMyMusicConnections } from "@/lib/api/me";
 import { authorizeAppleMusic } from "@/lib/musickit";
 import type { MusicConnectionState, MusicProvider } from "@/types";
 
+import { StepIntro } from "./StepIntro";
+
 const RETURN_KEY = "greenroom.welcome_return";
 
 interface Props {
@@ -135,6 +137,12 @@ export function MusicServicesStep({
           actually listen to. You can always do this later from Settings.
         </p>
       </header>
+
+      <StepIntro>
+        This is the magic-dust step. Connect Spotify, Tidal, or Apple Music and
+        every DC show featuring an artist you listen to gets a &ldquo;You listen
+        to X&rdquo; chip — so nothing slips past you.
+      </StepIntro>
 
       <div className="space-y-3">
         <ProviderRow

@@ -15,6 +15,8 @@ import { followVenuesBulk } from "@/lib/api/follows";
 import { listVenues } from "@/lib/api/venues";
 import type { VenueSummary } from "@/types";
 
+import { StepIntro } from "./StepIntro";
+
 interface Props {
   token: string;
   onDone: () => void;
@@ -84,6 +86,11 @@ export function VenuesStep({ token, onDone, onSkip }: Props): JSX.Element {
           when they announce a show that fits your taste.
         </p>
       </header>
+
+      <StepIntro>
+        Follow your regulars and we&apos;ll float their new shows to the top of
+        your feed, plus flag announcements before they sell out.
+      </StepIntro>
 
       {loading ? (
         <p className="text-sm text-text-secondary">Loading DMV venues…</p>

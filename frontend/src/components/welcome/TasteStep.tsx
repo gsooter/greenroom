@@ -17,6 +17,8 @@ import { updateMe } from "@/lib/api/me";
 import { listGenres } from "@/lib/api/onboarding";
 import type { ArtistSummary, Genre, User } from "@/types";
 
+import { StepIntro } from "./StepIntro";
+
 interface Props {
   token: string;
   user: User;
@@ -158,6 +160,11 @@ export function TasteStep({
           both to surface shows we think you&apos;ll like.
         </p>
       </header>
+
+      <StepIntro>
+        Tell us what you love and we&apos;ll build your feed from day one — no
+        music service needed. You can always add more later from Settings.
+      </StepIntro>
 
       <section>
         <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">

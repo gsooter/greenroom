@@ -19,6 +19,8 @@ import {
   isWebAuthnSupported,
 } from "@/lib/webauthn";
 
+import { StepIntro } from "./StepIntro";
+
 interface Props {
   token: string;
   onDone: () => void;
@@ -76,9 +78,15 @@ export function PasskeyStep({ token, onDone, onSkip }: Props): JSX.Element {
         </h2>
         <p className="mt-1 text-sm text-text-secondary">
           Passkeys replace email links with a Face ID or Touch ID prompt next
-          time. They live on your device and never leave it.
+          time you sign in.
         </p>
       </header>
+
+      <StepIntro>
+        Skip the email-link dance next time. A passkey turns sign-in into a Face
+        ID or Touch ID tap — and it syncs to your other devices through your
+        password manager (iCloud Keychain, Google, 1Password), never through us.
+      </StepIntro>
 
       {!supported ? (
         <div className="rounded-lg border border-border bg-bg-white p-4 text-sm text-text-secondary">
