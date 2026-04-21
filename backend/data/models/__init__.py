@@ -22,6 +22,11 @@ from backend.data.models.users import (
     SavedEvent,
     User,
 )
+from backend.data.models.venue_comments import (
+    VenueComment,
+    VenueCommentCategory,
+    VenueCommentVote,
+)
 from backend.data.models.venues import Venue
 
 __all__ = [
@@ -41,4 +46,7 @@ __all__ = [
     "TicketPricingSnapshot",
     "User",
     "Venue",
+    "VenueComment",
+    "VenueCommentCategory",
+    "VenueCommentVote",
 ]
