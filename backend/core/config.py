@@ -49,6 +49,18 @@ class Settings(BaseSettings):
         apple_music_bundle_id: MusicKit identifier registered in the
             Apple developer portal (e.g. ``music.com.greenroom.web``).
             Required on every developer-token mint.
+        apple_mapkit_team_id: Apple Developer Program team ID used for
+            MapKit JS and Maps Snapshot tokens. Usually the same value
+            as ``apple_music_team_id`` (the team ID is account-wide),
+            but exposed separately so the MapKit credentials can roll
+            independently of MusicKit.
+        apple_mapkit_key_id: MapKit JS Services key identifier — the
+            10-char ID printed next to the downloaded .p8 file in the
+            Apple developer portal.
+        apple_mapkit_private_key: PEM contents of the MapKit .p8 key.
+            Prefer this over ``apple_mapkit_private_key_path`` in prod.
+        apple_mapkit_private_key_path: Optional filesystem path to the
+            MapKit .p8, used only when the inline value is empty.
         knuckles_url: Base URL of the Knuckles identity service (no
             trailing slash). Empty during local dev when the legacy
             HS256 path is still in use.
@@ -123,6 +135,12 @@ class Settings(BaseSettings):
     apple_music_private_key: str = ""
     apple_music_private_key_path: str = ""
     apple_music_bundle_id: str = ""
+
+    # Apple Maps (MapKit JS + Snapshot + Maps Server API)
+    apple_mapkit_team_id: str = ""
+    apple_mapkit_key_id: str = ""
+    apple_mapkit_private_key: str = ""
+    apple_mapkit_private_key_path: str = ""
 
     # Knuckles identity service
     knuckles_url: str = ""

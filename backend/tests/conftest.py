@@ -44,6 +44,7 @@ def _generate_test_es256_pem() -> str:
 
 
 APPLE_MUSIC_TEST_PEM = _generate_test_es256_pem()
+APPLE_MAPKIT_TEST_PEM = _generate_test_es256_pem()
 
 # ---------------------------------------------------------------------------
 # Environment stubs for Pydantic Settings
@@ -86,6 +87,9 @@ _TEST_ENV = {
     "APPLE_MUSIC_KEY_ID": "TESTKEY001",
     "APPLE_MUSIC_PRIVATE_KEY": APPLE_MUSIC_TEST_PEM,
     "APPLE_MUSIC_BUNDLE_ID": "media.greenroom.test.web",
+    "APPLE_MAPKIT_TEAM_ID": "TESTTEAM01",
+    "APPLE_MAPKIT_KEY_ID": "TESTMAP001",
+    "APPLE_MAPKIT_PRIVATE_KEY": APPLE_MAPKIT_TEST_PEM,
 }
 
 for _key, _value in _TEST_ENV.items():
