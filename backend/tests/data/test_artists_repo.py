@@ -95,3 +95,33 @@ def test_mark_artist_enriched_records_a_null_match(session: Session) -> None:
     assert updated.spotify_id is None
     assert updated.genres == []
     assert updated.spotify_enriched_at is not None
+
+
+def test_search_artists_substring_match_is_case_and_diacritic_insensitive(
+    session: Session,
+) -> None:
+    artists_repo.upsert_artist_by_name(session, "Beyoncé")
+    artists_repo.upsert_artist_by_name(session, "Phoebe Bridgers")
+    artists_repo.upsert_artist_by_name(session, "Beach House")
+
+    results = artists_repo.search_artists(session, query="BEYONCE")
+    assert [a.name for a in results] == ["Beyoncé"]
+
+    results = artists_repo.search_artists(session, query="beach")
+    assert [a.name for a in results] == ["Beach House"]
+
+
+def test_search_artists_empty_and_whitespace_query_returns_empty(
+    session: Session,
+) -> None:
+    artists_repo.upsert_artist_by_name(session, "Anyone")
+    assert artists_repo.search_artists(session, query="") == []
+    assert artists_repo.search_artists(session, query="   ") == []
+
+
+def test_search_artists_honors_limit(session: Session) -> None:
+    for i in range(5):
+        artists_repo.upsert_artist_by_name(session, f"Match {i}")
+
+    results = artists_repo.search_artists(session, query="match", limit=3)
+    assert len(results) == 3

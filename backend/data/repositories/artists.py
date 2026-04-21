@@ -107,6 +107,39 @@ def list_unenriched_artists(session: Session, *, limit: int) -> list[Artist]:
     return list(session.execute(stmt).scalars().all())
 
 
+def search_artists(session: Session, *, query: str, limit: int = 10) -> list[Artist]:
+    """Return artists whose normalized name matches the given query.
+
+    Uses case-insensitive substring match against ``normalized_name``.
+    The query is normalized with the same primitive the ingestion path
+    uses, so "beyoncé" and "BEYONCE" both find the same rows.
+
+    Args:
+        session: Active SQLAlchemy session.
+        query: Raw search string from the user. Trimmed and normalized
+            before use.
+        limit: Maximum number of rows to return.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows. Empty list for an empty or
+        whitespace-only query.
+    """
+    stripped = query.strip()
+    if not stripped:
+        return []
+    normalized = normalize_artist_name(stripped)
+    if not normalized:
+        return []
+    pattern = f"%{normalized}%"
+    stmt = (
+        select(Artist)
+        .where(Artist.normalized_name.ilike(pattern))
+        .order_by(Artist.name.asc())
+        .limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
 def mark_artist_enriched(
     session: Session,
     artist: Artist,

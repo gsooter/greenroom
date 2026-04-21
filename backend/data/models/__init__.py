@@ -13,6 +13,11 @@ from backend.data.models.events import (
     TicketPricingSnapshot,
 )
 from backend.data.models.notifications import EmailDigestLog
+from backend.data.models.onboarding import (
+    FollowedArtist,
+    FollowedVenue,
+    UserOnboardingState,
+)
 from backend.data.models.recommendations import Recommendation
 from backend.data.models.scraper import ScraperRun, ScraperRunStatus
 from backend.data.models.users import (
@@ -37,6 +42,8 @@ __all__ = [
     "Event",
     "EventStatus",
     "EventType",
+    "FollowedArtist",
+    "FollowedVenue",
     "MusicServiceConnection",
     "OAuthProvider",
     "Recommendation",
@@ -45,6 +52,7 @@ __all__ = [
     "ScraperRunStatus",
     "TicketPricingSnapshot",
     "User",
+    "UserOnboardingState",
     "Venue",
     "VenueComment",
     "VenueCommentCategory",

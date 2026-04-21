@@ -82,6 +82,15 @@ Pick what fits the sprint budget; these are ranked by user impact.
    on `/maps/token` incurs a synchronous JWT sign on the request
    path. A Celery beat task that refreshes the cache 2 min before
    expiry would put the hot path at zero signing work.
+6. **Spotify-backed artist search on `/welcome` Step 1.** v1 ships with
+   a DB-only substring match (see `search_artists` in
+   `backend/data/repositories/artists.py`), which only returns acts we
+   already ingested from scraped shows. That is thin on first-time
+   lookup for long-tail artists. Expansion: if the local result set is
+   small, fan out to Spotify's search endpoint, upsert returning hits
+   through `upsert_artist_by_name`, and merge. Gate on login-session
+   Spotify tokens vs. a client-credentials app token — the
+   client-credentials path is simpler and is the one to ship.
 
 ## Risks and unknowns
 
