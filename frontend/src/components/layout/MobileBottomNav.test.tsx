@@ -1,17 +1,20 @@
 /**
  * Tests for MobileBottomNav.
  *
- * The trailing nav slot reflects auth state: anon visitors (including
- * the brief window before the auth context has hydrated) see "Sign in",
- * while signed-in visitors see "For you". Home / Events / Venues are
- * always present so the bar never shrinks below four columns.
+ * The trailing slots reflect auth state: anonymous visitors see a
+ * fourth "Sign in" tab, signed-in visitors see "For you" plus a "Me"
+ * tab that opens a popover with Saved, Settings, and Sign out. Home /
+ * Events / Venues always render regardless of auth state.
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import type { User } from "@/types";
+
+const mockReplace = vi.fn();
+const mockLogout = vi.fn();
 
 interface MockAuthState {
   user: User | null;
@@ -29,6 +32,7 @@ let mockAuth: MockAuthState = {
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/",
+  useRouter: () => ({ replace: mockReplace, push: vi.fn(), back: vi.fn() }),
 }));
 
 vi.mock("next/link", () => ({
@@ -48,7 +52,7 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({
-  useAuth: () => mockAuth,
+  useAuth: () => ({ ...mockAuth, logout: mockLogout }),
 }));
 
 function userFixture(): User {
@@ -62,6 +66,8 @@ function userFixture(): User {
 
 describe("MobileBottomNav", () => {
   beforeEach(() => {
+    mockReplace.mockReset();
+    mockLogout.mockReset();
     mockAuth = {
       user: null,
       isAuthenticated: false,
@@ -82,9 +88,10 @@ describe("MobileBottomNav", () => {
     const link = screen.getByRole("link", { name: "Sign in" });
     expect(link.getAttribute("href")).toBe("/login");
     expect(screen.queryByRole("link", { name: "For you" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Account menu" })).toBeNull();
   });
 
-  it("shows For you to signed-in visitors instead of Sign in", () => {
+  it("shows For you and a Me tab to signed-in visitors", () => {
     mockAuth = {
       user: userFixture(),
       isAuthenticated: true,
@@ -94,10 +101,49 @@ describe("MobileBottomNav", () => {
     render(<MobileBottomNav />);
     const link = screen.getByRole("link", { name: "For you" });
     expect(link.getAttribute("href")).toBe("/for-you");
+    expect(
+      screen.getByRole("button", { name: "Account menu" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
   });
 
-  it("defaults to Sign in while auth state is still hydrating", () => {
+  it("opens the Me menu with Saved, Settings, and Sign out", () => {
+    mockAuth = {
+      user: userFixture(),
+      isAuthenticated: true,
+      isLoading: false,
+      token: "tok",
+    };
+    render(<MobileBottomNav />);
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+    expect(screen.getByRole("menuitem", { name: "Saved" })).toHaveAttribute(
+      "href",
+      "/saved",
+    );
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "Sign out" }),
+    ).toBeInTheDocument();
+  });
+
+  it("signs the user out when the Sign out menu item is clicked", () => {
+    mockAuth = {
+      user: userFixture(),
+      isAuthenticated: true,
+      isLoading: false,
+      token: "tok",
+    };
+    render(<MobileBottomNav />);
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    expect(mockLogout).toHaveBeenCalledOnce();
+    expect(mockReplace).toHaveBeenCalledWith("/");
+  });
+
+  it("renders no auth-specific tab while the auth state is still hydrating", () => {
     mockAuth = {
       user: null,
       isAuthenticated: false,
@@ -105,6 +151,8 @@ describe("MobileBottomNav", () => {
       token: null,
     };
     render(<MobileBottomNav />);
-    expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "For you" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Account menu" })).toBeNull();
   });
 });
