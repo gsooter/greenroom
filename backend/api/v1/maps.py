@@ -1,0 +1,213 @@
+"""Map-discovery route handlers — non-venue-scoped endpoints.
+
+The venue-scoped Apple Maps surface (``/maps/token``,
+``/venues/<slug>/map-snapshot``, ``/venues/<slug>/nearby``) lives in
+:mod:`backend.api.v1.apple_maps`. This module hosts the lookups that
+power map-side flows where the input is a free-text query or an
+arbitrary lat/lng:
+
+* ``GET /maps/places/nearby`` — POI search around a coordinate.
+  Used by the community recommendation form's "what place are you
+  recommending?" autocomplete.
+* ``GET /maps/places/verify`` — geocode-and-similarity gate that
+  every community recommendation must clear before it can be saved.
+  Returns 404 ``PLACE_NOT_VERIFIED`` when Apple has no match or the
+  similarity floor rejects the only candidate.
+
+Both endpoints serialize :class:`backend.services.apple_maps.NearbyPlace`
+and :class:`backend.services.apple_maps.VerifiedPlace` directly into
+the JSON envelope so the frontend gets a stable typed payload.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from typing import Any
+
+from flask import request
+
+from backend.api.v1 import api_v1
+from backend.core.exceptions import PLACE_NOT_VERIFIED, AppError
+from backend.core.rate_limit import rate_limit
+from backend.services import apple_maps as service
+
+
+@api_v1.route("/maps/places/nearby", methods=["GET"])
+@rate_limit("maps_places_nearby_ip", limit=60, window_seconds=60)
+def nearby_places() -> tuple[dict[str, Any], int]:
+    """Return Apple Maps POIs near a lat/lng.
+
+    Query parameters:
+        lat: WGS-84 latitude. Required.
+        lng: WGS-84 longitude. Required.
+        categories: Comma-separated Apple POI categories. Defaults to
+            ``"Restaurant,Bar,Cafe"``.
+        radius_m: Hard distance cap in meters. Default 400, clamped to
+            [50, 5000].
+        limit: Max results returned after distance sort. Default 12,
+            clamped to [1, 30].
+
+    Returns:
+        Tuple of JSON body and HTTP 200. Body shape:
+        ``{"data": [NearbyPlace, ...], "meta": {"count": int}}``.
+
+    Raises:
+        AppError: ``INVALID_REQUEST`` (400) when lat/lng can't be
+            parsed; ``APPLE_MAPS_UNAVAILABLE`` (503/502) propagated
+            from the service layer.
+        RateLimitExceededError: When the per-IP cap is exceeded.
+    """
+    latitude = _required_float("lat")
+    longitude = _required_float("lng")
+    categories = _parse_categories(default=("Restaurant", "Bar", "Cafe"))
+    radius_m = _clamped_int("radius_m", default=400, low=50, high=5000)
+    limit = _clamped_int("limit", default=12, low=1, high=30)
+
+    places = service.search_nearby_places(
+        latitude=latitude,
+        longitude=longitude,
+        categories=categories,
+        radius_m=radius_m,
+        limit=limit,
+    )
+    return (
+        {
+            "data": [asdict(place) for place in places],
+            "meta": {"count": len(places)},
+        },
+        200,
+    )
+
+
+@api_v1.route("/maps/places/verify", methods=["GET"])
+@rate_limit("maps_places_verify_ip", limit=30, window_seconds=60)
+def verify_place() -> tuple[dict[str, Any], int]:
+    """Round-trip a user-typed query through Apple's geocoder.
+
+    Used by the community recommendation form to gate every submission:
+    a recommendation cannot be saved until its place name (or address)
+    matches a real Apple Maps place above the 0.80 similarity floor.
+
+    Query parameters:
+        by: ``"name"`` or ``"address"``. Selects which verifier runs
+            and which fields are required.
+        q: User-supplied query string. Required, non-empty after trim.
+        lat: Search-anchor latitude. Required when ``by=name``.
+        lng: Search-anchor longitude. Required when ``by=name``.
+
+    Returns:
+        Tuple of JSON body and HTTP 200 with a serialized
+        :class:`backend.services.apple_maps.VerifiedPlace`.
+
+    Raises:
+        AppError: ``INVALID_REQUEST`` (400) for any malformed input;
+            ``PLACE_NOT_VERIFIED`` (404) when Apple has no match or the
+            similarity gate rejects the candidate;
+            ``APPLE_MAPS_UNAVAILABLE`` (503/502) propagated from the
+            service layer.
+        RateLimitExceededError: When the per-IP cap is exceeded. The
+            verify endpoint is the spam-prone one (free-text input,
+            real cost per call) so its cap is half the nearby cap.
+    """
+    by = (request.args.get("by") or "").strip().lower()
+    if by not in {"name", "address"}:
+        raise AppError(
+            code="INVALID_REQUEST",
+            message="`by` must be 'name' or 'address'.",
+            status_code=400,
+        )
+    query = (request.args.get("q") or "").strip()
+    if not query:
+        raise AppError(
+            code="INVALID_REQUEST",
+            message="`q` is required and must not be blank.",
+            status_code=400,
+        )
+
+    if by == "name":
+        latitude = _required_float("lat")
+        longitude = _required_float("lng")
+        place = service.verify_place_by_name(
+            query=query,
+            near_latitude=latitude,
+            near_longitude=longitude,
+        )
+    else:
+        place = service.verify_place_by_address(query=query)
+
+    if place is None:
+        raise AppError(
+            code=PLACE_NOT_VERIFIED,
+            message="Apple Maps did not return a confident match.",
+            status_code=404,
+        )
+    return {"data": asdict(place)}, 200
+
+
+def _required_float(name: str) -> float:
+    """Parse a required float query arg or raise ``INVALID_REQUEST``.
+
+    Args:
+        name: Query parameter name.
+
+    Returns:
+        The parsed float.
+
+    Raises:
+        AppError: ``INVALID_REQUEST`` (400) when the parameter is
+            missing, blank, or not a valid float.
+    """
+    raw = request.args.get(name)
+    if raw is None or raw == "":
+        raise AppError(
+            code="INVALID_REQUEST",
+            message=f"`{name}` is required.",
+            status_code=400,
+        )
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise AppError(
+            code="INVALID_REQUEST",
+            message=f"`{name}` must be a number.",
+            status_code=400,
+        ) from exc
+
+
+def _clamped_int(name: str, *, default: int, low: int, high: int) -> int:
+    """Parse an int query arg, falling back to ``default`` and clamping.
+
+    Args:
+        name: Query parameter name.
+        default: Value to use when the arg is missing or unparseable.
+        low: Inclusive lower bound after parsing.
+        high: Inclusive upper bound after parsing.
+
+    Returns:
+        The parsed int, clamped to ``[low, high]``.
+    """
+    raw = request.args.get(name)
+    if raw is None or raw == "":
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = default
+    return max(low, min(high, value))
+
+
+def _parse_categories(*, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Parse the ``categories`` query arg into a tuple of Apple POI names.
+
+    Args:
+        default: Tuple to return when the arg is missing or empty.
+
+    Returns:
+        A non-empty tuple of category strings.
+    """
+    raw = request.args.get("categories")
+    if not raw:
+        return default
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    return tuple(parts) if parts else default
