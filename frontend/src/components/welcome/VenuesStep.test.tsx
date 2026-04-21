@@ -50,17 +50,13 @@ describe("VenuesStep", () => {
 
   it("bulk-follows the selected venues then advances on Continue", async () => {
     const onDone = vi.fn();
-    render(
-      <VenuesStep
-        token="jwt"
-        onDone={onDone}
-        onSkip={vi.fn()}
-      />,
-    );
+    render(<VenuesStep token="jwt" onDone={onDone} onSkip={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /Black Cat/i }));
     fireEvent.click(screen.getByRole("button", { name: /9:30 Club/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Follow 2 & continue/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Follow 2 & continue/i }),
+    );
 
     await waitFor(() =>
       expect(followVenuesBulk).toHaveBeenCalledWith("jwt", ["v-1", "v-2"]),
@@ -70,13 +66,7 @@ describe("VenuesStep", () => {
 
   it("advances without a bulk write if the user selected nothing", async () => {
     const onDone = vi.fn();
-    render(
-      <VenuesStep
-        token="jwt"
-        onDone={onDone}
-        onSkip={vi.fn()}
-      />,
-    );
+    render(<VenuesStep token="jwt" onDone={onDone} onSkip={vi.fn()} />);
     await screen.findByRole("button", { name: /Black Cat/i });
 
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
@@ -86,13 +76,7 @@ describe("VenuesStep", () => {
 
   it("invokes onSkip without any write", async () => {
     const onSkip = vi.fn();
-    render(
-      <VenuesStep
-        token="jwt"
-        onDone={vi.fn()}
-        onSkip={onSkip}
-      />,
-    );
+    render(<VenuesStep token="jwt" onDone={vi.fn()} onSkip={onSkip} />);
     await screen.findByRole("button", { name: /Black Cat/i });
 
     fireEvent.click(screen.getByRole("button", { name: /Skip for now/i }));

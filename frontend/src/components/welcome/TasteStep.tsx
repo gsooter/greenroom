@@ -12,11 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiRequestError } from "@/lib/api/client";
-import {
-  followArtist,
-  searchArtists,
-  unfollowArtist,
-} from "@/lib/api/follows";
+import { followArtist, searchArtists, unfollowArtist } from "@/lib/api/follows";
 import { updateMe } from "@/lib/api/me";
 import { listGenres } from "@/lib/api/onboarding";
 import type { ArtistSummary, Genre, User } from "@/types";

@@ -82,8 +82,8 @@ export function PasskeyStep({ token, onDone, onSkip }: Props): JSX.Element {
 
       {!supported ? (
         <div className="rounded-lg border border-border bg-bg-white p-4 text-sm text-text-secondary">
-          This browser doesn&apos;t support passkeys. You can add one later
-          from Settings once you&apos;re on a supported browser.
+          This browser doesn&apos;t support passkeys. You can add one later from
+          Settings once you&apos;re on a supported browser.
         </div>
       ) : (
         <div className="rounded-lg border border-border bg-bg-white p-4">

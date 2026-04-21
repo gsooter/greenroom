@@ -123,7 +123,9 @@ describe("OnboardingBanner", () => {
     getOnboardingState.mockResolvedValue(makeState());
     const { unmount } = render(<OnboardingBanner />);
     await screen.findByRole("link", { name: /finish setup/i });
-    await waitFor(() => expect(incrementBrowseSessions).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(incrementBrowseSessions).toHaveBeenCalledTimes(1),
+    );
 
     // A second mount in the same session should NOT bump again.
     unmount();
@@ -140,9 +142,7 @@ describe("OnboardingBanner", () => {
     });
     fireEvent.click(btn);
     await waitFor(() =>
-      expect(
-        screen.queryByRole("link", { name: /finish setup/i }),
-      ).toBeNull(),
+      expect(screen.queryByRole("link", { name: /finish setup/i })).toBeNull(),
     );
     expect(dismissOnboardingBanner).toHaveBeenCalledWith("jwt");
   });

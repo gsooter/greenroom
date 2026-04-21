@@ -6,12 +6,7 @@
  */
 
 import { fetchJson } from "@/lib/api/client";
-import type {
-  ArtistSummary,
-  Envelope,
-  Paginated,
-  VenueSummary,
-} from "@/types";
+import type { ArtistSummary, Envelope, Paginated, VenueSummary } from "@/types";
 
 export async function searchArtists(
   token: string,
@@ -50,10 +45,10 @@ export async function listFollowedArtists(
   page: number = 1,
   perPage: number = 50,
 ): Promise<Paginated<ArtistSummary>> {
-  return fetchJson<Paginated<ArtistSummary>>(
-    "/api/v1/me/followed-artists",
-    { token, query: { page, per_page: perPage } },
-  );
+  return fetchJson<Paginated<ArtistSummary>>("/api/v1/me/followed-artists", {
+    token,
+    query: { page, per_page: perPage },
+  });
 }
 
 export async function followVenuesBulk(
@@ -82,8 +77,8 @@ export async function listFollowedVenues(
   page: number = 1,
   perPage: number = 50,
 ): Promise<Paginated<VenueSummary>> {
-  return fetchJson<Paginated<VenueSummary>>(
-    "/api/v1/me/followed-venues",
-    { token, query: { page, per_page: perPage } },
-  );
+  return fetchJson<Paginated<VenueSummary>>("/api/v1/me/followed-venues", {
+    token,
+    query: { page, per_page: perPage },
+  });
 }

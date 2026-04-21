@@ -72,7 +72,9 @@ describe("consumeWelcomeReturnFlag", () => {
   it("returns the stored value and clears it", () => {
     window.sessionStorage.setItem("greenroom.welcome_return", "music_services");
     expect(consumeWelcomeReturnFlag()).toBe("music_services");
-    expect(window.sessionStorage.getItem("greenroom.welcome_return")).toBeNull();
+    expect(
+      window.sessionStorage.getItem("greenroom.welcome_return"),
+    ).toBeNull();
   });
 
   it("returns null when no flag is set", () => {

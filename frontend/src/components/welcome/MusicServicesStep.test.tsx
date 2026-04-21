@@ -59,12 +59,15 @@ describe("MusicServicesStep", () => {
     const originalLocation = window.location;
     Object.defineProperty(window, "location", {
       configurable: true,
-      value: { ...originalLocation, set href(v: string) { hrefSetter(v); } },
+      value: {
+        ...originalLocation,
+        set href(v: string) {
+          hrefSetter(v);
+        },
+      },
     });
 
-    render(
-      <MusicServicesStep token="jwt" onDone={vi.fn()} onSkip={vi.fn()} />,
-    );
+    render(<MusicServicesStep token="jwt" onDone={vi.fn()} onSkip={vi.fn()} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Connect Spotify/i }),
     );
@@ -89,9 +92,7 @@ describe("MusicServicesStep", () => {
     authorizeAppleMusic.mockResolvedValue("music-user-token");
     connectAppleMusic.mockResolvedValue(undefined);
 
-    render(
-      <MusicServicesStep token="jwt" onDone={vi.fn()} onSkip={vi.fn()} />,
-    );
+    render(<MusicServicesStep token="jwt" onDone={vi.fn()} onSkip={vi.fn()} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Connect Apple Music/i }),
     );
@@ -100,14 +101,14 @@ describe("MusicServicesStep", () => {
       expect(connectAppleMusic).toHaveBeenCalledWith("jwt", "music-user-token"),
     );
     // Apple Music stays on-page — no welcome-return marker needed.
-    expect(window.sessionStorage.getItem("greenroom.welcome_return")).toBeNull();
+    expect(
+      window.sessionStorage.getItem("greenroom.welcome_return"),
+    ).toBeNull();
   });
 
   it("invokes onSkip without any write", async () => {
     const onSkip = vi.fn();
-    render(
-      <MusicServicesStep token="jwt" onDone={vi.fn()} onSkip={onSkip} />,
-    );
+    render(<MusicServicesStep token="jwt" onDone={vi.fn()} onSkip={onSkip} />);
 
     fireEvent.click(
       await screen.findByRole("button", { name: /Skip for now/i }),
@@ -119,9 +120,7 @@ describe("MusicServicesStep", () => {
 
   it("advances via onDone with Continue without any connection", async () => {
     const onDone = vi.fn();
-    render(
-      <MusicServicesStep token="jwt" onDone={onDone} onSkip={vi.fn()} />,
-    );
+    render(<MusicServicesStep token="jwt" onDone={onDone} onSkip={vi.fn()} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Continue without/i }),
     );

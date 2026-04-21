@@ -78,7 +78,9 @@ describe("TasteStep", () => {
         onRefreshUser={vi.fn().mockResolvedValue(undefined)}
       />,
     );
-    expect(await screen.findByRole("button", { name: /Indie Rock/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Indie Rock/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Jazz/i })).toBeInTheDocument();
   });
 
@@ -119,7 +121,9 @@ describe("TasteStep", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: /Skip for now/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Skip for now/i }),
+    );
     expect(onSkip).toHaveBeenCalled();
     expect(updateMe).not.toHaveBeenCalled();
   });
@@ -135,8 +139,6 @@ describe("TasteStep", () => {
       />,
     );
     await screen.findByRole("button", { name: /Indie Rock/i });
-    expect(
-      screen.getByRole("button", { name: /^Continue$/ }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Continue$/ })).toBeDisabled();
   });
 });

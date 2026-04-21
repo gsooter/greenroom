@@ -68,9 +68,8 @@ export async function incrementBrowseSessions(
 export async function listGenres(
   revalidateSeconds: number = 60 * 60,
 ): Promise<Genre[]> {
-  const res = await fetchJson<Envelope<{ genres: Genre[] }>>(
-    "/api/v1/genres",
-    { revalidateSeconds },
-  );
+  const res = await fetchJson<Envelope<{ genres: Genre[] }>>("/api/v1/genres", {
+    revalidateSeconds,
+  });
   return res.data.genres;
 }
