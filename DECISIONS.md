@@ -1450,6 +1450,111 @@ Places for the DC bar/restaurant density Greenroom cares about.
 
 ---
 
+### 038 — Onboarding "Skip" Marks a Step Complete Without Writing Any Data
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** Every step of the /welcome flow has a "Skip for now"
+affordance. Skipping stamps the step's `*_completed_at` timestamp on
+`user_onboarding_state` but writes none of the step's data. A separate
+`skipped_entirely_at` timestamp is set only when the user skips *every*
+step in one go — that is the sole trigger for the browse-page
+"Finish setup" nudge banner.
+
+**Rationale:**
+The onboarding funnel has to serve two populations simultaneously: new
+signups walking the wizard end-to-end, and users who bailed on a
+previous /welcome attempt. If "skip" left the per-step `completed_at`
+null, the gate in the auth callback (`resolvePostAuthDestination`)
+would re-trap returning users on the same step they skipped earlier,
+which is the opposite of the intent — the skip button is a promise
+that the user will not be re-prompted until they go dig up the nudge
+themselves. Marking each step complete on skip also keeps the progress
+chips meaningful: a completed row with no preferences set is still a
+completed row, and the dashboard can distinguish "genuinely empty"
+from "never onboarded" via `skipped_entirely_at`.
+
+**Alternatives considered:**
+- **Leave completed_at null on skip; track a separate skipped_at
+  column per step.** Rejected — doubles the schema surface and still
+  needs identical "has the user seen this step" logic in two places.
+  The gate only cares whether the user has seen the step, not *how*
+  they got past it.
+- **Treat skip as a write of `{}` (empty genres, zero venues).**
+  Rejected — cannot distinguish "I dislike everything" from "I haven't
+  told you yet," which matters for the recommendation engine's cold-
+  start behavior. Scorers need to know whether to fall back on popular
+  shows or trust the user's explicit negative signal.
+- **Hard-block the user from browsing until they finish.** Rejected —
+  hostile to the "tourist checking what's on tonight in DC" use case,
+  which is a first-class browse experience per the SSR-for-SEO rule.
+
+**Consequences:**
+- The banner cannot be driven off per-step timestamps; it's derived
+  from `skipped_entirely_at` plus `browse_sessions_since_skipped`
+  plus `banner_dismissed_at`. Any one of those being non-null / >=7
+  hides it.
+- Auto-hide fires at 7 browse sessions (`_BANNER_AUTO_HIDE_AFTER_SESSIONS`
+  in `backend/services/onboarding.py`). Sessions are bumped client-side
+  at most once per `sessionStorage` window via the
+  `greenroom.browse_session_bumped` key — route transitions inside the
+  same tab should not count as new sessions.
+- The Spotify/Tidal OAuth round-trip breaks the in-page wizard state,
+  so `MusicServicesStep` stashes `greenroom.welcome_return=music_services`
+  before redirect and the shared callback helper reads it through
+  `consumeWelcomeReturnFlag` (one-shot — read-and-delete). Without that
+  marker, a user who connected Spotify from /welcome would land on
+  /for-you with an un-acknowledged passkey step.
+- Passkey auto-completes when the user signed in via passkey — holding
+  the key is proof the step is already done, so `/login` stamps
+  `passkey_completed_at` on successful passkey auth.
+
+---
+
+### 039 — Genre Catalog Is Canonical on the Backend, Fetched Over HTTP
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** The 12-entry genre catalog lives in `backend/core/genres.py`
+as a `GENRE_SLUGS: frozenset[str]` plus a TypedDict list of labels and
+emojis. The /welcome UI reads it from the public `GET /api/v1/genres`
+endpoint rather than hardcoding the list in the Next.js bundle. The
+`_coerce_genre_list` validator on PATCH /me rejects any slug not in
+the frozenset.
+
+**Rationale:**
+Genres are reference data that shows up in three places: the
+onboarding TasteStep tiles, the event-card filter chips, and the
+recommendation engine's genre-overlap fallback (Decision 035). If the
+list diverges across those three, the engine silently drops matches,
+and the UI displays chips that the API would reject. Single source of
+truth on the backend keeps `PATCH /me` validation, the scorer's genre
+universe, and the wizard tiles in lockstep — adding a genre is a
+single-file change.
+
+**Alternatives considered:**
+- **Hardcode the list in TypeScript.** Rejected — the frontend is a
+  client-side recommendation consumer, not the authority on what
+  counts as a genre. Backend changes would silently desync the UI.
+- **Store genres as a table, seed via migration.** Overkill for 12
+  rows that change maybe once a year, and it introduces a DB
+  round-trip on a page that's already fetching three other state
+  slices. Revisit if the catalog exceeds ~50 entries or becomes
+  user-curatable.
+
+**Consequences:**
+- `listGenres()` does not require auth and is cacheable at the CDN.
+- The scorer in `recommendations/scorers/` imports `GENRE_SLUGS`
+  directly; never hardcode a genre string in a scorer.
+- Renaming a slug is a breaking change — existing `genre_preferences`
+  arrays would point to a now-invalid slug. If the catalog ever needs
+  to rename, write a migration that rewrites stored preferences in
+  the same commit.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
