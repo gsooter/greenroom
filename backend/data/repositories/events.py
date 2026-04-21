@@ -74,6 +74,41 @@ def get_event_by_external_id(
     return session.execute(stmt).scalar_one_or_none()
 
 
+def list_all_event_artist_names(session: Session) -> list[str]:
+    """Return every distinct artist name that appears on any event row.
+
+    Used by the one-time artist enrichment backfill (see
+    :mod:`backend.scripts.backfill_artist_enrichment`) to seed the
+    ``artists`` table from events that were scraped before the ingestion
+    path learned to upsert artists. Reads only the ``artists`` column so
+    we never pull a full Event row into memory for this scan.
+
+    Args:
+        session: Active SQLAlchemy session.
+
+    Returns:
+        A list of raw artist name strings in no particular order,
+        preserving the original casing from whichever event first
+        surfaced each name. The caller is responsible for collapsing
+        duplicates via :func:`backend.core.text.normalize_artist_name`.
+    """
+    stmt = select(Event.artists).where(Event.artists.is_not(None))
+    seen: set[str] = set()
+    names: list[str] = []
+    for (raw_list,) in session.execute(stmt).all():
+        if not raw_list:
+            continue
+        for name in raw_list:
+            if not isinstance(name, str):
+                continue
+            stripped = name.strip()
+            if not stripped or stripped in seen:
+                continue
+            seen.add(stripped)
+            names.append(stripped)
+    return names
+
+
 def list_events(
     session: Session,
     *,

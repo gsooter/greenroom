@@ -304,3 +304,47 @@ def test_ticket_snapshot_crud(
     assert latest.id == s2.id
 
     assert events_repo.get_latest_ticket_snapshot(session, event.id, "missing") is None
+
+
+# ---------------------------------------------------------------------------
+# list_all_event_artist_names
+# ---------------------------------------------------------------------------
+
+
+def test_list_all_event_artist_names_flattens_and_dedupes(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """Every distinct raw name across every event row appears once."""
+    city = make_city()
+    venue = make_venue(city=city)
+    event_a = make_event(venue=venue, slug="a")
+    event_a.artists = ["Phoebe Bridgers", "Julien Baker"]
+    event_b = make_event(venue=venue, slug="b")
+    # Duplicate of A's Phoebe keeps the first-seen row's casing.
+    event_b.artists = ["Phoebe Bridgers", "Lucy Dacus"]
+    event_c = make_event(venue=venue, slug="c")
+    event_c.artists = []  # empty arrays don't blow up the scan
+    session.flush()
+
+    names = events_repo.list_all_event_artist_names(session)
+    assert set(names) == {"Phoebe Bridgers", "Julien Baker", "Lucy Dacus"}
+
+
+def test_list_all_event_artist_names_skips_blank_and_non_string(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """Whitespace-only names drop, non-string payload fragments drop too."""
+    city = make_city()
+    venue = make_venue(city=city)
+    event = make_event(venue=venue)
+    event.artists = ["  Phoebe  ", "", "   "]
+    session.flush()
+
+    names = events_repo.list_all_event_artist_names(session)
+    assert names == ["Phoebe"]
