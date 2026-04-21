@@ -22,4 +22,5 @@ from backend.api.v1 import events as _events  # noqa: F401, E402
 from backend.api.v1 import recommendations as _recommendations  # noqa: F401, E402
 from backend.api.v1 import saved_events as _saved_events  # noqa: F401, E402
 from backend.api.v1 import users as _users  # noqa: F401, E402
+from backend.api.v1 import venue_comments as _venue_comments  # noqa: F401, E402
 from backend.api.v1 import venues as _venues  # noqa: F401, E402
