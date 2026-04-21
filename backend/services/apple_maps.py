@@ -34,7 +34,9 @@ import base64
 import hashlib
 import json
 import math
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import quote, urlencode
@@ -985,10 +987,355 @@ def _write_cache(
         logger.warning("apple_maps_cache_write_failed")
 
 
+# ---------------------------------------------------------------------------
+# Typed public surface — used by the map flows and recommendation verifier
+# ---------------------------------------------------------------------------
+
+
+# Apple's geocode endpoint shares the access-token lifecycle with searchNearby,
+# but it is not a per-venue lookup — it's "did this user-typed string resolve
+# to a real Apple Maps place?" Verification is the gate for community-submitted
+# recommendations: a name-only or address-only submission must round-trip
+# through Apple before it can land in the database. The 0.80 cutoff is the
+# sweet spot from prior experience — high enough to keep "Black Cat" and
+# "Black Cat DC" together, low enough to reject "Black Cat" → "Howard Theatre".
+_GEOCODE_PATH = "/v1/geocode"
+_PLACE_VERIFY_SIMILARITY_FLOOR = 0.80
+
+
+@dataclass(frozen=True, slots=True)
+class NearbyPlace:
+    """A normalized POI returned from Apple Maps' searchNearby surface.
+
+    Attributes:
+        name: Place display name (e.g. ``"The Gibson"``).
+        category: Apple POI category string (e.g. ``"Bar"``); may be
+            None when the upstream record had no category.
+        address: Comma-joined formatted address lines, or None.
+        latitude: WGS-84 latitude in degrees.
+        longitude: WGS-84 longitude in degrees.
+        distance_m: Great-circle distance from the search anchor in
+            meters, rounded to the nearest integer.
+    """
+
+    name: str
+    category: str | None
+    address: str | None
+    latitude: float
+    longitude: float
+    distance_m: int
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedPlace:
+    """An Apple Maps place that passed the verification similarity gate.
+
+    Attributes:
+        name: Canonical place name as Apple returned it.
+        address: Canonical formatted address, or None if Apple omitted it.
+        latitude: WGS-84 latitude.
+        longitude: WGS-84 longitude.
+        similarity: SequenceMatcher ratio against the caller's query,
+            in ``[0.0, 1.0]``. Always ``>= 0.80`` for a returned value.
+    """
+
+    name: str
+    address: str | None
+    latitude: float
+    longitude: float
+    similarity: float
+
+
+def search_nearby_places(
+    *,
+    latitude: float,
+    longitude: float,
+    categories: tuple[str, ...] = _DEFAULT_POI_CATEGORIES,
+    radius_m: int = _NEARBY_RADIUS_M_DEFAULT,
+    limit: int = _NEARBY_LIMIT_DEFAULT,
+    http_client: _HttpClient | None = None,
+    redis_client: redis.Redis | None = None,
+) -> list[NearbyPlace]:
+    """Typed wrapper around :func:`fetch_nearby_poi` for map-side callers.
+
+    Used by the map flows and the community recommendation form to
+    autocomplete a "what place are you recommending" picker. Returns
+    a list of :class:`NearbyPlace` instead of raw dicts so callers
+    don't have to re-validate the shape.
+
+    Args:
+        latitude: Search anchor latitude.
+        longitude: Search anchor longitude.
+        categories: Apple POI category filter, default restaurant /
+            bar / cafe.
+        radius_m: Hard distance cap in meters.
+        limit: Max results after sorting by ascending distance.
+        http_client: Optional requests-compatible client (tests only).
+        redis_client: Optional Redis client; same semantics as
+            :func:`fetch_nearby_poi`.
+
+    Returns:
+        List of :class:`NearbyPlace`, ascending by distance.
+
+    Raises:
+        AppError: ``APPLE_MAPS_UNAVAILABLE`` (503) when credentials are
+            missing or (502) when Apple's API errors out.
+    """
+    raw = fetch_nearby_poi(
+        latitude=latitude,
+        longitude=longitude,
+        categories=categories,
+        radius_m=radius_m,
+        limit=limit,
+        http_client=http_client,
+        redis_client=redis_client,
+    )
+    return [
+        NearbyPlace(
+            name=str(item.get("name") or ""),
+            category=item.get("category"),
+            address=item.get("address"),
+            latitude=float(item["latitude"]),
+            longitude=float(item["longitude"]),
+            distance_m=int(item["distance_m"]),
+        )
+        for item in raw
+        if item.get("name")
+    ]
+
+
+def verify_place_by_name(
+    *,
+    query: str,
+    near_latitude: float,
+    near_longitude: float,
+    http_client: _HttpClient | None = None,
+    redis_client: redis.Redis | None = None,
+) -> VerifiedPlace | None:
+    """Resolve a user-typed place name through Apple's geocoder.
+
+    Used as the first verification step for community recommendations:
+    a recommendation is only allowed to land in the database after the
+    submitter's free-text "place name" passes a geocode lookup with
+    sufficient similarity to the canonical Apple result. Returns None
+    when Apple has no result or when the similarity gate rejects the
+    only candidate.
+
+    Args:
+        query: User-supplied place name.
+        near_latitude: Anchor latitude that biases the search toward
+            the city the recommendation is being submitted in.
+        near_longitude: Anchor longitude.
+        http_client: Optional requests-compatible client.
+        redis_client: Optional Redis client (used only for the access-
+            token cache; geocode results are not cached because the
+            input is unbounded user text).
+
+    Returns:
+        A :class:`VerifiedPlace` with the canonical Apple data when
+        the gate passes; ``None`` otherwise.
+
+    Raises:
+        AppError: ``APPLE_MAPS_UNAVAILABLE`` (503) when credentials are
+            missing or (502) when Apple's API errors out.
+    """
+    return _geocode_with_similarity(
+        query=query,
+        compare_to=lambda result: str(result.get("name") or ""),
+        params={
+            "q": query,
+            "searchLocation": f"{near_latitude:.6f},{near_longitude:.6f}",
+            "lang": "en-US",
+        },
+        http_client=http_client,
+        redis_client=redis_client,
+    )
+
+
+def verify_place_by_address(
+    *,
+    query: str,
+    http_client: _HttpClient | None = None,
+    redis_client: redis.Redis | None = None,
+) -> VerifiedPlace | None:
+    """Resolve a user-typed street address through Apple's geocoder.
+
+    Same gate as :func:`verify_place_by_name`, but compares the user's
+    input against the canonical formatted address Apple returns instead
+    of the place name. Used when the recommendation surface lets the
+    user type "1811 14th St NW" instead of a place name.
+
+    Args:
+        query: User-supplied address string.
+        http_client: Optional requests-compatible client.
+        redis_client: Optional Redis client.
+
+    Returns:
+        A :class:`VerifiedPlace` when the address matches Apple's
+        canonical result above the similarity floor; ``None`` otherwise.
+
+    Raises:
+        AppError: ``APPLE_MAPS_UNAVAILABLE`` (503) when credentials are
+            missing or (502) when Apple's API errors out.
+    """
+    return _geocode_with_similarity(
+        query=query,
+        compare_to=lambda result: _formatted_address(result) or "",
+        params={"q": query, "lang": "en-US"},
+        http_client=http_client,
+        redis_client=redis_client,
+    )
+
+
+def _geocode_with_similarity(
+    *,
+    query: str,
+    compare_to: Any,
+    params: dict[str, str],
+    http_client: _HttpClient | None,
+    redis_client: redis.Redis | None,
+) -> VerifiedPlace | None:
+    """Call Apple's ``/v1/geocode`` and apply the similarity gate.
+
+    Args:
+        query: User-supplied query, used for the similarity comparison.
+        compare_to: Callable that extracts the comparison string out of
+            an Apple result dict (the place name or formatted address).
+        params: Query parameters to send to ``/v1/geocode``.
+        http_client: Optional requests-compatible client.
+        redis_client: Optional Redis client.
+
+    Returns:
+        A :class:`VerifiedPlace` when the top result clears the floor;
+        ``None`` when Apple returned nothing or the score is too low.
+
+    Raises:
+        AppError: ``APPLE_MAPS_UNAVAILABLE`` (503) when credentials are
+            missing or (502) when Apple's API errors out.
+    """
+    if not is_configured():
+        raise AppError(
+            code=APPLE_MAPS_UNAVAILABLE,
+            message="Apple Maps is not configured on this environment.",
+            status_code=503,
+        )
+    cleaned = (query or "").strip()
+    if not cleaned:
+        return None
+
+    client = redis_client if redis_client is not None else _get_redis()
+    http = http_client if http_client is not None else requests
+    access_token = _get_access_token(client=client, http_client=http)
+
+    try:
+        response = http.get(
+            f"{_MAPS_API_HOST}{_GEOCODE_PATH}",
+            params=params,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=_NEARBY_HTTP_TIMEOUT,
+        )
+    except Exception as exc:
+        logger.warning("apple_maps_geocode_http_failed")
+        raise AppError(
+            code=APPLE_MAPS_UNAVAILABLE,
+            message="Apple Maps geocode request failed.",
+            status_code=502,
+        ) from exc
+
+    if not _is_ok(response):
+        status = getattr(response, "status_code", "?")
+        raise AppError(
+            code=APPLE_MAPS_UNAVAILABLE,
+            message=f"Apple Maps /geocode returned {status}.",
+            status_code=502,
+        )
+
+    try:
+        body = response.json()
+    except Exception as exc:
+        raise AppError(
+            code=APPLE_MAPS_UNAVAILABLE,
+            message="Apple Maps /geocode returned a non-JSON body.",
+            status_code=502,
+        ) from exc
+
+    results = body.get("results") or []
+    if not isinstance(results, list) or not results:
+        return None
+    top = results[0]
+    if not isinstance(top, dict):
+        return None
+    coord = top.get("coordinate") or {}
+    plat = coord.get("latitude")
+    plng = coord.get("longitude")
+    if not isinstance(plat, (int, float)) or not isinstance(plng, (int, float)):
+        return None
+    canonical = compare_to(top)
+    similarity = _normalized_similarity(cleaned, canonical)
+    if similarity < _PLACE_VERIFY_SIMILARITY_FLOOR:
+        return None
+    return VerifiedPlace(
+        name=str(top.get("name") or canonical),
+        address=_formatted_address(top),
+        latitude=float(plat),
+        longitude=float(plng),
+        similarity=similarity,
+    )
+
+
+def _formatted_address(result: dict[str, Any]) -> str | None:
+    """Join Apple's ``formattedAddressLines`` into one comma-separated string.
+
+    Args:
+        result: A single Apple Maps result dict.
+
+    Returns:
+        The joined address string, or None when Apple omitted address
+        lines entirely.
+    """
+    lines = result.get("formattedAddressLines") or []
+    if not isinstance(lines, list):
+        return None
+    joined = ", ".join(str(line) for line in lines if line)
+    return joined or None
+
+
+def _normalized_similarity(left: str, right: str) -> float:
+    """Return a case-insensitive SequenceMatcher ratio between two strings.
+
+    Punctuation differences (commas, hyphens, periods) and casing
+    swamp the underlying ratio if compared verbatim. We lowercase and
+    strip non-alphanumeric characters first so "Black Cat, DC" and
+    "Black Cat DC" resolve as equivalent.
+
+    Args:
+        left: The user's query.
+        right: The canonical Apple value to compare against.
+
+    Returns:
+        A ratio in ``[0.0, 1.0]``. Empty strings on either side return 0.
+    """
+
+    def _canonicalize(value: str) -> str:
+        cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in value)
+        return " ".join(cleaned.split())
+
+    a = _canonicalize(left)
+    b = _canonicalize(right)
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(a=a, b=b).ratio()
+
+
 __all__ = [
+    "NearbyPlace",
+    "VerifiedPlace",
     "build_snapshot_url",
     "fetch_nearby_poi",
     "is_configured",
     "mint_mapkit_token",
     "reset_redis_client_for_tests",
+    "search_nearby_places",
+    "verify_place_by_address",
+    "verify_place_by_name",
 ]

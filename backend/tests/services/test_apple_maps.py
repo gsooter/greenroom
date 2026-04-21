@@ -599,3 +599,180 @@ def test_fetch_nearby_poi_drops_records_missing_coordinates() -> None:
         redis_client=None,
     )
     assert [poi["name"] for poi in pois] == ["OK"]
+
+
+# ---------------------------------------------------------------------------
+# search_nearby_places — typed dataclass surface used by the map flows
+# ---------------------------------------------------------------------------
+
+
+def test_search_nearby_places_returns_dataclasses() -> None:
+    """The typed wrapper hands back ``NearbyPlace`` objects, not dicts."""
+    http = _StubHttp([_token_response(), _nearby_response()])
+    places = service.search_nearby_places(
+        latitude=38.917,
+        longitude=-77.032,
+        http_client=http,
+        redis_client=None,
+    )
+    assert all(isinstance(p, service.NearbyPlace) for p in places)
+    names = [p.name for p in places]
+    assert names == ["The Gibson", "Ben's Chili Bowl"]
+    assert places[0].distance_m <= 400
+
+
+def test_search_nearby_places_propagates_radius_and_categories() -> None:
+    """Custom radius/categories flow through to ``fetch_nearby_poi``."""
+    http = _StubHttp([_token_response(), _nearby_response()])
+    places = service.search_nearby_places(
+        latitude=38.917,
+        longitude=-77.032,
+        categories=("Bar",),
+        radius_m=600,
+        limit=1,
+        http_client=http,
+        redis_client=None,
+    )
+    assert len(places) == 1
+    # Apple's includePoiCategories param mirrors the requested filter.
+    assert http.calls[1]["params"]["includePoiCategories"] == "Bar"
+
+
+# ---------------------------------------------------------------------------
+# verify_place_by_name / verify_place_by_address — geocoding gate
+# ---------------------------------------------------------------------------
+
+
+def _geocode_response(
+    name: str = "Black Cat",
+    address: str = "1811 14th St NW, Washington, DC",
+    lat: float = 38.9152,
+    lng: float = -77.0316,
+) -> _StubResponse:
+    """Build an Apple ``/v1/geocode`` style response with one result."""
+    return _StubResponse(
+        status_code=200,
+        payload={
+            "results": [
+                {
+                    "name": name,
+                    "formattedAddressLines": [
+                        s.strip() for s in address.split(",") if s.strip()
+                    ],
+                    "structuredAddress": {"fullThoroughfare": address},
+                    "coordinate": {"latitude": lat, "longitude": lng},
+                }
+            ]
+        },
+    )
+
+
+def _empty_geocode_response() -> _StubResponse:
+    """Apple sometimes returns ``{"results": []}`` for unknown queries."""
+    return _StubResponse(status_code=200, payload={"results": []})
+
+
+def test_verify_place_by_name_accepts_close_match() -> None:
+    """A 0.85+ similarity match returns a ``VerifiedPlace``."""
+    http = _StubHttp([_token_response(), _geocode_response()])
+    place = service.verify_place_by_name(
+        query="Black Cat DC",
+        near_latitude=38.917,
+        near_longitude=-77.032,
+        http_client=http,
+        redis_client=None,
+    )
+    assert place is not None
+    assert place.name == "Black Cat"
+    assert place.latitude == 38.9152
+    assert place.longitude == -77.0316
+
+
+def test_verify_place_by_name_rejects_low_similarity() -> None:
+    """Below the 0.80 cutoff the verifier returns None."""
+    http = _StubHttp(
+        [
+            _token_response(),
+            _geocode_response(name="Howard Theatre"),
+        ]
+    )
+    place = service.verify_place_by_name(
+        query="Black Cat",
+        near_latitude=38.917,
+        near_longitude=-77.032,
+        http_client=http,
+        redis_client=None,
+    )
+    assert place is None
+
+
+def test_verify_place_by_name_returns_none_for_empty_results() -> None:
+    """No results from Apple → no verified place."""
+    http = _StubHttp([_token_response(), _empty_geocode_response()])
+    place = service.verify_place_by_name(
+        query="Bogus Cafe That Does Not Exist",
+        near_latitude=38.917,
+        near_longitude=-77.032,
+        http_client=http,
+        redis_client=None,
+    )
+    assert place is None
+
+
+def test_verify_place_by_address_accepts_match() -> None:
+    """A textual address that matches the canonical address verifies."""
+    http = _StubHttp([_token_response(), _geocode_response()])
+    place = service.verify_place_by_address(
+        query="1811 14th St NW Washington DC",
+        http_client=http,
+        redis_client=None,
+    )
+    assert place is not None
+    assert "14th St" in (place.address or "")
+
+
+def test_verify_place_by_address_rejects_far_off_address() -> None:
+    """Apple returning a different street drops below the gate."""
+    http = _StubHttp(
+        [
+            _token_response(),
+            _geocode_response(
+                address="100 F St NE, Washington, DC",
+            ),
+        ]
+    )
+    place = service.verify_place_by_address(
+        query="1811 14th St NW Washington DC",
+        http_client=http,
+        redis_client=None,
+    )
+    assert place is None
+
+
+def test_verify_place_by_name_raises_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same configuration gate as the other Maps Server API helpers."""
+    monkeypatch.setenv("APPLE_MAPKIT_TEAM_ID", "")
+    with pytest.raises(AppError) as exc:
+        service.verify_place_by_name(
+            query="anything",
+            near_latitude=0.0,
+            near_longitude=0.0,
+            redis_client=None,
+        )
+    assert exc.value.code == APPLE_MAPS_UNAVAILABLE
+
+
+def test_verify_place_by_name_raises_on_apple_error() -> None:
+    """Apple returning 500 on geocode bubbles up as a 502 AppError."""
+    http = _StubHttp([_token_response(), _StubResponse(status_code=500, payload={})])
+    with pytest.raises(AppError) as exc:
+        service.verify_place_by_name(
+            query="Black Cat",
+            near_latitude=38.917,
+            near_longitude=-77.032,
+            http_client=http,
+            redis_client=None,
+        )
+    assert exc.value.status_code == 502
