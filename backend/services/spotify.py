@@ -155,6 +155,39 @@ def get_app_access_token() -> SpotifyTokens:
     return _parse_token_response(response)
 
 
+# Process-local cache for the client-credentials app token. Spotify
+# tokens live an hour; we refresh a minute early to absorb clock skew.
+# A per-process cache is enough — gunicorn workers are few and the
+# token endpoint is cheap — no Redis round-trip required.
+_APP_TOKEN_SAFETY_MARGIN = timedelta(seconds=60)
+_cached_app_token: SpotifyTokens | None = None
+
+
+def get_cached_app_access_token() -> SpotifyTokens:
+    """Return an app-only Spotify token, reusing the cached one when fresh.
+
+    Hot-path helper for per-request callers (e.g. the onboarding artist
+    search) that would otherwise mint a new token on every keystroke.
+    Falls through to :func:`get_app_access_token` when the cache is
+    empty or the cached token is within one minute of expiry.
+
+    Returns:
+        A :class:`SpotifyTokens` guaranteed to be valid for at least
+        the next minute.
+
+    Raises:
+        AppError: ``SPOTIFY_AUTH_FAILED`` if Spotify rejects the mint.
+    """
+    global _cached_app_token
+    now = datetime.now(UTC)
+    cached = _cached_app_token
+    if cached is not None and cached.expires_at - _APP_TOKEN_SAFETY_MARGIN > now:
+        return cached
+    fresh = get_app_access_token()
+    _cached_app_token = fresh
+    return fresh
+
+
 def search_artist(
     access_token: str,
     name: str,
