@@ -27,6 +27,7 @@ import {
   skipOnboardingEntirely,
 } from "@/lib/api/onboarding";
 import { useRequireAuth } from "@/lib/auth";
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
 import type { OnboardingState, OnboardingStepName } from "@/types";
 
 const STEP_ORDER: readonly OnboardingStepName[] = [
@@ -144,7 +145,7 @@ export default function WelcomePage(): JSX.Element {
         />
       ) : null}
 
-      <div className="mt-10 border-t border-border pt-4 text-center">
+      <div className="mt-10 space-y-2 border-t border-border pt-4 text-center">
         <button
           type="button"
           onClick={() => void skipAll()}
@@ -153,6 +154,16 @@ export default function WelcomePage(): JSX.Element {
         >
           Skip the whole setup
         </button>
+        <p className="text-xs text-text-secondary">
+          Stuck? We&apos;re at{" "}
+          <a
+            href={SUPPORT_MAILTO}
+            className="text-text-primary underline underline-offset-2"
+          >
+            {SUPPORT_EMAIL}
+          </a>
+          .
+        </p>
       </div>
     </Shell>
   );

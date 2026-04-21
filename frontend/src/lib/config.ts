@@ -32,3 +32,6 @@ export const config = {
   baseUrl: requireEnv("NEXT_PUBLIC_BASE_URL", process.env.NEXT_PUBLIC_BASE_URL),
   posthogKey: process.env.NEXT_PUBLIC_POSTHOG_KEY ?? "",
 } as const;
+
+export const SUPPORT_EMAIL = "greenroom_support@gstwentyseven.com";
+export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;

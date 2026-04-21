@@ -25,6 +25,7 @@ import { ApiRequestError } from "@/lib/api/client";
 import { listCities } from "@/lib/api/cities";
 import { deleteMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
 import { useRequireAuth } from "@/lib/auth";
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
 import { authorizeAppleMusic } from "@/lib/musickit";
 import {
   decodeRegistrationOptions,
@@ -244,6 +245,24 @@ export default function SettingsPage(): JSX.Element {
 
       <section>
         <h2 className="text-base font-semibold text-text-primary">
+          Help &amp; support
+        </h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          Stuck on something, spotted a bug, or want to suggest a venue?{" "}
+          <a
+            href={SUPPORT_MAILTO}
+            className="text-text-primary underline underline-offset-2"
+          >
+            {SUPPORT_EMAIL}
+          </a>{" "}
+          reaches a real human.
+        </p>
+      </section>
+
+      <hr className="my-10 border-border" />
+
+      <section>
+        <h2 className="text-base font-semibold text-text-primary">
           Danger zone
         </h2>
         <p className="mt-1 text-sm text-text-secondary">
@@ -380,9 +399,7 @@ function ConnectedServicesSection({
       onConnectionChange();
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Could not connect Apple Music.",
+        err instanceof Error ? err.message : "Could not connect Apple Music.",
       );
     } finally {
       setAppleConnecting(false);
@@ -442,7 +459,8 @@ function ServiceCard({
 }): JSX.Element {
   const label = PROVIDER_LABEL[provider];
   const connected = Boolean(state?.connected);
-  const busyLabel = provider === "apple_music" ? "Authorizing…" : "Redirecting…";
+  const busyLabel =
+    provider === "apple_music" ? "Authorizing…" : "Redirecting…";
   const artists = state?.artists ?? [];
   return (
     <div className="mt-3 rounded-lg border border-border bg-bg-white p-4">
@@ -532,9 +550,7 @@ function SecuritySection({ token }: { token: string | null }): JSX.Element {
 
   return (
     <section>
-      <h2 className="text-base font-semibold text-text-primary">
-        Security
-      </h2>
+      <h2 className="text-base font-semibold text-text-primary">Security</h2>
       <p className="mt-1 text-sm text-text-secondary">
         Add a passkey to sign in without email links. Passkeys are stored on
         your device (Touch ID, Face ID, Windows Hello, or a security key).
@@ -563,7 +579,9 @@ function SecuritySection({ token }: { token: string | null }): JSX.Element {
               disabled={status === "registering" || !token}
               className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {status === "registering" ? "Waiting for passkey…" : "Add a passkey"}
+              {status === "registering"
+                ? "Waiting for passkey…"
+                : "Add a passkey"}
             </button>
             {status === "done" ? (
               <p className="text-xs text-text-secondary" role="status">
