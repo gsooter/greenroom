@@ -12,6 +12,11 @@ from backend.data.models.events import (
     EventType,
     TicketPricingSnapshot,
 )
+from backend.data.models.map_recommendations import (
+    MapRecommendation,
+    MapRecommendationCategory,
+    MapRecommendationVote,
+)
 from backend.data.models.notifications import EmailDigestLog
 from backend.data.models.onboarding import (
     FollowedArtist,
@@ -44,6 +49,9 @@ __all__ = [
     "EventType",
     "FollowedArtist",
     "FollowedVenue",
+    "MapRecommendation",
+    "MapRecommendationCategory",
+    "MapRecommendationVote",
     "MusicServiceConnection",
     "OAuthProvider",
     "Recommendation",
