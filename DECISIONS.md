@@ -1324,6 +1324,132 @@ deploying image run its own migrations.
 
 ---
 
+### 035 — Genre Overlap Is a Scoring Fallback, Not Its Own Scorer
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** The `ArtistMatchScorer` falls back to a genre-overlap
+sub-score when no exact artist match exists, instead of adding a
+separate `GenreMatchScorer` to the engine pipeline. Genre overlap
+contributes at most 0.4 of the scorer's output weight; an exact artist
+hit still dominates the signal.
+
+**Rationale:**
+Keeps every candidate event scoring on one consistent axis from the
+user's perspective ("did Greenroom find someone I listen to?"). A
+dedicated genre scorer would fire for every candidate and dilute the
+recommendations with "some band I've never heard of, but they're also
+indie" — the MVP goal is to surface shows the user would have heard
+about anyway, not to expand taste. Blending inside the existing scorer
+also means the engine's 0.0-1.0 normalization stays intact with no
+weight-tuning across scorers.
+
+**Alternatives considered:**
+- **Standalone `GenreMatchScorer`** — rejected; creates weighting
+  problems between scorers and makes the score breakdown harder to
+  explain to a user. ("We recommended this because genres match" is
+  a weaker reason than "we recommended this because you listen to
+  the opener.")
+- **No fallback at all** — rejected; users with small Spotify top-artist
+  sets (freshly-linked accounts or casual listeners) saw empty For You
+  pages every week.
+
+**Consequences:**
+- The score breakdown stored in `recommendations.score_breakdown` now
+  has an optional `genre_overlap_contribution` field; existing
+  breakdowns without it are still valid.
+- Future scorers that want to use genre data should read
+  `ArtistMatchScorer.genre_cache` rather than re-fetching.
+
+---
+
+### 036 — Venue Comments Use a Ranked Merge of Hot + Recent
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** Venue comment threads render a single chronological list
+ordered by a hot-merge score that blends net votes and recency, rather
+than separate "Top" and "New" tabs. The top slot is reserved for a
+pinned staff comment if one exists.
+
+**Rationale:**
+Reddit-style "Top vs New" tabs don't carry weight on venue pages —
+traffic per venue per day is low enough that "New" is almost always
+empty and "Top" is almost always one comment from 2023. A ranked merge
+surfaces a useful thread immediately without making the user choose a
+sort. The formula is `log(1 + max(0, net_votes)) + recency_decay(age)`,
+which reduces to strict recency when a thread is young and to net-vote
+order once the page has been live for a while.
+
+**Alternatives considered:**
+- **Top / New tabs** — rejected; low per-venue traffic means both tabs
+  look wrong most of the time.
+- **Strict recency only** — rejected; incentivizes spam and buries
+  high-signal comments behind one-liners.
+- **Strict net-vote ranking** — rejected; fresh comments on established
+  venues would never surface.
+
+**Consequences:**
+- Backend repository returns already-ranked rows; the frontend does no
+  client-side re-sort. Vote mutations re-query the server.
+- Hiding a comment (via moderation) drops it from the ranked list but
+  leaves the row in place for audit — callers filter on `hidden_at`.
+- A later "controversial" or "contested" sort would require a second
+  ranking function; none is planned.
+
+---
+
+### 037 — Apple Maps Over Google Maps for Venue Cartography
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** Venue pages render static map snapshots, mint MapKit JS
+tokens, and pull nearby-POI results from Apple's Maps Web APIs. Google
+Maps is used only as a fallback destination for the "Get Directions"
+deep link on non-Apple devices.
+
+**Rationale:**
+Apple's MapKit APIs (MapKit JS + Snapshot + Maps Server API) are free
+for the usage pattern Greenroom has — a few thousand venue-page
+snapshots per day, one MapKit JS instance per active tab. Google Maps
+Platform bills per static-image and per Places-Search request, and the
+venue page's "grab a bite before the show" list would turn into the
+single biggest cost center in the backend within the first month.
+Apple's `searchNearby` results are comparable in quality to Google's
+Places for the DC bar/restaurant density Greenroom cares about.
+
+**Alternatives considered:**
+- **Google Maps Platform** — rejected on cost; a rough model put the
+  POI-search line alone at $200-$400/month at launch traffic, with no
+  caching ceiling.
+- **Mapbox + Overture / Foursquare POI feeds** — rejected; the stack
+  would be cheaper than Google but not Apple, and it introduces three
+  vendor relationships where one suffices.
+- **No map at all, just an address link** — rejected; the venue page
+  is a conversion surface for "which show tonight," and the map
+  snapshot measurably lifts click-through to Get Directions in
+  competitor products.
+
+**Consequences:**
+- The backend signs ES256 JWTs for MapKit JS tokens *and* raw ECDSA
+  P-256 signatures (r||s) for Snapshot URLs — they share a key but
+  the signing primitives differ.
+- `fetch_nearby_poi` requires an access-token exchange via
+  `maps-api.apple.com/v1/token`; the access token is cached in Redis
+  for its natural lifetime minus a 60s safety margin.
+- `APPLE_MUSIC_PRIVATE_KEY` and `APPLE_MAPKIT_PRIVATE_KEY` overlap in
+  ownership (the Apple Developer account) but are distinct keys in
+  config. Don't collapse them.
+- The "Get Directions" button uses a UA sniff to route Apple devices
+  to `maps.apple.com` and everyone else to Google. The button is a
+  client component that hydrates into its final href to avoid an SSR
+  hydration mismatch.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
