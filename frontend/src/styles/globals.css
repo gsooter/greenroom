@@ -67,3 +67,21 @@ body {
     system-ui,
     sans-serif;
 }
+
+/* Pulse animation for map pins on the Tonight map. Kept in globals so
+   the raw MapKit-rendered <span> elements (which live outside React)
+   can still reference it. */
+@keyframes greenroom-pin-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+  80% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
