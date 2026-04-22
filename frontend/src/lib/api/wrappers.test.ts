@@ -35,6 +35,11 @@ import { getCityBySlug, listCities } from "@/lib/api/cities";
 import { getEvent, listEvents } from "@/lib/api/events";
 import { deleteMe, getMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
 import {
+  getMapKitToken,
+  getMapRecommendations,
+  getTonightMap,
+} from "@/lib/api/maps";
+import {
   getMyTopArtists,
   listRecommendations,
   refreshRecommendations,
@@ -539,5 +544,78 @@ describe("api/saved-events", () => {
     const { url } = lastCall();
     expect(url.searchParams.get("page")).toBe("1");
     expect(url.searchParams.get("per_page")).toBe("20");
+  });
+});
+
+describe("api/maps", () => {
+  it("getTonightMap joins genres into a comma-separated query", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0, date: "2026-04-21" } }),
+    );
+    const out = await getTonightMap({ genres: ["indie", "folk"] });
+    expect(out.meta.date).toBe("2026-04-21");
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/tonight");
+    expect(url.searchParams.get("genres")).toBe("indie,folk");
+  });
+
+  it("getTonightMap omits the genres param when the list is empty", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0, date: "2026-04-21" } }),
+    );
+    await getTonightMap({ genres: [] });
+    const { url } = lastCall();
+    expect(url.searchParams.has("genres")).toBe(false);
+  });
+
+  it("getMapRecommendations forwards bbox + filters and unwraps data", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [{ id: "r-1" }], meta: { count: 1 } }),
+    );
+    const out = await getMapRecommendations({
+      swLat: 38.8,
+      swLng: -77.1,
+      neLat: 38.95,
+      neLng: -76.9,
+      category: "food_drink",
+      sort: "top",
+      limit: 50,
+      sessionId: "guest-abc",
+    });
+    expect(out).toEqual([{ id: "r-1" }]);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/recommendations");
+    expect(url.searchParams.get("sw_lat")).toBe("38.8");
+    expect(url.searchParams.get("ne_lng")).toBe("-76.9");
+    expect(url.searchParams.get("category")).toBe("food_drink");
+    expect(url.searchParams.get("sort")).toBe("top");
+    expect(url.searchParams.get("limit")).toBe("50");
+    expect(url.searchParams.get("session_id")).toBe("guest-abc");
+  });
+
+  it("getMapRecommendations forwards the bearer token when provided", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0 } }),
+    );
+    await getMapRecommendations({
+      swLat: 0,
+      swLng: 0,
+      neLat: 1,
+      neLng: 1,
+      token: "tok",
+    });
+    expect(lastCall().init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("getMapKitToken unwraps the envelope and encodes origin", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { token: "mk.tok", expires_at: 1_700_000_000 } }),
+    );
+    const out = await getMapKitToken({ origin: "https://greenroom.fm" });
+    expect(out.token).toBe("mk.tok");
+    expect(out.expires_at).toBe(1_700_000_000);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/token");
+    expect(url.searchParams.get("origin")).toBe("https://greenroom.fm");
   });
 });

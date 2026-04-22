@@ -37,6 +37,15 @@
   --color-navy-dark: #1e3a5a;
   --color-navy-soft: #c8d0dc;
 
+  /* Map pin palette — genre-coded pins on the Tonight map only.
+     Outside the map surface, badges/chips still follow the rules
+     in CLAUDE.md (blush = For You, green = genre). These tokens
+     exist so a pin's color can signal the headliner's genre at a
+     glance without overloading the semantic palette. */
+  --color-amber: #d98c2b;  /* Electronic / dance */
+  --color-coral: #e37064;  /* Hip-hop / rap */
+  --color-gold:  #d4a634;  /* Jazz / soul / R&B */
+
   /* Semantic aliases — used by legacy components */
   --background: var(--color-bg-base);
   --foreground: var(--color-text-primary);

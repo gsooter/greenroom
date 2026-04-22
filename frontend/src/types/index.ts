@@ -268,3 +268,58 @@ export interface ArtistSummary {
 export interface MusicConnectionsResponse {
   connections: MusicConnectionState[];
 }
+
+/**
+ * A pinnable DMV event returned by `GET /api/v1/maps/tonight`.
+ *
+ * Shape mirrors `_serialize_tonight_event` in the backend — every
+ * row is guaranteed to have a venue with non-null coordinates so
+ * the map can place a pin without null-checks.
+ */
+export interface TonightMapEvent {
+  id: string;
+  slug: string;
+  title: string;
+  starts_at: string | null;
+  artists: string[];
+  genres: string[];
+  image_url: string | null;
+  ticket_url: string | null;
+  min_price: number | null;
+  max_price: number | null;
+  venue: {
+    id: string;
+    name: string;
+    slug: string;
+    latitude: number;
+    longitude: number;
+  };
+}
+
+export interface TonightMapEnvelope {
+  data: TonightMapEvent[];
+  meta: {
+    count: number;
+    date: string;
+  };
+}
+
+/**
+ * A community recommendation overlay row returned by
+ * `GET /api/v1/maps/recommendations` — structurally the same shape
+ * as `_serialize_recommendation` on the backend.
+ */
+export interface MapRecommendation {
+  id: string;
+  place_name: string;
+  place_address: string | null;
+  latitude: number;
+  longitude: number;
+  category: string;
+  body: string;
+  likes: number;
+  dislikes: number;
+  viewer_vote: number | null;
+  suppressed: boolean;
+  created_at: string;
+}
