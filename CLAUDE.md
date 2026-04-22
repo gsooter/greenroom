@@ -625,6 +625,13 @@ APPLE_MUSIC_PRIVATE_KEY           # PEM-encoded .p8 contents (preferred)
 APPLE_MUSIC_PRIVATE_KEY_PATH      # dev convenience, loads from disk
 APPLE_MUSIC_BUNDLE_ID
 
+# Apple Maps (MapKit JS + Snapshot + Maps Server API)
+# Prefix is APPLE_MAPKIT_ — not APPLE_MAPS_. Do not create aliases.
+APPLE_MAPKIT_TEAM_ID
+APPLE_MAPKIT_KEY_ID
+APPLE_MAPKIT_PRIVATE_KEY          # PEM-encoded .p8 contents (preferred)
+APPLE_MAPKIT_PRIVATE_KEY_PATH     # dev convenience, loads from disk
+
 # Database
 DATABASE_URL
 
