@@ -236,10 +236,6 @@ export default function SettingsPage(): JSX.Element {
 
       <hr className="my-10 border-border" />
 
-      <DisplayPreferencesSection />
-
-      <hr className="my-10 border-border" />
-
       <ConnectedServicesSection
         token={token}
         connections={connections}
@@ -267,6 +263,10 @@ export default function SettingsPage(): JSX.Element {
           reaches a real human.
         </p>
       </section>
+
+      <hr className="my-10 border-border" />
+
+      <DisplayPreferencesSection />
 
       <hr className="my-10 border-border" />
 
@@ -303,27 +303,34 @@ function DisplayPreferencesSection(): JSX.Element {
         Display preferences
       </h2>
       <p className="mt-1 text-sm text-text-secondary">
-        These settings only affect how values are shown on your device — we
-        don&apos;t sync them across browsers. Defaults are miles and Eastern
-        Time, which match the DMV.
+        How values are shown on this device. Stored locally — not synced across
+        browsers.
       </p>
 
-      <div className="mt-4 space-y-4">
-        <Field label="Distance units">
-          <div className="flex items-center gap-1 rounded-full border border-border bg-bg-surface p-1 w-fit">
+      <div className="mt-4 divide-y divide-border rounded-lg border border-border bg-bg-white">
+        <PreferenceRow
+          label="Distance"
+          description="Used for venue distance pills and the near-me sort."
+        >
+          <div
+            role="radiogroup"
+            aria-label="Distance units"
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-bg-surface p-1"
+          >
             {(
               [
-                { value: "mi" as const, label: "Miles" },
-                { value: "km" as const, label: "Kilometers" },
+                { value: "mi" as const, label: "mi" },
+                { value: "km" as const, label: "km" },
               ]
             ).map((opt) => (
               <button
                 key={opt.value}
                 type="button"
-                aria-pressed={unit === opt.value}
+                role="radio"
+                aria-checked={unit === opt.value}
                 onClick={() => setUnit(opt.value)}
                 className={
-                  "rounded-full px-3 py-1 text-xs font-medium transition " +
+                  "rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wide transition " +
                   (unit === opt.value
                     ? "bg-green-primary text-text-inverse"
                     : "text-text-secondary hover:text-text-primary")
@@ -333,15 +340,19 @@ function DisplayPreferencesSection(): JSX.Element {
               </button>
             ))}
           </div>
-        </Field>
+        </PreferenceRow>
 
-        <Field label="Event times shown in">
+        <PreferenceRow
+          label="Event times"
+          description="Applied to every show date and door time on the site."
+        >
           <select
+            aria-label="Event time zone"
             value={zoneValue}
             onChange={(e) => {
               if (e.target.value !== "__custom__") setTimezone(e.target.value);
             }}
-            className="w-full rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
+            className="rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
           >
             {TIMEZONE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -352,9 +363,29 @@ function DisplayPreferencesSection(): JSX.Element {
               <option value="__custom__">Custom: {timezone}</option>
             ) : null}
           </select>
-        </Field>
+        </PreferenceRow>
       </div>
     </section>
+  );
+}
+
+function PreferenceRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-text-primary">{label}</p>
+        <p className="mt-0.5 text-xs text-text-secondary">{description}</p>
+      </div>
+      <div className="shrink-0 self-start sm:self-auto">{children}</div>
+    </div>
   );
 }
 
