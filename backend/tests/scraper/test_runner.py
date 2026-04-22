@@ -75,9 +75,15 @@ class _ExplodingScraper(BaseScraper):
 
 
 @dataclass
+class _FakeCity:
+    timezone: str = "America/New_York"
+
+
+@dataclass
 class _FakeVenue:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     slug: str = "fake-venue"
+    city: _FakeCity = field(default_factory=_FakeCity)
 
 
 @dataclass
@@ -186,6 +192,31 @@ def test_generate_slug_differentiates_by_external_id() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _localize_venue_datetime
+# ---------------------------------------------------------------------------
+
+
+def test_localize_venue_datetime_attaches_zone_to_naive() -> None:
+    """A naive 8 pm ET becomes an aware UTC datetime during EDT (UTC-4)."""
+    naive = datetime(2026, 5, 1, 20, 0)
+    result = runner._localize_venue_datetime(naive, "America/New_York")
+    assert result is not None
+    assert result.tzinfo is UTC
+    assert result == datetime(2026, 5, 2, 0, 0, tzinfo=UTC)
+
+
+def test_localize_venue_datetime_preserves_aware_input() -> None:
+    """An already-aware datetime is normalized to UTC, not re-localized."""
+    aware = datetime(2026, 5, 2, 0, 0, tzinfo=UTC)
+    result = runner._localize_venue_datetime(aware, "America/New_York")
+    assert result == aware
+
+
+def test_localize_venue_datetime_passes_through_none() -> None:
+    assert runner._localize_venue_datetime(None, "America/New_York") is None
+
+
+# ---------------------------------------------------------------------------
 # _update_event_from_raw
 # ---------------------------------------------------------------------------
 
@@ -196,7 +227,7 @@ def test_update_event_from_raw_reports_changes() -> None:
         title="new",
         starts_at=datetime(2026, 5, 1, 20, tzinfo=UTC),
     )
-    changed = runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    changed = runner._update_event_from_raw(event, raw, "America/New_York")  # type: ignore[arg-type]
     assert changed is True
     assert event.title == "new"
 
@@ -211,7 +242,7 @@ def test_update_event_from_raw_no_change_returns_false() -> None:
         source_url="https://src.test/e/1",
     )
     raw = _raw(title="Show", starts_at=starts)
-    changed = runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    changed = runner._update_event_from_raw(event, raw, "America/New_York")  # type: ignore[arg-type]
     assert changed is False
 
 
@@ -220,7 +251,7 @@ def test_update_event_from_raw_ignores_none_fields() -> None:
     event = _FakeEvent(title="keep", description="existing")
     raw = _raw(title="keep")
     raw.description = None
-    runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    runner._update_event_from_raw(event, raw, "America/New_York")  # type: ignore[arg-type]
     assert event.description == "existing"
 
 
@@ -228,7 +259,7 @@ def test_update_event_from_raw_propagates_genres() -> None:
     """Fresh genres from a re-scrape land on the existing event row."""
     event = _FakeEvent(title="Show", genres=[])
     raw = _raw(title="Show", genres=["indie", "rock"])
-    changed = runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    changed = runner._update_event_from_raw(event, raw, "America/New_York")  # type: ignore[arg-type]
     assert changed is True
     assert event.genres == ["indie", "rock"]
 
@@ -237,7 +268,7 @@ def test_update_event_from_raw_empty_genres_do_not_clobber() -> None:
     """An empty genres list from a scraper keeps existing genres intact."""
     event = _FakeEvent(title="Show", genres=["indie"])
     raw = _raw(title="Show", genres=[])
-    runner._update_event_from_raw(event, raw)  # type: ignore[arg-type]
+    runner._update_event_from_raw(event, raw, "America/New_York")  # type: ignore[arg-type]
     assert event.genres == ["indie"]
 
 
@@ -351,6 +382,33 @@ def test_ingest_events_creates_new_and_updates_existing(
     # Every RawEvent's artists are funneled through the artists repo so
     # the enrichment task has rows to work on.
     assert upsert_mock.call_count == 2
+
+
+def test_ingest_events_localizes_naive_starts_at_to_utc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Naive venue-local time from a scraper lands as UTC with ET offset applied."""
+    venue = _FakeVenue(city=_FakeCity(timezone="America/New_York"))
+    monkeypatch.setattr(
+        runner.venues_repo, "get_venue_by_slug", lambda _s, _slug: venue
+    )
+    monkeypatch.setattr(
+        runner.events_repo,
+        "get_event_by_external_id",
+        lambda _s, _eid, _plat: None,
+    )
+    create_mock = MagicMock()
+    monkeypatch.setattr(runner.events_repo, "create_event", create_mock)
+    monkeypatch.setattr(runner.artists_repo, "upsert_artist_by_name", MagicMock())
+
+    # A 7 pm local show at a DMV venue in May (EDT, UTC-4).
+    naive_local = datetime(2026, 5, 1, 19, 0)
+    runner._ingest_events(
+        MagicMock(), venue.slug, [_raw(starts_at=naive_local)], source_platform="fake"
+    )
+
+    stored = create_mock.call_args.kwargs["starts_at"]
+    assert stored == datetime(2026, 5, 1, 23, 0, tzinfo=UTC)
 
 
 def test_ingest_events_passes_genres_to_create_event(

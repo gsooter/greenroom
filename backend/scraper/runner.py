@@ -13,6 +13,7 @@ import importlib
 import re
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from celery import shared_task
 from sqlalchemy.orm import Session
@@ -307,6 +308,11 @@ def _ingest_events(
         )
         return 0, 0, len(raw_events)
 
+    # Every scraper yields naive wall-clock datetimes in the venue's local
+    # zone; we localize here so events.starts_at (timestamptz) is stored
+    # in UTC with the correct offset applied.
+    venue_tz = venue.city.timezone
+
     created = 0
     updated = 0
     skipped = 0
@@ -320,7 +326,7 @@ def _ingest_events(
 
         if existing is not None:
             # Update existing event
-            changed = _update_event_from_raw(existing, raw)
+            changed = _update_event_from_raw(existing, raw, venue_tz)
             if changed:
                 session.flush()
                 updated += 1
@@ -337,9 +343,9 @@ def _ingest_events(
                 description=raw.description,
                 event_type=EventType.CONCERT,
                 status=EventStatus.CONFIRMED,
-                starts_at=raw.starts_at,
-                ends_at=raw.ends_at,
-                on_sale_at=raw.on_sale_at,
+                starts_at=_localize_venue_datetime(raw.starts_at, venue_tz),
+                ends_at=_localize_venue_datetime(raw.ends_at, venue_tz),
+                on_sale_at=_localize_venue_datetime(raw.on_sale_at, venue_tz),
                 artists=raw.artists,
                 genres=raw.genres or None,
                 image_url=raw.image_url,
@@ -402,14 +408,44 @@ def _extract_external_id(raw: RawEvent) -> str:
     return hashlib.sha256(fingerprint.encode()).hexdigest()[:32]
 
 
-def _update_event_from_raw(event: Event, raw: RawEvent) -> bool:
+def _localize_venue_datetime(value: datetime | None, tz_name: str) -> datetime | None:
+    """Treat a naive scraper datetime as venue-local wall time and return UTC.
+
+    Scrapers yield naive datetimes whose fields reflect the venue's local
+    wall clock — a 7 pm show at Black Cat is ``datetime(y, m, d, 19, 0)``
+    with no tzinfo. The ``events.starts_at`` column is ``timestamptz``,
+    so a naive value gets silently stored as UTC, shifting every DMV show
+    four-to-five hours earlier than it actually plays. Attaching the
+    venue's IANA zone before converting to UTC is the fix.
+
+    Datetimes that already carry tzinfo are normalized to UTC but not
+    re-localized, so future tz-aware scrapers aren't double-converted.
+
+    Args:
+        value: The raw datetime from a RawEvent, possibly naive or None.
+        tz_name: IANA timezone name, e.g. ``"America/New_York"``.
+
+    Returns:
+        A timezone-aware datetime in UTC, or None when ``value`` is None.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(UTC)
+    return value.replace(tzinfo=ZoneInfo(tz_name)).astimezone(UTC)
+
+
+def _update_event_from_raw(event: Event, raw: RawEvent, venue_tz: str) -> bool:
     """Update an existing event with fresh data from a scraper.
 
-    Only updates fields that have actually changed.
+    Only updates fields that have actually changed. Datetime fields are
+    localized from the venue's timezone to UTC before comparison so a
+    re-scrape of the same naive wall-clock time doesn't appear as a diff.
 
     Args:
         event: The existing Event instance.
         raw: The fresh RawEvent data.
+        venue_tz: IANA timezone name for the venue's city.
 
     Returns:
         True if any fields were updated, False if unchanged.
@@ -418,9 +454,9 @@ def _update_event_from_raw(event: Event, raw: RawEvent) -> bool:
     field_map: list[tuple[str, Any]] = [
         ("title", raw.title),
         ("description", raw.description),
-        ("starts_at", raw.starts_at),
-        ("ends_at", raw.ends_at),
-        ("on_sale_at", raw.on_sale_at),
+        ("starts_at", _localize_venue_datetime(raw.starts_at, venue_tz)),
+        ("ends_at", _localize_venue_datetime(raw.ends_at, venue_tz)),
+        ("on_sale_at", _localize_venue_datetime(raw.on_sale_at, venue_tz)),
         ("artists", raw.artists),
         ("genres", raw.genres or None),
         ("image_url", raw.image_url),
