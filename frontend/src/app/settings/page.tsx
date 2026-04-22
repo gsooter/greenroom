@@ -27,7 +27,11 @@ import { deleteMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
 import { useRequireAuth } from "@/lib/auth";
 import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
 import { authorizeAppleMusic } from "@/lib/musickit";
-import { useDistanceUnit } from "@/lib/preferences";
+import {
+  TIMEZONE_OPTIONS,
+  useDistanceUnit,
+  useTimezonePreference,
+} from "@/lib/preferences";
 import {
   decodeRegistrationOptions,
   encodeRegistrationCredential,
@@ -288,6 +292,10 @@ export default function SettingsPage(): JSX.Element {
 
 function DisplayPreferencesSection(): JSX.Element {
   const [unit, setUnit] = useDistanceUnit();
+  const [timezone, setTimezone] = useTimezonePreference();
+
+  const knownZone = TIMEZONE_OPTIONS.some((opt) => opt.value === timezone);
+  const zoneValue = knownZone ? timezone : "__custom__";
 
   return (
     <section>
@@ -296,8 +304,8 @@ function DisplayPreferencesSection(): JSX.Element {
       </h2>
       <p className="mt-1 text-sm text-text-secondary">
         These settings only affect how values are shown on your device — we
-        don&apos;t sync them across browsers. Miles is the default to match the
-        DMV.
+        don&apos;t sync them across browsers. Defaults are miles and Eastern
+        Time, which match the DMV.
       </p>
 
       <div className="mt-4 space-y-4">
@@ -325,6 +333,25 @@ function DisplayPreferencesSection(): JSX.Element {
               </button>
             ))}
           </div>
+        </Field>
+
+        <Field label="Event times shown in">
+          <select
+            value={zoneValue}
+            onChange={(e) => {
+              if (e.target.value !== "__custom__") setTimezone(e.target.value);
+            }}
+            className="w-full rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
+          >
+            {TIMEZONE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+            {!knownZone ? (
+              <option value="__custom__">Custom: {timezone}</option>
+            ) : null}
+          </select>
         </Field>
       </div>
     </section>

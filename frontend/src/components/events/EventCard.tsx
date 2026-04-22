@@ -9,14 +9,10 @@
 
 import Link from "next/link";
 
+import EventDateTime from "@/components/events/EventDateTime";
 import SaveEventButton from "@/components/events/SaveEventButton";
 import RegionBadge from "@/components/ui/RegionBadge";
-import {
-  formatEventDate,
-  formatEventTime,
-  formatPriceRange,
-  joinArtists,
-} from "@/lib/format";
+import { formatPriceRange, joinArtists } from "@/lib/format";
 import type { EventStatus, EventSummary } from "@/types";
 
 interface EventCardProps {
@@ -43,8 +39,6 @@ const STATUS_CLASS: Record<EventStatus, string> = {
 
 export default function EventCard({ event }: EventCardProps) {
   const artists = joinArtists(event.artists);
-  const date = formatEventDate(event.starts_at);
-  const time = formatEventTime(event.starts_at);
   const price = formatPriceRange(event.min_price, event.max_price);
   const venue = event.venue;
 
@@ -66,10 +60,10 @@ export default function EventCard({ event }: EventCardProps) {
 
       <div className="flex flex-1 flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-accent">
-            {date}
-            {time ? ` · ${time}` : ""}
-          </span>
+          <EventDateTime
+            iso={event.starts_at}
+            className="text-xs font-semibold uppercase tracking-wide text-accent"
+          />
           <span
             className={
               "rounded-full px-2 py-0.5 text-xs font-medium " +

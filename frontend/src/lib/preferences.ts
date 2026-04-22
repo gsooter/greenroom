@@ -2,9 +2,9 @@
  * Client-side user preferences backed by localStorage.
  *
  * These preferences are intentionally lightweight — they don't round-trip
- * through the backend. For display-only concerns like the distance unit,
- * keeping them in the browser avoids auth coupling and works for
- * signed-out visitors too.
+ * through the backend. For display-only concerns like distance units and
+ * the viewing timezone, keeping them in the browser avoids auth coupling
+ * and works for signed-out visitors too.
  *
  * Server-rendered pages cannot read localStorage. Consumers that need the
  * preference in SSR should render the default and let the client re-hydrate
@@ -16,10 +16,30 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type DistanceUnit = "mi" | "km";
+export type TimezonePreference = string;
 
 const DISTANCE_UNIT_KEY = "greenroom.pref.distanceUnit";
+const TIMEZONE_KEY = "greenroom.pref.timezone";
 
 export const DEFAULT_DISTANCE_UNIT: DistanceUnit = "mi";
+export const DEFAULT_TIMEZONE: TimezonePreference = "America/New_York";
+
+/**
+ * A short list of IANA zones surfaced in the Settings dropdown. The
+ * timezone field is stored as an arbitrary IANA string so users with
+ * exotic zones can still be served correctly by falling through to their
+ * browser zone — these are just the curated defaults.
+ */
+export const TIMEZONE_OPTIONS: ReadonlyArray<{
+  value: TimezonePreference;
+  label: string;
+}> = [
+  { value: "America/New_York", label: "Eastern (ET) — default" },
+  { value: "America/Chicago", label: "Central (CT)" },
+  { value: "America/Denver", label: "Mountain (MT)" },
+  { value: "America/Los_Angeles", label: "Pacific (PT)" },
+  { value: "UTC", label: "UTC" },
+];
 
 function safeReadLocalStorage(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -81,6 +101,55 @@ export function useDistanceUnit(): [DistanceUnit, (next: DistanceUnit) => void] 
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("greenroom:distanceUnitChanged", { detail: next }),
+      );
+    }
+  }, []);
+
+  return [value, update];
+}
+
+/**
+ * Read and subscribe to the user's timezone preference.
+ *
+ * Stored as an IANA zone string. Any non-empty string is accepted — callers
+ * are expected to pass through to Intl.DateTimeFormat, which will throw on
+ * unknown zones, so only stick to valid IANA identifiers.
+ *
+ * @returns Tuple of [current zone, setter].
+ */
+export function useTimezonePreference(): [
+  TimezonePreference,
+  (next: TimezonePreference) => void,
+] {
+  const [value, setValue] = useState<TimezonePreference>(DEFAULT_TIMEZONE);
+
+  useEffect(() => {
+    const stored = safeReadLocalStorage(TIMEZONE_KEY);
+    if (stored && stored.length > 0) setValue(stored);
+
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key !== TIMEZONE_KEY) return;
+      if (event.newValue && event.newValue.length > 0) setValue(event.newValue);
+    };
+    const onCustom = (event: Event): void => {
+      const detail = (event as CustomEvent<string | null>).detail;
+      if (detail && detail.length > 0) setValue(detail);
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("greenroom:timezoneChanged", onCustom);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("greenroom:timezoneChanged", onCustom);
+    };
+  }, []);
+
+  const update = useCallback((next: TimezonePreference): void => {
+    if (!next) return;
+    setValue(next);
+    safeWriteLocalStorage(TIMEZONE_KEY, next);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("greenroom:timezoneChanged", { detail: next }),
       );
     }
   }, []);
