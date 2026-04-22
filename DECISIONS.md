@@ -1555,6 +1555,161 @@ single-file change.
 
 ---
 
+### 040 — Community Place Recommendations Must Clear Apple Maps Verification
+
+**Date:** 2026-04-22
+**Status:** Decided
+
+**Decision:** Every community recommendation submitted through the map
+form must round-trip through Apple Maps' geocoder via
+`GET /api/v1/maps/places/verify` before it can be saved. The backend
+accepts the recommendation only when Apple returns a candidate whose
+name (or address) clears a 0.80 Jaro-Winkler similarity floor against
+the user-typed query. Recommendations that fail verification are
+rejected with `PLACE_NOT_VERIFIED` (404); nothing is stored.
+
+**Rationale:**
+Community pins are free-text, user-generated content that will be
+shown on a map alongside curated shows. Without a verification gate,
+the path of least resistance for a spammer is typing a business name
+that doesn't exist and getting a blush dot on the map forever. Running
+every submission through Apple's real-world geocoder forces each
+recommendation to correspond to a place that actually exists, at
+coordinates Apple will confirm. The 0.80 similarity floor is what
+filters out cases where Apple cheerfully returns the nearest
+something-similar even when the query is noise. Using Apple as the
+verifier is free for our usage pattern (Decision 037) and means the
+pin's lat/lng is authoritative rather than whatever the client sent.
+
+**Alternatives considered:**
+- **No verification, trust the client's lat/lng.** Rejected — fake
+  pins are the obvious attack and no amount of rate-limiting fixes a
+  drive-by submission of garbage coordinates.
+- **Verify only on display, not on submit.** Rejected — lets bad data
+  into the database and pushes filtering onto every read path instead
+  of the single write path.
+- **Require a venue-slug from our existing venue table.** Rejected —
+  the community pin surface is explicitly for non-venue places
+  ("grab a bite before the show"), so constraining to `venues` would
+  defeat the feature. The Apple Maps catalogue is the right universe.
+
+**Consequences:**
+- The submit-recommendation flow is two hops: frontend calls
+  `/maps/places/verify` first, then submits the verified payload to
+  `POST /api/v1/recommendations`. The service layer re-verifies on
+  the write path so a client can't forge a verified flag.
+- Apple Maps outages (`APPLE_MAPS_UNAVAILABLE`, 503/502) propagate as
+  submission failures rather than silent saves. Acceptable — writes
+  are rare, the alternative is unvetted pins.
+- The similarity floor lives in `backend/services/apple_maps.py` as
+  `_PLACE_VERIFY_SIMILARITY_FLOOR = 0.80`. Treat it as a tuning knob:
+  if false rejections dominate support traffic, loosen it before
+  changing the verification architecture.
+
+---
+
+### 041 — Tonight Map Pins Collapse 12 Genres Into 5 Color Buckets
+
+**Date:** 2026-04-22
+**Status:** Decided
+
+**Decision:** The Tonight map encodes an event's genre on the pin as
+one of 5 color buckets (plus a navy default when nothing matches):
+indie/rock → green, pop/folk → blush, electronic → amber, hip-hop →
+coral, jazz/soul → gold. The bucket table is a frontend-only resource
+in `frontend/src/lib/genre-colors.ts` and is referenced by both the
+filter bar and the pin render path. The canonical 12-slug genre
+catalogue (Decision 039) stays unchanged.
+
+**Rationale:**
+The catalogue optimizes for recommendation signal quality — fine
+slicing of electronic vs. techno vs. house is load-bearing for the
+scorer. The map optimizes for a single glance across the city. At
+12 distinct pin colors, the map becomes a pointillist blur that no
+legend can anchor; at 5 colors, a user can scan and say "the green
+pins are the indie shows tonight." Collapsing on the client keeps the
+decision reversible — if a future phase wants per-slug pins, the
+bucket table is deleted without touching the backend or the scorer.
+
+**Alternatives considered:**
+- **One pin color per canonical genre slug.** Rejected — the legend
+  would be longer than the map is wide, and most DMV nights have
+  fewer than 40 shows total, so the long tail of slugs contributes
+  nothing to the overview.
+- **Push the bucketing into the backend as a `pin_bucket` column.**
+  Rejected — the mapping is presentation-layer metadata, it would
+  bloat every tonight-map payload, and the frontend already imports
+  the bucket table to drive the filter bar's color swatches.
+- **Let the user pick their own color scheme.** Rejected — scope
+  creep for a discovery surface; the point is speed, not
+  customization.
+
+**Consequences:**
+- Adding a canonical genre slug (per Decision 039) should be followed
+  by a decision about which bucket it lands in. A slug without an
+  entry in the bucket table is safe — it falls through to navy — but
+  the filter bar's "Indie / Rock" pill will not catch it until the
+  table is updated.
+- The filter bar (`FilterBar.tsx`) is the UI surface that names the
+  buckets. Changing a bucket's display label is a one-file edit there;
+  changing the slug-to-bucket mapping is a one-file edit in
+  `genre-colors.ts`.
+- Pin color tokens (`--color-amber`, `--color-coral`, `--color-gold`)
+  are declared in `globals.css` alongside the existing palette. Do
+  not introduce new pin colors without a bucket or the legend drifts.
+
+---
+
+### 042 — Shows Near Me Filters Distance In-Process, Not in PostgreSQL
+
+**Date:** 2026-04-22
+**Status:** Decided
+
+**Decision:** `GET /api/v1/maps/near-me` fetches the day-windowed
+event list from `events_repo.list_events` with a generous `per_page`,
+then filters by great-circle distance in Python using a haversine
+helper (`_haversine_km` in `backend/services/events.py`). The
+repository does not know about coordinates; the database schema does
+not carry a geometry column.
+
+**Rationale:**
+PostGIS would be the textbook answer, but the DMV venue set is
+under 100 rows, the query is already bounded by a day/week window
+filter, and the post-fetch Python loop finishes in well under a
+millisecond. Standing up PostGIS — or even adding a raw lat/lng
+index and a `ST_DWithin` bypass — would add a migration, a build-time
+system dependency, and a cross-cutting repository concern for a
+problem the CPU solves instantly. Keeping the filter at the service
+layer also leaves every other event query path untouched.
+
+**Alternatives considered:**
+- **Add PostGIS and a `ST_DWithin` clause on `venues.geom`.**
+  Rejected now, revisit at the scale threshold below. The migration
+  is non-reversible without data loss once other callers start
+  relying on geometry columns.
+- **Bounding-box prefilter in SQL, haversine in Python.** Rejected —
+  at DMV volume the SQL prefilter saves zero wall-clock time and
+  doubles the number of places the distance calculation logic lives.
+- **Cache the haversine-filtered results per (lat, lng, radius, window).**
+  Rejected — too many free variables for the hit rate to be
+  meaningful; the raw query is already fast enough.
+
+**Consequences:**
+- Revisit this decision when any of the following are true: the
+  venue set grows past ~1,000 rows, a second distance-filtered route
+  ships, or the `per_page=200` ceiling on `list_events` starts
+  truncating day-windowed results. At that point, PostGIS with a
+  gist index on `venues.geom` is the migration.
+- The service caps `limit` to 100 and the route clamps `radius_km`
+  to `[0.5, 100]` so a pathological request can't force the repo to
+  materialize the full events table. These are the load-bearing
+  bounds; don't remove them without a PostGIS backing.
+- The returned envelope carries `distance_km` on every row. This is
+  computed in the same loop that filters, so the sort is free. Do
+  not reintroduce a separate distance fetch on the frontend.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

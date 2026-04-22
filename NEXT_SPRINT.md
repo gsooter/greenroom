@@ -5,41 +5,56 @@ the work that just shipped and the gaps it surfaced. It is not a
 backlog; it is a working-in-public outline that gets reset at the end
 of each sprint.
 
-**Last sprint closed:** 2026-04-20
-**Next sprint opens:** 2026-04-21
+**Last sprint closed:** 2026-04-22
+**Next sprint opens:** 2026-04-23
 
 ---
 
-## What just shipped (2026-04-14 → 2026-04-20)
+## What just shipped (2026-04-21 → 2026-04-22) — Apple Maps Discovery
 
-### Phase 1 — Recommendation quality
+### Phase 1 — Place verification and nearby search
 
-- **Genre-overlap fallback in `ArtistMatchScorer`.** Users with small
-  Spotify top-artist sets now see candidate events ranked by genre
-  alignment instead of a bare empty state. Score breakdowns expose a
-  `genre_overlap_contribution` field so the UI can later show the
-  reason. Decision 035.
+- **`GET /maps/places/verify`** — round-trips user-typed queries
+  through Apple's geocoder and rejects anything below a 0.80 similarity
+  floor as `PLACE_NOT_VERIFIED`. Used as the spam gate on community
+  recommendations. Decision 040.
+- **`GET /maps/places/nearby`** — POI search around a coordinate,
+  powers the recommendation form's "what place are you recommending?"
+  autocomplete.
 
-### Phase 2 — Venue community
+### Phase 2 — Community recommendations
 
-- **Venue comments + votes** (schema, repository, service, API,
-  frontend). Comment threads render a single hot-merge ranked list
-  with a honeypot field and per-IP rate limit. Moderation via
-  `hidden_at` is in place but no admin UI yet. Decision 036.
+- **Schema + repository + service** for map-side community pins,
+  keyed by Apple Maps place ID with verified lat/lng. Vote, suppress,
+  and moderation columns reuse the shape venue comments established
+  in Decision 036.
+- **`GET /maps/recommendations`** — bounding-box lookup with `top`/`new`
+  sort and viewer-vote annotation.
+- **Submit flow** enforces the verify hop on the write path so clients
+  can't skip verification by fabricating the payload.
 
-### Phase 3 — Apple Maps integration
+### Phase 3 — Tonight's DC Map
 
-- **MapKit JS token endpoint** with Redis-cached 25-min TTL.
-- **Signed static map snapshot** (24 h cache) embedded on every venue
-  page that has coordinates.
-- **Get Directions deep link**, routing Apple devices to
-  `maps.apple.com` and everyone else to Google.
-- **Nearby POI list** via Apple's `/v1/searchNearby`, rendered SSR
-  as "Grab a bite before the show". Backend access token is cached
-  for its natural lifetime; POI lists cached 7 days per venue.
-- Decision 037.
+- **`/map` page** (SSR shell → client MapKit JS surface) renders one
+  pin per tonight's DMV event, colored by genre bucket.
+- **5-color bucket table** in `genre-colors.ts` collapses the
+  12-entry catalogue into indie/rock, pop/folk, electronic, hip-hop,
+  and jazz/soul, plus navy for everything else. Filter bar pills and
+  pin colors share the table. Decision 041.
+- **Recommendations overlay** layered as blush dots on the same map.
 
-Tests: 587 backend / 198 frontend, all green at close of sprint.
+### Phase 4 — Shows Near Me
+
+- **`GET /maps/near-me`** — day or week window, radius-bounded,
+  sorted nearest-first, with `distance_km` on every row.
+  In-process haversine filter, no PostGIS. Decision 042.
+- **`/near-me` page** with geolocation permission gate, radius/window
+  filters, map/list toggle, and a "Surprise me" button that
+  randomises into a nearby event detail page.
+- **Nav entries** added to `TopNav` and `MobileBottomNav`.
+
+Tests: 9 new service tests, 7 new route tests, 7 new component tests;
+all suites green at close of sprint.
 
 ---
 
@@ -48,68 +63,67 @@ Tests: 587 backend / 198 frontend, all green at close of sprint.
 These items were scoped this sprint but landed without their full
 follow-through.
 
-1. **Moderation UI for venue comments.** `hidden_at` works at the
-   data layer; no admin surface yet. Currently only PostHog events
-   flag suspicious traffic.
-2. **Tests for `NearbyPois` and `VenueMapSnapshot` components.**
-   Both server components are exercised end-to-end but have no
-   direct Vitest specs; they fail quietly (render nothing) on any
-   backend non-OK, which is correct but untested.
-3. **Score-breakdown UI for "For You".** Decision 035 produced the
-   data; the frontend still shows only the final score. Adding a
-   "Why are we recommending this?" expandable row is a ~half-day task.
+1. **Community-recommendation moderation UI.** The data model supports
+   `suppressed` and `hidden_at`, and flags exist at the API, but there
+   is still no admin surface — same shape as the carry-in from the
+   previous sprint for venue comments. A single `/admin/moderation`
+   page would cover both.
+2. **Reverse-geocode the user's coord into a neighborhood label.**
+   Shows Near Me currently greets the user with "Finding shows near
+   you" even after location grant. A small "Shows near U Street" header
+   would make the fetch feel more deliberate — Apple's `reverseGeocode`
+   is already reachable from `services/apple_maps.py`.
+3. **MapKit JS lazy-load test.** `initMapKit` is exercised only through
+   live pages today; it has no direct Vitest coverage. Adding a script
+   injector test would protect against future CDN URL changes.
 
 ## Proposed work for the new sprint
 
 Pick what fits the sprint budget; these are ranked by user impact.
 
-1. **Ticket price freshness signals.** SeatGeek pulls are on a 6 h
-   cron per Decision 020 — surface the fetched-at timestamp on the
-   event card so stale prices don't read as authoritative.
-2. **"Shows this weekend" digest.** The email path (Decision 033)
-   is live; assembling the candidate list is a service-layer change
-   off the existing For You engine. Deferred digest (Decision 021)
-   is the framing; this is the simplest re-entry.
-3. **Apple Music as a second music-service connect.** Key material
-   is already in config (`APPLE_MUSIC_*`), and the top-artist cache
-   column exists per the migration referenced in Decision 034. The
-   remaining work is a service module mirroring `services/spotify.py`
-   and a connect-flow route pair.
-4. **Admin moderation UI.** Cover comments first, then venues. A
-   single `/admin/moderation` page gated by `ADMIN_SECRET_KEY` that
-   lists flagged comments and lets an operator hide/unhide.
-5. **Background refresh of MapKit JS tokens.** Today, a cache miss
-   on `/maps/token` incurs a synchronous JWT sign on the request
-   path. A Celery beat task that refreshes the cache 2 min before
-   expiry would put the hot path at zero signing work.
-6. **Spotify-backed artist search on `/welcome` Step 1.** v1 ships with
-   a DB-only substring match (see `search_artists` in
-   `backend/data/repositories/artists.py`), which only returns acts we
-   already ingested from scraped shows. That is thin on first-time
-   lookup for long-tail artists. Expansion: if the local result set is
-   small, fan out to Spotify's search endpoint, upsert returning hits
-   through `upsert_artist_by_name`, and merge. Gate on login-session
-   Spotify tokens vs. a client-credentials app token — the
-   client-credentials path is simpler and is the one to ship.
+1. **Apple Music as a second music-service connect.** Carried over
+   from the prior sprint. Key material already lives in config
+   (`APPLE_MUSIC_*`) and the artist-cache schema is in place.
+   Remaining work: a `services/apple_music.py` mirror of
+   `services/spotify.py` plus a connect-flow route pair.
+2. **Score-breakdown UI on For You.** Carried over. Decision 035
+   produced the signal, the frontend just needs a
+   "Why are we recommending this?" expandable row on the recommendation
+   cards.
+3. **"Shows this weekend" digest.** Carried over from the prior
+   sprint. Resend path (Decision 033) is live; the assembly job is
+   a service-layer call off the existing For You engine.
+4. **Ticket price freshness signals.** Carried over. Surface the
+   SeatGeek `fetched_at` timestamp on the event card so 6 h stale
+   prices don't read as authoritative.
+5. **Admin moderation UI** covering both venue comments and community
+   map recommendations — carry-in item #1 expanded. Gate on
+   `ADMIN_SECRET_KEY`; mirror the existing admin endpoint pattern.
+6. **Near Me home-screen shortcut.** Today, a user has to navigate to
+   `/near-me` and click "Use my location." If the browser already has
+   a cached permission (`navigator.permissions.query`), surface a
+   passive "Near you tonight" strip on `/` with a one-tap entry point.
 
 ## Risks and unknowns
 
-- **Apple's `/searchNearby` POI quality outside DC.** The 400 m radius
-  was tuned against DC bar/restaurant density. For a future LA or
-  NYC scrape the radius and limit defaults may need to scale with
-  local walkability.
-- **Knuckles JWKS rotation cadence.** Decision 030 caches keys for 1 h
-  with a 5 min stale-while-revalidate. If Knuckles rotates mid-window,
-  we accept at most 5 min of verification failures. If we see user
-  reports of intermittent 401s after Knuckles deploys, shrink the
-  cache window before adding failover.
-- **Sprint-end tests sometimes hit real localhost Redis.** The
-  `_disable_module_redis` fixture in `test_apple_maps.py` patches this
-  for one module, but other modules may silently rely on real Redis
-  during `pytest -k` runs. Audit is not yet scheduled.
+- **Map surfaces and crawler budgets.** The Tonight map is SSR via a
+  fallback list, which keeps it indexable, but the near-me page is
+  intentionally client-only (no coordinates at render time). That is
+  correct for a personal surface, but confirm sitemap entries point
+  crawlers at `/map` and `/events`, not `/near-me`.
+- **Apple Maps quota for the verify path.** Every community
+  recommendation submission hits the geocoder; we have no
+  per-session rate limit beyond the shared per-IP cap on
+  `/maps/places/verify`. If the surface turns out to attract drive-by
+  submissions, a per-user cap is the next lever.
+- **Pin-bucket drift from the genre catalogue.** Decision 041 records
+  that a new genre slug silently falls through to navy. That is the
+  right default, but the reader who adds slug #13 needs to remember
+  the bucket table exists — a lint rule or a dev-time assertion in
+  `pinColorForGenres` would make this safer.
 
 ## Decisions logged this sprint
 
-- 035 — Genre overlap is a scoring fallback, not its own scorer.
-- 036 — Venue comments use a ranked merge of hot + recent.
-- 037 — Apple Maps over Google Maps for venue cartography.
+- 040 — Community place recommendations must clear Apple Maps verification.
+- 041 — Tonight map pins collapse 12 genres into 5 color buckets.
+- 042 — Shows Near Me filters distance in-process, not in PostgreSQL.
