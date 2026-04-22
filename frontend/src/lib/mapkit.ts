@@ -76,7 +76,13 @@ export interface MapKitStatic {
     authorizationCallback: (done: (token: string) => void) => void;
     language?: string;
   }): void;
-  Map: new (element: HTMLElement, options?: Record<string, unknown>) => MapKitMap;
+  Map: (new (
+    element: HTMLElement,
+    options?: Record<string, unknown>,
+  ) => MapKitMap) & {
+    ColorSchemes: { Light: string; Dark: string; Adaptive: string };
+  };
+  FeatureVisibility: { Hidden: string; Visible: string; Adaptive: string };
   Coordinate: new (latitude: number, longitude: number) => MapKitCoordinate;
   CoordinateSpan: new (
     latitudeDelta: number,

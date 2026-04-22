@@ -73,11 +73,11 @@ export default function TonightMap({
         if (cancelled || !containerRef.current) return;
         mapkitRef.current = mk;
         const map = new mk.Map(containerRef.current, {
-          showsCompass: "Hidden",
+          showsCompass: mk.FeatureVisibility.Hidden,
           showsZoomControl: true,
           showsMapTypeControl: false,
           showsUserLocationControl: false,
-          colorScheme: "Light",
+          colorScheme: mk.Map.ColorSchemes.Light,
         });
         map.region = new mk.CoordinateRegion(
           new mk.Coordinate(DC_CENTER.latitude, DC_CENTER.longitude),
