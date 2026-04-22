@@ -27,6 +27,7 @@ import { deleteMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
 import { useRequireAuth } from "@/lib/auth";
 import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
 import { authorizeAppleMusic } from "@/lib/musickit";
+import { useDistanceUnit } from "@/lib/preferences";
 import {
   decodeRegistrationOptions,
   encodeRegistrationCredential,
@@ -231,6 +232,10 @@ export default function SettingsPage(): JSX.Element {
 
       <hr className="my-10 border-border" />
 
+      <DisplayPreferencesSection />
+
+      <hr className="my-10 border-border" />
+
       <ConnectedServicesSection
         token={token}
         connections={connections}
@@ -278,6 +283,51 @@ export default function SettingsPage(): JSX.Element {
         </button>
       </section>
     </PageShell>
+  );
+}
+
+function DisplayPreferencesSection(): JSX.Element {
+  const [unit, setUnit] = useDistanceUnit();
+
+  return (
+    <section>
+      <h2 className="text-base font-semibold text-text-primary">
+        Display preferences
+      </h2>
+      <p className="mt-1 text-sm text-text-secondary">
+        These settings only affect how values are shown on your device — we
+        don&apos;t sync them across browsers. Miles is the default to match the
+        DMV.
+      </p>
+
+      <div className="mt-4 space-y-4">
+        <Field label="Distance units">
+          <div className="flex items-center gap-1 rounded-full border border-border bg-bg-surface p-1 w-fit">
+            {(
+              [
+                { value: "mi" as const, label: "Miles" },
+                { value: "km" as const, label: "Kilometers" },
+              ]
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                aria-pressed={unit === opt.value}
+                onClick={() => setUnit(opt.value)}
+                className={
+                  "rounded-full px-3 py-1 text-xs font-medium transition " +
+                  (unit === opt.value
+                    ? "bg-green-primary text-text-inverse"
+                    : "text-text-secondary hover:text-text-primary")
+                }
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+      </div>
+    </section>
   );
 }
 

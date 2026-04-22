@@ -166,7 +166,9 @@ describe("NearMeShell", () => {
     expect(args.latitude).toBeCloseTo(38.9);
     expect(args.longitude).toBeCloseTo(-77);
     expect(args.window).toBe("tonight");
-    expect(args.radiusKm).toBe(10);
+    // Default distance unit is miles, so the default chip snaps to 5 mi
+    // (≈ 8.047 km) rather than a round 10 km.
+    expect(args.radiusKm).toBeCloseTo(8.04672);
 
     await waitFor(() => {
       expect(screen.getByTestId("map-event-count").textContent).toBe("2");
@@ -187,12 +189,14 @@ describe("NearMeShell", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /^5 km$/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^3 mi$/i }));
     });
     await waitFor(() => {
       expect(getNearMeEventsMock).toHaveBeenCalledTimes(2);
     });
-    expect(getNearMeEventsMock.mock.calls[1]![0].radiusKm).toBe(5);
+    expect(getNearMeEventsMock.mock.calls[1]![0].radiusKm).toBeCloseTo(
+      3 * 1.609344,
+    );
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /this week/i }));
@@ -221,7 +225,8 @@ describe("NearMeShell", () => {
     });
     expect(screen.queryByTestId("near-me-map")).not.toBeInTheDocument();
     expect(screen.getByText(/Event 1/)).toBeInTheDocument();
-    expect(screen.getByText(/300 m/)).toBeInTheDocument();
+    // 0.3 km → 0.2 mi with the default unit preference.
+    expect(screen.getByText(/0\.2 mi/)).toBeInTheDocument();
   });
 
   it("routes to a random event when Surprise me is clicked", async () => {

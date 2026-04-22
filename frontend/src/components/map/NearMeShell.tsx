@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import TonightMap from "@/components/map/TonightMap";
 import { getNearMeEvents } from "@/lib/api/maps";
+import { formatDistance as formatDistancePref, useDistanceUnit } from "@/lib/preferences";
 import type { NearMeEvent, NearMeWindow } from "@/types";
 
 type PermissionState =
@@ -44,7 +45,13 @@ interface NearMeShellProps {
   defaultWindow?: NearMeWindow;
 }
 
-const RADIUS_OPTIONS: readonly number[] = [2, 5, 10, 25];
+// Radius chip options per display unit. Internally we store the selected
+// radius in kilometers (the backend expects km), but the chip labels use
+// whole numbers in whichever unit the user has chosen so "5 mi" vs
+// "3.1 mi" doesn't surface in the control.
+const RADIUS_OPTIONS_KM: readonly number[] = [2, 5, 10, 25];
+const RADIUS_OPTIONS_MI: readonly number[] = [1, 3, 5, 10, 25];
+const KM_PER_MILE = 1.609344;
 const WINDOW_OPTIONS: readonly { value: NearMeWindow; label: string }[] = [
   { value: "tonight", label: "Tonight" },
   { value: "week", label: "This week" },
@@ -94,7 +101,30 @@ export default function NearMeShell({
   const [radiusKm, setRadiusKm] = useState<number>(defaultRadiusKm);
   const [timeWindow, setTimeWindow] = useState<NearMeWindow>(defaultWindow);
   const [view, setView] = useState<ViewMode>("map");
+  const [unit] = useDistanceUnit();
   const router = useRouter();
+
+  // When the user's unit preference changes, snap the radius to the
+  // closest available chip in the new unit so the control always
+  // reflects an active selection.
+  useEffect(() => {
+    const options = unit === "mi" ? RADIUS_OPTIONS_MI : RADIUS_OPTIONS_KM;
+    const currentInUnit = unit === "mi" ? radiusKm / KM_PER_MILE : radiusKm;
+    const closest = options.reduce(
+      (best, raw) =>
+        Math.abs(currentInUnit - raw) < Math.abs(currentInUnit - best)
+          ? raw
+          : best,
+      options[0] ?? 5,
+    );
+    const snappedKm = unit === "mi" ? closest * KM_PER_MILE : closest;
+    if (Math.abs(snappedKm - radiusKm) > 0.01) {
+      setRadiusKm(snappedKm);
+    }
+    // Intentionally leave radiusKm out of the dep list — we only want
+    // this to run when the unit flips, not on every radius change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unit]);
 
   const isOutOfRegion = Boolean(
     coords && haversineKm(coords, DC_CENTER) > OUT_OF_REGION_THRESHOLD_KM,
@@ -217,6 +247,7 @@ export default function NearMeShell({
         radiusKm={radiusKm}
         window={timeWindow}
         view={view}
+        unit={unit}
         onRadiusChange={setRadiusKm}
         onWindowChange={setTimeWindow}
         onViewChange={setView}
@@ -230,6 +261,7 @@ export default function NearMeShell({
                 events.length,
                 effectiveRadiusKm,
                 timeWindow,
+                unit,
                 isOutOfRegion,
               )}
         </p>
@@ -256,7 +288,7 @@ export default function NearMeShell({
       {view === "map" ? (
         <TonightMap events={events} />
       ) : (
-        <NearMeList events={events} />
+        <NearMeList events={events} unit={unit} />
       )}
     </div>
   );
@@ -339,6 +371,7 @@ interface FiltersRowProps {
   radiusKm: number;
   window: NearMeWindow;
   view: ViewMode;
+  unit: "mi" | "km";
   onRadiusChange: (km: number) => void;
   onWindowChange: (w: NearMeWindow) => void;
   onViewChange: (v: ViewMode) => void;
@@ -348,6 +381,7 @@ function FiltersRow({
   radiusKm,
   window,
   view,
+  unit,
   onRadiusChange,
   onWindowChange,
   onViewChange,
@@ -356,22 +390,26 @@ function FiltersRow({
     <div className="flex flex-wrap items-center gap-3">
       <fieldset className="flex items-center gap-1 rounded-full border border-border bg-bg-surface p-1">
         <legend className="sr-only">Radius</legend>
-        {RADIUS_OPTIONS.map((km) => (
-          <button
-            key={km}
-            type="button"
-            aria-pressed={radiusKm === km}
-            onClick={() => onRadiusChange(km)}
-            className={
-              "rounded-full px-3 py-1 text-xs font-medium transition " +
-              (radiusKm === km
-                ? "bg-green-primary text-text-inverse"
-                : "text-text-secondary hover:text-text-primary")
-            }
-          >
-            {km} km
-          </button>
-        ))}
+        {(unit === "mi" ? RADIUS_OPTIONS_MI : RADIUS_OPTIONS_KM).map((raw) => {
+          const asKm = unit === "mi" ? raw * KM_PER_MILE : raw;
+          const active = Math.abs(radiusKm - asKm) < 0.01;
+          return (
+            <button
+              key={raw}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onRadiusChange(asKm)}
+              className={
+                "rounded-full px-3 py-1 text-xs font-medium transition " +
+                (active
+                  ? "bg-green-primary text-text-inverse"
+                  : "text-text-secondary hover:text-text-primary")
+              }
+            >
+              {raw} {unit}
+            </button>
+          );
+        })}
       </fieldset>
 
       <fieldset className="flex items-center gap-1 rounded-full border border-border bg-bg-surface p-1">
@@ -451,7 +489,13 @@ function SurpriseButton({
   );
 }
 
-function NearMeList({ events }: { events: NearMeEvent[] }): JSX.Element {
+function NearMeList({
+  events,
+  unit,
+}: {
+  events: NearMeEvent[];
+  unit: "mi" | "km";
+}): JSX.Element {
   if (events.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-bg-surface p-6 text-center text-sm text-text-secondary">
@@ -481,7 +525,7 @@ function NearMeList({ events }: { events: NearMeEvent[] }): JSX.Element {
             </span>
           </div>
           <span className="shrink-0 rounded-full bg-bg-surface px-2 py-1 text-xs font-medium text-text-secondary">
-            {formatDistance(event.distance_km)}
+            {formatDistancePref(event.distance_km, unit)}
           </span>
         </li>
       ))}
@@ -506,6 +550,7 @@ function describeResultCount(
   count: number,
   radiusKm: number,
   window: NearMeWindow,
+  unit: "mi" | "km",
   isOutOfRegion: boolean,
 ): string {
   const scope = window === "tonight" ? "tonight" : "this week";
@@ -514,18 +559,12 @@ function describeResultCount(
     if (count === 1) return `1 DMV show ${scope}.`;
     return `${count} DMV shows ${scope}.`;
   }
+  const radius = formatDistancePref(radiusKm, unit);
   if (count === 0) {
-    return `No shows within ${radiusKm} km ${scope} yet.`;
+    return `No shows within ${radius} ${scope} yet.`;
   }
   if (count === 1) {
-    return `1 show within ${radiusKm} km ${scope}.`;
+    return `1 show within ${radius} ${scope}.`;
   }
-  return `${count} shows within ${radiusKm} km ${scope}.`;
-}
-
-function formatDistance(km: number): string {
-  if (km < 1) {
-    return `${Math.round(km * 1000)} m`;
-  }
-  return `${km.toFixed(1)} km`;
+  return `${count} shows within ${radius} ${scope}.`;
 }
