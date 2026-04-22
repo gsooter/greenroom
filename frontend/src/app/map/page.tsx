@@ -20,7 +20,9 @@ import { getMapRecommendations, getTonightMap } from "@/lib/api/maps";
 import { absolutePageUrl, buildPageMetadata } from "@/lib/metadata";
 import type { MapRecommendation, TonightMapEnvelope } from "@/types";
 
-export const revalidate = 300;
+// The /map shell fetches "tonight's" events, so a cached render pins the
+// date to whenever the page was last regenerated. Force-dynamic avoids that.
+export const dynamic = "force-dynamic";
 
 // DMV bounding box — wide enough to cover Baltimore → Charlottesville.
 const DMV_BBOX = {

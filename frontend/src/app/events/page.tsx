@@ -38,7 +38,10 @@ import {
 } from "@/lib/metadata";
 import type { City, EventSummary, Paginated } from "@/types";
 
-export const revalidate = 300;
+// Disables ISR caching: "Tonight" bucketing calls `new Date()` at render
+// time, and a cached HTML page pins yesterday's date until the next hit.
+// Force-dynamic keeps the clock honest without moving bucketization to the client.
+export const dynamic = "force-dynamic";
 
 const PER_PAGE = 48;
 
