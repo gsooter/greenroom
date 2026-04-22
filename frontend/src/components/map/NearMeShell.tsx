@@ -19,7 +19,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import TonightMap from "@/components/map/TonightMap";
 import { getNearMeEvents } from "@/lib/api/maps";
@@ -50,6 +50,31 @@ const WINDOW_OPTIONS: readonly { value: NearMeWindow; label: string }[] = [
   { value: "week", label: "This week" },
 ];
 
+// If the user is granting location from well outside the DMV (e.g. they
+// travel with the app open), a local radius returns nothing useful. Rather
+// than an empty surface, we fall back to the same query the /map page
+// uses — every DMV pin tonight/this week — while still centering the map
+// on the user's own coordinates for context.
+const DC_CENTER = { latitude: 38.9072, longitude: -77.0369 };
+const OUT_OF_REGION_THRESHOLD_KM = 100;
+const OUT_OF_REGION_RADIUS_KM = 500;
+
+function haversineKm(
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number },
+): number {
+  const R = 6371;
+  const toRad = (d: number): number => (d * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
 /**
  * Render the Near Me surface: permission gate, filters, view toggle, results.
  *
@@ -70,6 +95,18 @@ export default function NearMeShell({
   const [timeWindow, setTimeWindow] = useState<NearMeWindow>(defaultWindow);
   const [view, setView] = useState<ViewMode>("map");
   const router = useRouter();
+
+  const isOutOfRegion = Boolean(
+    coords && haversineKm(coords, DC_CENTER) > OUT_OF_REGION_THRESHOLD_KM,
+  );
+  const effectiveRadiusKm = isOutOfRegion ? OUT_OF_REGION_RADIUS_KM : radiusKm;
+  // Memoize so the object identity doesn't change on every render — the
+  // fetch effect keys off this and would loop otherwise.
+  const effectiveCenter = useMemo<Coordinates | null>(() => {
+    if (!coords) return null;
+    if (isOutOfRegion) return DC_CENTER;
+    return coords;
+  }, [coords, isOutOfRegion]);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -105,14 +142,14 @@ export default function NearMeShell({
   }, []);
 
   useEffect(() => {
-    if (!coords) return;
+    if (!effectiveCenter) return;
     let cancelled = false;
     setIsFetching(true);
     setFetchError(null);
     getNearMeEvents({
-      latitude: coords.latitude,
-      longitude: coords.longitude,
-      radiusKm,
+      latitude: effectiveCenter.latitude,
+      longitude: effectiveCenter.longitude,
+      radiusKm: effectiveRadiusKm,
       window: timeWindow,
       limit: 100,
     })
@@ -133,7 +170,7 @@ export default function NearMeShell({
     return () => {
       cancelled = true;
     };
-  }, [coords, radiusKm, timeWindow]);
+  }, [effectiveCenter, effectiveRadiusKm, timeWindow]);
 
   const onSurprise = useCallback((): void => {
     if (events.length === 0) return;
@@ -189,13 +226,26 @@ export default function NearMeShell({
         <p className="text-sm text-muted">
           {isFetching
             ? "Finding shows near you…"
-            : describeResultCount(events.length, radiusKm, timeWindow)}
+            : describeResultCount(
+                events.length,
+                effectiveRadiusKm,
+                timeWindow,
+                isOutOfRegion,
+              )}
         </p>
         <SurpriseButton
           disabled={events.length === 0 || isFetching}
           onClick={onSurprise}
         />
       </div>
+
+      {isOutOfRegion ? (
+        <div className="rounded-lg border border-border bg-bg-surface px-4 py-3 text-xs text-text-secondary">
+          Looks like you&apos;re outside the DMV tonight — we&apos;re showing
+          every DC-area show so you can still plan ahead. Your radius filter
+          kicks back in when you&apos;re closer to town.
+        </div>
+      ) : null}
 
       {fetchError ? (
         <div className="rounded-lg border border-blush-accent/40 bg-blush-soft/60 px-4 py-3 text-sm text-text-primary">
@@ -456,8 +506,14 @@ function describeResultCount(
   count: number,
   radiusKm: number,
   window: NearMeWindow,
+  isOutOfRegion: boolean,
 ): string {
   const scope = window === "tonight" ? "tonight" : "this week";
+  if (isOutOfRegion) {
+    if (count === 0) return `No DMV shows ${scope} yet.`;
+    if (count === 1) return `1 DMV show ${scope}.`;
+    return `${count} DMV shows ${scope}.`;
+  }
   if (count === 0) {
     return `No shows within ${radiusKm} km ${scope} yet.`;
   }
