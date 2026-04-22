@@ -144,7 +144,16 @@ export default function TonightMap({
     if (all.length > 0) map.addAnnotations(all);
 
     return () => {
-      if (all.length > 0) map.removeAnnotations(all);
+      // The init effect's cleanup can destroy the map before this cleanup
+      // runs (unmount, token refresh, strict-mode remount). Calling
+      // removeAnnotations on a destroyed map throws inside MapKit — skip
+      // if the live ref no longer points to the map we captured.
+      if (all.length === 0 || mapRef.current !== map) return;
+      try {
+        map.removeAnnotations(all);
+      } catch {
+        /* map was torn down between renders — nothing to clean up */
+      }
     };
   }, [events, recommendations, loadState]);
 
