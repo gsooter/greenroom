@@ -13,6 +13,8 @@
 import { fetchJson } from "@/lib/api/client";
 import type {
   MapRecommendation,
+  NearMeEnvelope,
+  NearMeWindow,
   TonightMapEnvelope,
 } from "@/types";
 
@@ -85,6 +87,36 @@ export async function getMapRecommendations(
     },
   );
   return res.data;
+}
+
+export interface GetNearMeEventsParams {
+  latitude: number;
+  longitude: number;
+  radiusKm?: number;
+  window?: NearMeWindow;
+  limit?: number;
+  revalidateSeconds?: number;
+}
+
+/**
+ * Fetch upcoming DMV events within a radius of a lat/lng, nearest first.
+ * Wraps `GET /api/v1/maps/near-me`.
+ */
+export async function getNearMeEvents(
+  params: GetNearMeEventsParams,
+): Promise<NearMeEnvelope> {
+  const { latitude, longitude, radiusKm, window, limit, revalidateSeconds } =
+    params;
+  return fetchJson<NearMeEnvelope>("/api/v1/maps/near-me", {
+    query: {
+      lat: latitude,
+      lng: longitude,
+      radius_km: radiusKm,
+      window,
+      limit,
+    },
+    revalidateSeconds,
+  });
 }
 
 export interface MapKitToken {

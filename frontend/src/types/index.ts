@@ -305,6 +305,29 @@ export interface TonightMapEnvelope {
 }
 
 /**
+ * A tonight-map pin augmented with `distance_km`, returned by
+ * `GET /api/v1/maps/near-me`. Mirrors the tonight-pin shape with
+ * an extra great-circle distance field (in km) for sorting/labels.
+ */
+export interface NearMeEvent extends TonightMapEvent {
+  distance_km: number;
+}
+
+export type NearMeWindow = "tonight" | "week";
+
+export interface NearMeEnvelope {
+  data: NearMeEvent[];
+  meta: {
+    count: number;
+    center: { latitude: number; longitude: number };
+    radius_km: number;
+    window: NearMeWindow;
+    date_from: string;
+    date_to: string;
+  };
+}
+
+/**
  * A community recommendation overlay row returned by
  * `GET /api/v1/maps/recommendations` — structurally the same shape
  * as `_serialize_recommendation` on the backend.

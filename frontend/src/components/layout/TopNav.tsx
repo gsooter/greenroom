@@ -39,6 +39,7 @@ export default async function TopNav() {
         <nav className="hidden items-center gap-1 text-sm sm:flex">
           <NavLink href="/events">Events</NavLink>
           <NavLink href="/map">Tonight</NavLink>
+          <NavLink href="/near-me">Near Me</NavLink>
           <NavLink href="/venues">Venues</NavLink>
         </nav>
 

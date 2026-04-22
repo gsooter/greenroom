@@ -29,6 +29,7 @@ const BASE_ITEMS: NavItem[] = [
   { href: "/", label: "Home" },
   { href: "/events", label: "Events" },
   { href: "/map", label: "Tonight" },
+  { href: "/near-me", label: "Near Me" },
   { href: "/venues", label: "Venues" },
 ];
 
@@ -76,7 +77,7 @@ export default function MobileBottomNav(): JSX.Element {
   const showAuthed = !isLoading && isAuthenticated;
   const showGuest = !isLoading && !isAuthenticated;
   const meActive = ME_ROUTES.some((route) => pathname.startsWith(route));
-  const gridClass = showAuthed ? "grid-cols-6" : "grid-cols-5";
+  const gridClass = showAuthed ? "grid-cols-7" : "grid-cols-6";
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 backdrop-blur sm:hidden">
