@@ -89,8 +89,10 @@ export default function TonightMap({
         mapRef.current = map;
         setLoadState("ready");
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.error("[TonightMap] MapKit init or construction failed:", err);
         setLoadState("unavailable");
       });
 
