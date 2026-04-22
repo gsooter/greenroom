@@ -5,7 +5,7 @@ No business logic lives here.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from flask import Response, request
@@ -125,7 +125,7 @@ def event_feed() -> Response:
 
     feed_text = events_service.format_event_feed(
         events,
-        generated_at=datetime.utcnow(),
+        generated_at=datetime.now(UTC),
     )
 
     return Response(feed_text, mimetype="text/plain; charset=utf-8")
