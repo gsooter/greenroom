@@ -404,3 +404,284 @@ def test_list_tonight_map_events_default_now_is_utc_now(
     payload = events_service.list_tonight_map_events(MagicMock())
     assert payload["meta"]["count"] == 0
     assert isinstance(payload["meta"]["date"], str)
+
+
+# ---------------------------------------------------------------------------
+# list_events_near
+# ---------------------------------------------------------------------------
+
+
+# Handy landmark coords that sit ~1.5km apart inside DC, used across
+# the near-me suite.
+_DUPONT = (38.9090, -77.0430)
+_U_STREET = (38.9170, -77.0280)
+_BALTIMORE_INNER_HARBOR = (39.2850, -76.6100)
+
+
+def _near_me_event(
+    *,
+    starts_at: datetime,
+    latitude: float | None,
+    longitude: float | None,
+    title: str = "Show",
+    genres: list[str] | None = None,
+) -> _FakeEvent:
+    """Build a near-me-shaped event with configurable venue coords.
+
+    Args:
+        starts_at: Event start time.
+        latitude: Venue latitude, or None to simulate a non-geocoded venue.
+        longitude: Venue longitude, or None to simulate a non-geocoded venue.
+        title: Event title.
+        genres: Event genres.
+
+    Returns:
+        An :class:`_FakeEvent` whose venue carries the given coords.
+    """
+    venue = _FakeVenue(latitude=latitude, longitude=longitude)
+    return _FakeEvent(
+        title=title,
+        starts_at=starts_at,
+        venue=venue,
+        genres=genres if genres is not None else ["indie"],
+    )
+
+
+def test_list_events_near_filters_outside_radius(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Events outside radius_km are dropped even if they match the window."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    close = _near_me_event(
+        starts_at=today, latitude=_U_STREET[0], longitude=_U_STREET[1], title="Close"
+    )
+    far = _near_me_event(
+        starts_at=today,
+        latitude=_BALTIMORE_INNER_HARBOR[0],
+        longitude=_BALTIMORE_INNER_HARBOR[1],
+        title="Far",
+    )
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([close, far], 2),
+    )
+
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=10.0,
+        window="tonight",
+        now_utc=today,
+    )
+
+    assert [row["title"] for row in result["data"]] == ["Close"]
+    assert result["meta"]["count"] == 1
+
+
+def test_list_events_near_sorts_by_distance_ascending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Results come back nearest-first regardless of repo ordering."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    close = _near_me_event(
+        starts_at=today, latitude=_DUPONT[0], longitude=_DUPONT[1], title="Close"
+    )
+    medium = _near_me_event(
+        starts_at=today, latitude=_U_STREET[0], longitude=_U_STREET[1], title="Medium"
+    )
+    far_but_inside = _near_me_event(
+        starts_at=today, latitude=38.8816, longitude=-77.0910, title="Arlington"
+    )
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([medium, far_but_inside, close], 3),
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=20.0,
+        window="tonight",
+        now_utc=today,
+    )
+    titles = [row["title"] for row in result["data"]]
+    assert titles == ["Close", "Medium", "Arlington"]
+
+
+def test_list_events_near_includes_distance_km_on_each_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each row carries a numeric distance_km rounded for display."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    row = _near_me_event(starts_at=today, latitude=_U_STREET[0], longitude=_U_STREET[1])
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([row], 1),
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=5.0,
+        window="tonight",
+        now_utc=today,
+    )
+    distance = result["data"][0]["distance_km"]
+    assert isinstance(distance, float)
+    # Dupont ↔ U Street is ~1.6km — give ourselves 50% wiggle room.
+    assert 0.8 < distance < 2.4
+
+
+def test_list_events_near_drops_events_without_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Events with no venue coords cannot have a distance computed."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    pinned = _near_me_event(
+        starts_at=today, latitude=_U_STREET[0], longitude=_U_STREET[1], title="Pinned"
+    )
+    no_lat = _near_me_event(
+        starts_at=today, latitude=None, longitude=-77.0, title="NoLat"
+    )
+    no_venue = _FakeEvent(starts_at=today, venue=None, title="NoVenue")
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([pinned, no_lat, no_venue], 3),
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=10.0,
+        window="tonight",
+        now_utc=today,
+    )
+    assert [row["title"] for row in result["data"]] == ["Pinned"]
+
+
+def test_list_events_near_tonight_window_is_et_today(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `tonight` window uses ET-today even when UTC has crossed midnight."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    # 2026-04-23 03:00 UTC == 2026-04-22 23:00 ET.
+    now_utc = datetime(2026, 4, 23, 3, 0, tzinfo=UTC)
+
+    events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=10.0,
+        window="tonight",
+        now_utc=now_utc,
+    )
+
+    from datetime import date
+
+    assert captured["date_from"] == date(2026, 4, 22)
+    assert captured["date_to"] == date(2026, 4, 22)
+
+
+def test_list_events_near_week_window_covers_seven_days(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `week` window stretches the upper bound six days past today."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    now_utc = datetime(2026, 4, 22, 15, 0, tzinfo=UTC)
+
+    events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=10.0,
+        window="week",
+        now_utc=now_utc,
+    )
+
+    from datetime import date
+
+    assert captured["date_from"] == date(2026, 4, 22)
+    assert captured["date_to"] == date(2026, 4, 28)
+
+
+def test_list_events_near_clamps_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """More candidates than `limit` still return only `limit` rows."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    rows = [
+        _near_me_event(
+            starts_at=today,
+            latitude=_DUPONT[0] + 0.001 * i,
+            longitude=_DUPONT[1],
+            title=f"E{i}",
+        )
+        for i in range(10)
+    ]
+    monkeypatch.setattr(
+        events_service.events_repo, "list_events", lambda _s, **_k: (rows, len(rows))
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=50.0,
+        window="tonight",
+        limit=3,
+        now_utc=today,
+    )
+    assert len(result["data"]) == 3
+
+
+def test_list_events_near_rejects_invalid_window() -> None:
+    """An unknown window string surfaces as a ValidationError."""
+    with pytest.raises(ValidationError):
+        events_service.list_events_near(
+            MagicMock(),
+            latitude=_DUPONT[0],
+            longitude=_DUPONT[1],
+            radius_km=10.0,
+            window="forever",  # type: ignore[arg-type]
+        )
+
+
+def test_list_events_near_meta_echoes_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Meta echoes the caller's center, radius, window, and date bounds."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        events_service.events_repo, "list_events", lambda _s, **_k: ([], 0)
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=7.5,
+        window="tonight",
+        now_utc=today,
+    )
+    meta = result["meta"]
+    assert meta["count"] == 0
+    assert meta["center"] == {"latitude": _DUPONT[0], "longitude": _DUPONT[1]}
+    assert meta["radius_km"] == 7.5
+    assert meta["window"] == "tonight"
+    assert meta["date_from"] == "2026-04-22"
+    assert meta["date_to"] == "2026-04-22"

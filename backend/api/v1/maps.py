@@ -146,6 +146,54 @@ def verify_place() -> tuple[dict[str, Any], int]:
     return {"data": asdict(place)}, 200
 
 
+@api_v1.route("/maps/near-me", methods=["GET"])
+def near_me_events() -> tuple[dict[str, Any], int]:
+    """Return upcoming DMV events within a radius of a lat/lng.
+
+    Powers the "Shows Near Me" surface. The user's browser supplies
+    the lat/lng via the geolocation API; this endpoint fetches the
+    matching time window from the event repo, filters to venues within
+    ``radius_km`` using an in-process haversine, and returns them
+    sorted nearest-first.
+
+    Query parameters:
+        lat: WGS-84 latitude of the user's current location. Required.
+        lng: WGS-84 longitude of the user's current location. Required.
+        radius_km: Maximum great-circle distance to include, in km.
+            Default 10, clamped to ``[0.5, 100]``.
+        window: ``"tonight"`` (today only, ET) or ``"week"`` (next 7
+            days in ET). Default ``"tonight"``.
+        limit: Maximum rows returned after distance sort. Default 50,
+            clamped to ``[1, 100]``.
+
+    Returns:
+        Tuple of JSON body and HTTP 200. See
+        :func:`backend.services.events.list_events_near` for the row
+        shape and meta contents.
+
+    Raises:
+        AppError: ``INVALID_REQUEST`` (400) for missing/malformed coords.
+        ValidationError: (422) for unsupported ``window`` values —
+            propagated from the service layer.
+    """
+    session = get_db()
+    latitude = _required_float("lat")
+    longitude = _required_float("lng")
+    radius_km = _clamped_float("radius_km", default=10.0, low=0.5, high=100.0)
+    limit = _clamped_int("limit", default=50, low=1, high=100)
+    window = (request.args.get("window") or "tonight").strip().lower()
+
+    envelope = events_service.list_events_near(
+        session,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        window=window,  # type: ignore[arg-type]
+        limit=limit,
+    )
+    return envelope, 200
+
+
 @api_v1.route("/maps/tonight", methods=["GET"])
 def tonight_map() -> tuple[dict[str, Any], int]:
     """Return today's pinnable DMV events for the Tonight map surface.
@@ -239,6 +287,29 @@ def _clamped_int(name: str, *, default: int, low: int, high: int) -> int:
     else:
         try:
             value = int(raw)
+        except (TypeError, ValueError):
+            value = default
+    return max(low, min(high, value))
+
+
+def _clamped_float(name: str, *, default: float, low: float, high: float) -> float:
+    """Parse a float query arg, falling back to ``default`` and clamping.
+
+    Args:
+        name: Query parameter name.
+        default: Value to use when the arg is missing or unparseable.
+        low: Inclusive lower bound after parsing.
+        high: Inclusive upper bound after parsing.
+
+    Returns:
+        The parsed float, clamped to ``[low, high]``.
+    """
+    raw = request.args.get(name)
+    if raw is None or raw == "":
+        value = default
+    else:
+        try:
+            value = float(raw)
         except (TypeError, ValueError):
             value = default
     return max(low, min(high, value))

@@ -4,9 +4,10 @@ All event-related business logic lives here. API routes call these
 functions and never access the repository layer directly.
 """
 
+import math
 import uuid
-from datetime import UTC, date, datetime
-from typing import Any
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -16,6 +17,10 @@ from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.repositories import events as events_repo
 
 _ET_ZONE = ZoneInfo("America/New_York")
+
+NearMeWindow = Literal["tonight", "week"]
+_NEAR_ME_WINDOWS: frozenset[str] = frozenset({"tonight", "week"})
+_EARTH_RADIUS_KM = 6371.0088
 
 
 def get_event(session: Session, event_id: uuid.UUID) -> Event:
@@ -315,6 +320,138 @@ def list_tonight_map_events(
         "data": pins,
         "meta": {"count": len(pins), "date": today.isoformat()},
     }
+
+
+def list_events_near(
+    session: Session,
+    *,
+    latitude: float,
+    longitude: float,
+    radius_km: float,
+    window: NearMeWindow = "tonight",
+    region: str = "DMV",
+    limit: int = 50,
+    now_utc: datetime | None = None,
+) -> dict[str, Any]:
+    """Return upcoming events within ``radius_km`` of a lat/lng, nearest first.
+
+    Powers the "Shows Near Me" surface. Unlike the Tonight map (which
+    sweeps the whole DMV), this endpoint narrows to a radius around
+    the user's current location and supports a small time window —
+    ``"tonight"`` for today only, ``"week"`` for the next seven days.
+
+    The distance filter is computed in Python via the haversine formula
+    so the repo query doesn't need PostGIS. The DMV dataset is small
+    enough (< 100 venues) that the post-fetch filter is cheap.
+
+    Args:
+        session: Active SQLAlchemy session.
+        latitude: WGS-84 latitude of the user's current location.
+        longitude: WGS-84 longitude of the user's current location.
+        radius_km: Maximum great-circle distance to include, in km.
+        window: ``"tonight"`` (today only, ET) or ``"week"`` (today
+            through today + 6 days, ET).
+        region: City region filter; defaults to ``"DMV"``.
+        limit: Maximum rows returned after distance sort. Capped
+            internally at 100 since the map surface renders one pin per.
+        now_utc: Clock anchor in UTC, injected by tests to pin the ET
+            day window. Defaults to :func:`datetime.now` in production.
+
+    Returns:
+        Standard envelope ``{"data": [...], "meta": {...}}``. Each row
+        has the tonight-map pin shape plus a ``distance_km`` float.
+        Meta echoes the caller's center, radius, window, and the
+        resolved ``date_from`` / ``date_to`` bounds.
+
+    Raises:
+        ValidationError: If ``window`` is not one of the supported
+            literals.
+    """
+    if window not in _NEAR_ME_WINDOWS:
+        raise ValidationError(
+            f"Invalid window: '{window}'. Valid values: {sorted(_NEAR_ME_WINDOWS)}"
+        )
+    capped_limit = max(1, min(limit, 100))
+
+    anchor = (now_utc or datetime.now(UTC)).astimezone(_ET_ZONE)
+    day_from = anchor.date()
+    day_to = day_from if window == "tonight" else day_from + timedelta(days=6)
+
+    events, _total = events_repo.list_events(
+        session,
+        region=region,
+        date_from=day_from,
+        date_to=day_to,
+        status=EventStatus.CONFIRMED,
+        page=1,
+        per_page=200,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        if not _has_coords(event):
+            continue
+        venue = event.venue
+        assert venue is not None  # narrowed by _has_coords
+        distance = _haversine_km(
+            latitude,
+            longitude,
+            venue.latitude,  # type: ignore[arg-type]
+            venue.longitude,  # type: ignore[arg-type]
+        )
+        if distance > radius_km:
+            continue
+        payload = _serialize_tonight_event(event)
+        payload["distance_km"] = round(distance, 3)
+        rows.append(payload)
+
+    rows.sort(key=lambda r: r["distance_km"])
+    rows = rows[:capped_limit]
+
+    return {
+        "data": rows,
+        "meta": {
+            "count": len(rows),
+            "center": {"latitude": latitude, "longitude": longitude},
+            "radius_km": radius_km,
+            "window": window,
+            "date_from": day_from.isoformat(),
+            "date_to": day_to.isoformat(),
+        },
+    }
+
+
+def _haversine_km(
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+) -> float:
+    """Great-circle distance between two WGS-84 points in kilometres.
+
+    Uses the standard haversine formula with the IUGG mean Earth radius
+    (6371.0088 km) so distances are accurate to within ~0.3% for the
+    sub-100-km ranges the near-me surface cares about.
+
+    Args:
+        lat1: Latitude of point A in decimal degrees.
+        lon1: Longitude of point A in decimal degrees.
+        lat2: Latitude of point B in decimal degrees.
+        lon2: Longitude of point B in decimal degrees.
+
+    Returns:
+        Great-circle distance in kilometres.
+    """
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return _EARTH_RADIUS_KM * c
 
 
 def _has_coords(event: Event) -> bool:
