@@ -14,6 +14,7 @@ propagation.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -21,6 +22,7 @@ from flask.testing import FlaskClient
 
 from backend.api.v1 import maps as route
 from backend.core.exceptions import APPLE_MAPS_UNAVAILABLE, AppError
+from backend.data.models.users import User
 from backend.services.apple_maps import NearbyPlace, VerifiedPlace
 
 # ---------------------------------------------------------------------------
@@ -491,3 +493,121 @@ def test_near_me_is_public(
     )
     resp = client.get("/api/v1/maps/near-me?lat=38.9&lng=-77.0")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# GET /maps/places/search (authed)
+# ---------------------------------------------------------------------------
+
+
+def _place(name: str, category: str | None = "Bar") -> NearbyPlace:
+    """Build a minimal :class:`NearbyPlace` for stubbed search returns.
+
+    Args:
+        name: Display name for the synthetic place.
+        category: Apple POI category string or None.
+
+    Returns:
+        A frozen NearbyPlace instance.
+    """
+    return NearbyPlace(
+        name=name,
+        category=category,
+        address=f"{name} Address",
+        latitude=38.9152,
+        longitude=-77.0316,
+        distance_m=100,
+    )
+
+
+def test_search_places_requires_auth(client: FlaskClient) -> None:
+    """Without a bearer token, the route is 401 — the limiter runs last."""
+    resp = client.get("/api/v1/maps/places/search?lat=38.9&lng=-77.0")
+    assert resp.status_code == 401
+
+
+def test_search_places_happy_path(
+    authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Authed GET returns the serialized NearbyPlace list and a count."""
+    client, _user, headers = authed_client
+    captured: dict[str, Any] = {}
+
+    def _fake_search(**kwargs: Any) -> list[NearbyPlace]:
+        captured.update(kwargs)
+        return [_place("The Gibson"), _place("Marvin", category="Restaurant")]
+
+    monkeypatch.setattr(route.service, "search_nearby_places", _fake_search)
+    resp = client.get(
+        "/api/v1/maps/places/search?lat=38.917&lng=-77.032",
+        headers=headers(),
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["meta"] == {"count": 2}
+    assert [p["name"] for p in body["data"]] == ["The Gibson", "Marvin"]
+    assert captured["categories"] == ("Restaurant", "Bar", "Cafe")
+    assert captured["radius_m"] == 1000
+    assert captured["limit"] == 8
+    assert captured["query"] is None
+
+
+def test_search_places_forwards_query_to_service(
+    authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``q`` is threaded through to Apple — no client-side post-filter.
+
+    Apple's ``/v1/search`` already ranks by relevance, so the route
+    hands whatever the service returns back to the caller untouched.
+    """
+    client, _user, headers = authed_client
+    captured: dict[str, Any] = {}
+
+    def _fake_search(**kwargs: Any) -> list[NearbyPlace]:
+        captured.update(kwargs)
+        return [_place("Black Cat")]
+
+    monkeypatch.setattr(route.service, "search_nearby_places", _fake_search)
+    resp = client.get(
+        "/api/v1/maps/places/search?lat=38.9&lng=-77.0&q=cat",
+        headers=headers(),
+    )
+    assert resp.status_code == 200
+    assert captured["query"] == "cat"
+    names = [p["name"] for p in resp.get_json()["data"]]
+    assert names == ["Black Cat"]
+
+
+def test_search_places_clamps_radius_and_limit(
+    authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """radius_m and limit are clamped at the route boundary."""
+    client, _user, headers = authed_client
+    captured: dict[str, Any] = {}
+
+    def _fake_search(**kwargs: Any) -> list[NearbyPlace]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(route.service, "search_nearby_places", _fake_search)
+    resp = client.get(
+        "/api/v1/maps/places/search?lat=38.9&lng=-77.0&radius_m=99999&limit=500",
+        headers=headers(),
+    )
+    assert resp.status_code == 200
+    assert captured["radius_m"] == 5000
+    assert captured["limit"] == 20
+
+
+def test_search_places_rejects_missing_coordinates(
+    authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
+) -> None:
+    """Missing lat/lng is a 400 before the service is called."""
+    client, _user, headers = authed_client
+    resp = client.get("/api/v1/maps/places/search", headers=headers())
+    assert resp.status_code == 400
+    assert resp.get_json()["error"]["code"] == "INVALID_REQUEST"

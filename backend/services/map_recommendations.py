@@ -28,13 +28,15 @@ layer returns JSON-ready dicts without another transform.
 from __future__ import annotations
 
 import hashlib
+import math
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from backend.core.config import get_settings
 from backend.core.exceptions import (
-    PLACE_NOT_VERIFIED,
+    PLACE_VERIFICATION_FAILED,
     RECOMMENDATION_NOT_FOUND,
+    VENUE_NOT_FOUND,
     AppError,
     ForbiddenError,
     NotFoundError,
@@ -43,6 +45,7 @@ from backend.core.exceptions import (
 )
 from backend.data.models.map_recommendations import MapRecommendationCategory
 from backend.data.repositories import map_recommendations as rec_repo
+from backend.data.repositories import venues as venues_repo
 from backend.services import apple_maps
 
 if TYPE_CHECKING:
@@ -52,6 +55,14 @@ if TYPE_CHECKING:
 
     from backend.data.models.map_recommendations import MapRecommendation
     from backend.data.models.users import User
+    from backend.data.models.venues import Venue
+
+VENUE_GUARDRAIL_METERS = 1000.0
+"""Maximum distance (metres) between a venue and a tip's verified place.
+A submission anchored to a venue whose Apple-verified place sits
+farther than this is rejected. Chosen to cover a comfortable walking
+radius around a venue without letting submitters pin completely
+unrelated parts of the city."""
 
 MAX_BODY_LEN = 2000
 MIN_BODY_LEN = 2
@@ -161,11 +172,39 @@ def _as_aware_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Return the great-circle distance in metres between two lat/lngs.
+
+    Uses the spherical Earth approximation, which is accurate to a few
+    metres over the distances we care about (DMV-scale walks).
+
+    Args:
+        lat1: Latitude of the first point in degrees.
+        lng1: Longitude of the first point in degrees.
+        lat2: Latitude of the second point in degrees.
+        lng2: Longitude of the second point in degrees.
+
+    Returns:
+        Distance between the two points in metres.
+    """
+    earth_radius_m = 6_371_000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lam = math.radians(lng2 - lng1)
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
+    )
+    return earth_radius_m * 2 * math.asin(min(1.0, math.sqrt(a)))
+
+
 def _serialize_recommendation(
     rec: MapRecommendation,
     likes: int,
     dislikes: int,
     viewer_vote: int | None,
+    *,
+    venue: Venue | None = None,
 ) -> dict[str, Any]:
     """Produce the JSON-ready dict the frontend renders.
 
@@ -175,15 +214,30 @@ def _serialize_recommendation(
         dislikes: Aggregated -1 votes.
         viewer_vote: +1, -1, or None depending on whether the current
             viewer has voted on this recommendation.
+        venue: Optional venue to compute ``distance_from_venue_m`` from.
+            When the venue has coordinates and the recommendation is
+            anchored to it, the distance is included in the response
+            so the frontend can show "120 m from venue".
 
     Returns:
         A plain dict ready to hand to ``jsonify``.
     """
+    distance_from_venue_m: int | None = None
+    if venue is not None and venue.latitude is not None and venue.longitude is not None:
+        distance_from_venue_m = round(
+            _haversine_m(
+                venue.latitude,
+                venue.longitude,
+                rec.latitude,
+                rec.longitude,
+            )
+        )
     return {
         "id": str(rec.id),
         "submitter_user_id": (
             str(rec.submitter_user_id) if rec.submitter_user_id else None
         ),
+        "venue_id": str(rec.venue_id) if rec.venue_id else None,
         "place_name": rec.place_name,
         "place_address": rec.place_address,
         "latitude": rec.latitude,
@@ -199,6 +253,7 @@ def _serialize_recommendation(
         "dislikes": dislikes,
         "viewer_vote": viewer_vote,
         "suppressed": rec.suppressed_at is not None,
+        "distance_from_venue_m": distance_from_venue_m,
         "created_at": rec.created_at.isoformat() if rec.created_at else None,
         "updated_at": rec.updated_at.isoformat() if rec.updated_at else None,
     }
@@ -278,6 +333,64 @@ def list_recommendations(
     ]
 
 
+def list_tips_for_venue(
+    session: Session,
+    *,
+    venue: Venue,
+    category: str | None = None,
+    limit: int = 100,
+    viewer_user_id: uuid.UUID | None = None,
+    viewer_session_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return serialized recommendations anchored to a venue.
+
+    Ordering is net votes then recency. Suppressed rows are excluded.
+    Each serialized dict carries ``distance_from_venue_m`` so the
+    frontend can render "120 m from {venue}".
+
+    Args:
+        session: Active SQLAlchemy session.
+        venue: The venue whose tips we want. Caller resolves by slug.
+        category: Optional category filter string.
+        limit: Max rows to return.
+        viewer_user_id: Caller's user id, when logged in. Used to
+            populate ``viewer_vote`` on each tip.
+        viewer_session_id: Caller's guest session id, same use.
+
+    Returns:
+        A list of serialized recommendation dicts.
+
+    Raises:
+        ValidationError: If ``category`` is unrecognized.
+    """
+    parsed_category = _parse_category(category) if category else None
+    rows = rec_repo.list_recommendations_for_venue(
+        session,
+        venue_id=venue.id,
+        category=parsed_category,
+        limit=limit,
+    )
+    if not rows:
+        return []
+
+    viewer_votes = rec_repo.get_voter_values_for_recommendations(
+        session,
+        [rec.id for rec, _l, _d in rows],
+        user_id=viewer_user_id,
+        session_id=viewer_session_id,
+    )
+    return [
+        _serialize_recommendation(
+            rec,
+            likes=likes,
+            dislikes=dislikes,
+            viewer_vote=viewer_votes.get(rec.id),
+            venue=venue,
+        )
+        for rec, likes, dislikes in rows
+    ]
+
+
 def submit_recommendation(
     session: Session,
     *,
@@ -287,6 +400,7 @@ def submit_recommendation(
     by: str,
     near_latitude: float | None,
     near_longitude: float | None,
+    venue_id: uuid.UUID | None = None,
     category: str,
     body: str,
     honeypot: str | None,
@@ -304,11 +418,18 @@ def submit_recommendation(
     3. Minimum account age — authenticated accounts younger than
        :data:`MIN_ACCOUNT_AGE` cannot post. Does not apply to guests;
        guests get rate-limited by IP instead.
-    4. Place verification — round-trip the user's query through Apple
+    4. Venue lookup — when ``venue_id`` is supplied, resolve the venue
+       and use its coords as the anchor for name-based verification.
+       A tip pinned to a venue must verify to a place within
+       :data:`VENUE_GUARDRAIL_METERS` of that venue.
+    5. Place verification — round-trip the user's query through Apple
        Maps. Only the verifier's fields (name, address, lat/lng,
        similarity) are persisted, so the client cannot smuggle in an
        unverified location.
-    5. Persist — insert the row with category, body, and ip_hash.
+    6. Guardrail — when venue-anchored, reject any verified place
+       outside the 1000 m radius with ``PLACE_VERIFICATION_FAILED``.
+    7. Persist — insert the row with venue_id, category, body, and
+       ip_hash.
 
     Args:
         session: Active SQLAlchemy session.
@@ -318,23 +439,31 @@ def submit_recommendation(
         by: Either ``"name"`` (default flow, needs a lat/lng anchor)
             or ``"address"``.
         near_latitude: Anchor latitude for name verification. Ignored
-            for address verification.
+            for address verification and when ``venue_id`` is set (the
+            venue's own coords become the anchor).
         near_longitude: Anchor longitude for name verification.
+        venue_id: Optional FK to the venue the tip should attach to.
+            When set, triggers the 1000 m guardrail and overrides the
+            anchor lat/lng with the venue's own coords.
         category: Raw category string from the request.
         body: Raw recommendation body from the request.
         honeypot: Value of the hidden honeypot field; must be blank.
         ip_hash: Already-salted IP hash from the caller.
 
     Returns:
-        The serialized recommendation dict.
+        The serialized recommendation dict. When ``venue_id`` is set
+        the dict also includes ``distance_from_venue_m``.
 
     Raises:
         UnauthorizedError: If neither ``user`` nor ``session_id`` is
             supplied.
         ValidationError: For honeypot, account-age, bad category,
             bad body, or a malformed ``by`` / missing anchor.
-        AppError: ``PLACE_NOT_VERIFIED`` (404) when Apple has no match
-            or rejects the query below the similarity floor;
+        NotFoundError: ``VENUE_NOT_FOUND`` when ``venue_id`` is set but
+            no venue exists with that id.
+        AppError: ``PLACE_VERIFICATION_FAILED`` (422) when Apple has no
+            match, the similarity gate rejects the only candidate, or
+            the verified place sits outside the venue guardrail;
             ``APPLE_MAPS_UNAVAILABLE`` propagated from the service
             layer.
     """
@@ -351,17 +480,54 @@ def submit_recommendation(
     parsed_category = _parse_category(category)
     trimmed_body = _validated_body(body)
 
+    anchor_venue: Venue | None = None
+    if venue_id is not None:
+        anchor_venue = venues_repo.get_venue_by_id(session, venue_id)
+        if anchor_venue is None:
+            raise NotFoundError(
+                code=VENUE_NOT_FOUND,
+                message=f"No venue found with id {venue_id}.",
+            )
+        if anchor_venue.latitude is None or anchor_venue.longitude is None:
+            raise ValidationError("Venue has no coordinates; cannot anchor a tip.")
+        effective_lat: float | None = anchor_venue.latitude
+        effective_lng: float | None = anchor_venue.longitude
+    else:
+        effective_lat = near_latitude
+        effective_lng = near_longitude
+
     verified = _verify_place(
         query=query,
         by=by,
-        near_latitude=near_latitude,
-        near_longitude=near_longitude,
+        near_latitude=effective_lat,
+        near_longitude=effective_lng,
     )
+
+    if anchor_venue is not None:
+        assert anchor_venue.latitude is not None
+        assert anchor_venue.longitude is not None
+        distance_m = _haversine_m(
+            anchor_venue.latitude,
+            anchor_venue.longitude,
+            verified.latitude,
+            verified.longitude,
+        )
+        if distance_m > VENUE_GUARDRAIL_METERS:
+            raise AppError(
+                code=PLACE_VERIFICATION_FAILED,
+                message=(
+                    f"'{verified.name}' is {round(distance_m)} m from "
+                    f"{anchor_venue.name} — tips must be within "
+                    f"{int(VENUE_GUARDRAIL_METERS)} m of the venue."
+                ),
+                status_code=422,
+            )
 
     rec = rec_repo.create_recommendation(
         session,
         submitter_user_id=user.id if user is not None else None,
         session_id=session_id if user is None else None,
+        venue_id=venue_id,
         place_name=verified.name,
         place_address=verified.address,
         latitude=verified.latitude,
@@ -371,7 +537,9 @@ def submit_recommendation(
         body=trimmed_body,
         ip_hash=ip_hash,
     )
-    return _serialize_recommendation(rec, likes=0, dislikes=0, viewer_vote=None)
+    return _serialize_recommendation(
+        rec, likes=0, dislikes=0, viewer_vote=None, venue=anchor_venue
+    )
 
 
 def delete_recommendation(
@@ -530,9 +698,9 @@ def _verify_place(
         raise ValidationError("`by` must be 'name' or 'address'.")
     if place is None:
         raise AppError(
-            code=PLACE_NOT_VERIFIED,
+            code=PLACE_VERIFICATION_FAILED,
             message="Apple Maps did not return a confident match.",
-            status_code=404,
+            status_code=422,
         )
     return place
 
@@ -542,9 +710,11 @@ __all__ = [
     "MAX_BODY_LEN",
     "MIN_ACCOUNT_AGE",
     "MIN_BODY_LEN",
+    "VENUE_GUARDRAIL_METERS",
     "cast_vote",
     "delete_recommendation",
     "hash_request_ip",
     "list_recommendations",
+    "list_tips_for_venue",
     "submit_recommendation",
 ]

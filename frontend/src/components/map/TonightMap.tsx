@@ -198,7 +198,7 @@ function renderPinElement(color: MapPinColor): HTMLElement {
       "position:relative",
       "width:22px",
       "height:22px",
-      "transform:translate(-50%, -100%)",
+      "transform:translate(-50%, -50%)",
     ].join(";"),
   );
   const pulse = document.createElement("span");

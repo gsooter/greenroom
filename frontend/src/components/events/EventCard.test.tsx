@@ -47,6 +47,7 @@ function summary(overrides: Partial<EventSummary> = {}): EventSummary {
     slug: "fake-show",
     starts_at: "2026-05-02T23:00:00.000Z",
     artists: ["Band A", "Band B"],
+    genres: [],
     image_url: "https://img.test/e.jpg",
     min_price: 25,
     max_price: 55,

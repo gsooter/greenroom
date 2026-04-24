@@ -7,6 +7,7 @@
  */
 
 import { render, screen } from "@testing-library/react";
+import { forwardRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import CalendarView from "@/components/events/CalendarView";
@@ -14,17 +15,18 @@ import type { EventSummary } from "@/types";
 
 vi.mock("next/link", () => ({
   __esModule: true,
-  default: ({
-    href,
-    children,
-    ...rest
-  }: {
-    href: string;
-    children: React.ReactNode;
-  } & Record<string, unknown>) => (
-    <a href={href} {...rest}>
-      {children}
-    </a>
+  default: forwardRef<HTMLAnchorElement, Record<string, unknown>>(
+    function MockLink(props, ref) {
+      const { href, children, ...rest } = props as {
+        href: string;
+        children: React.ReactNode;
+      } & Record<string, unknown>;
+      return (
+        <a ref={ref} href={href} {...rest}>
+          {children}
+        </a>
+      );
+    },
   ),
 }));
 
@@ -38,6 +40,7 @@ function event(
     slug: `show-${id.slice(0, 4)}`,
     starts_at,
     artists: [],
+    genres: [],
     image_url: null,
     min_price: null,
     max_price: null,

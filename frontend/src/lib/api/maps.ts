@@ -119,6 +119,160 @@ export async function getNearMeEvents(
   });
 }
 
+export interface SubmitMapRecommendationInput {
+  query: string;
+  by: "name" | "address";
+  lat?: number;
+  lng?: number;
+  venueId?: string;
+  category: string;
+  body: string;
+  honeypot?: string;
+  sessionId?: string;
+}
+
+/**
+ * POST a new community recommendation to
+ * `/api/v1/maps/recommendations`. When `venueId` is supplied the backend
+ * uses the venue's own coords as the anchor and enforces the 1000 m
+ * guardrail — the caller does not need to supply `lat`/`lng`.
+ */
+export async function submitMapRecommendation(
+  input: SubmitMapRecommendationInput,
+  token: string | null,
+): Promise<MapRecommendation> {
+  const { sessionId, venueId, ...rest } = input;
+  const res = await fetchJson<{ data: MapRecommendation }>(
+    "/api/v1/maps/recommendations",
+    {
+      method: "POST",
+      token: token ?? undefined,
+      body: {
+        query: rest.query,
+        by: rest.by,
+        lat: rest.lat,
+        lng: rest.lng,
+        venue_id: venueId,
+        category: rest.category,
+        body: rest.body,
+        honeypot: rest.honeypot ?? "",
+        // Backend ignores session_id when the caller is signed in.
+        session_id: token ? undefined : sessionId,
+      },
+    },
+  );
+  return res.data;
+}
+
+export interface VoteOnMapRecommendationResult {
+  likes: number;
+  dislikes: number;
+  viewer_vote: number | null;
+  suppressed: boolean;
+}
+
+/**
+ * POST a vote on a community recommendation. `value` must be -1, 0, or
+ * +1 — 0 clears an existing vote.
+ */
+export async function voteOnMapRecommendation(
+  recommendationId: string,
+  token: string | null,
+  value: -1 | 0 | 1,
+  sessionId: string | null,
+): Promise<VoteOnMapRecommendationResult> {
+  const res = await fetchJson<{ data: VoteOnMapRecommendationResult }>(
+    `/api/v1/maps/recommendations/${recommendationId}/vote`,
+    {
+      method: "POST",
+      token: token ?? undefined,
+      body: {
+        value,
+        session_id: token ? undefined : sessionId,
+      },
+    },
+  );
+  return res.data;
+}
+
+export interface NearbyPlace {
+  name: string;
+  category: string | null;
+  address: string | null;
+  latitude: number;
+  longitude: number;
+  distance_m: number;
+}
+
+export interface SearchPlacesParams {
+  latitude: number;
+  longitude: number;
+  q?: string;
+  categories?: string[];
+  radiusM?: number;
+  limit?: number;
+}
+
+/**
+ * Authed autocomplete for the "Leave a tip" place picker. Hits
+ * `/api/v1/maps/places/search`; the backend enforces a per-user
+ * rate limit of 20 req/min.
+ */
+export async function searchNearbyPlaces(
+  params: SearchPlacesParams,
+  token: string,
+): Promise<NearbyPlace[]> {
+  const { latitude, longitude, q, categories, radiusM, limit } = params;
+  const res = await fetchJson<{ data: NearbyPlace[]; meta: { count: number } }>(
+    "/api/v1/maps/places/search",
+    {
+      token,
+      query: {
+        lat: latitude,
+        lng: longitude,
+        q,
+        categories: categories && categories.length ? categories.join(",") : undefined,
+        radius_m: radiusM,
+        limit,
+      },
+      revalidateSeconds: 0,
+    },
+  );
+  return res.data;
+}
+
+export interface ListVenueTipsParams {
+  category?: string;
+  limit?: number;
+  sessionId?: string;
+}
+
+/**
+ * GET recommendations anchored to a venue. Returns rows with
+ * `distance_from_venue_m` populated so the UI can render "120 m from
+ * Black Cat". Public — auth optional, only affects viewer_vote.
+ */
+export async function listVenueTips(
+  slug: string,
+  token: string | null,
+  params: ListVenueTipsParams = {},
+): Promise<MapRecommendation[]> {
+  const { category, limit, sessionId } = params;
+  const res = await fetchJson<{
+    data: MapRecommendation[];
+    meta: { count: number };
+  }>(`/api/v1/venues/${slug}/tips`, {
+    token: token ?? undefined,
+    query: {
+      category,
+      limit,
+      session_id: token ? undefined : sessionId,
+    },
+    revalidateSeconds: 0,
+  });
+  return res.data;
+}
+
 export interface MapKitToken {
   token: string;
   expires_at: number;

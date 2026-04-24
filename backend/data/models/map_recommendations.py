@@ -44,6 +44,7 @@ from backend.core.database import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from backend.data.models.users import User
+    from backend.data.models.venues import Venue
 
 
 class MapRecommendationCategory(enum.StrEnum):
@@ -74,6 +75,11 @@ class MapRecommendation(TimestampMixin, Base):
         session_id: Opaque browser session id for guest submissions.
             Exactly one of ``submitter_user_id`` / ``session_id`` must
             be set, enforced by CHECK.
+        venue_id: Optional FK to the venue this recommendation is
+            anchored to. When set, the verified place must sit within
+            1000 m of the venue — enforced in the service layer at
+            submit time. Null for free-roaming pins submitted from the
+            standalone map.
         place_name: The verified place's canonical name, as returned
             by Apple Maps (e.g. "Black Cat" — not what the user typed).
         place_address: Apple's formatted address for the place, when
@@ -105,6 +111,7 @@ class MapRecommendation(TimestampMixin, Base):
         Index("ix_map_recommendations_ip_hash_created_at", "ip_hash", "created_at"),
         Index("ix_map_recommendations_suppressed_at", "suppressed_at"),
         Index("ix_map_recommendations_category", "category"),
+        Index("ix_map_recommendations_venue_id", "venue_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -118,6 +125,11 @@ class MapRecommendation(TimestampMixin, Base):
         nullable=True,
     )
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    venue_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("venues.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     place_name: Mapped[str] = mapped_column(String(200), nullable=False)
     place_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
@@ -135,6 +147,7 @@ class MapRecommendation(TimestampMixin, Base):
     )
 
     submitter: Mapped["User | None"] = relationship()
+    venue: Mapped["Venue | None"] = relationship()
     votes: Mapped[list["MapRecommendationVote"]] = relationship(
         back_populates="recommendation",
         cascade="all, delete-orphan",

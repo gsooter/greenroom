@@ -79,6 +79,7 @@ export interface EventSummary {
   slug: string;
   starts_at: string | null;
   artists: string[];
+  genres: string[];
   image_url: string | null;
   min_price: number | null;
   max_price: number | null;
@@ -92,7 +93,6 @@ export interface EventDetail extends EventSummary {
   event_type: EventType;
   ends_at: string | null;
   doors_at: string | null;
-  genres: string[];
   spotify_artist_ids: string[];
   ticket_url: string | null;
   source_url: string | null;
@@ -334,6 +334,7 @@ export interface NearMeEnvelope {
  */
 export interface MapRecommendation {
   id: string;
+  venue_id: string | null;
   place_name: string;
   place_address: string | null;
   latitude: number;
@@ -345,4 +346,9 @@ export interface MapRecommendation {
   viewer_vote: number | null;
   suppressed: boolean;
   created_at: string;
+  /**
+   * Great-circle distance from the anchor venue in metres. Populated
+   * by `GET /api/v1/venues/:slug/tips`; null on bbox list responses.
+   */
+  distance_from_venue_m?: number | null;
 }

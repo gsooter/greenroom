@@ -27,11 +27,89 @@ from typing import Any
 from flask import request
 
 from backend.api.v1 import api_v1
+from backend.core.auth import get_current_user, require_auth
 from backend.core.database import get_db
 from backend.core.exceptions import PLACE_NOT_VERIFIED, AppError
 from backend.core.rate_limit import rate_limit
 from backend.services import apple_maps as service
 from backend.services import events as events_service
+
+
+def _user_key() -> str:
+    """Resolve the current user id as a Redis rate-limit subject.
+
+    Used by authed endpoints that want to cap per-user rather than
+    per-IP. Relies on :func:`require_auth` having already populated
+    ``g.current_user`` — the rate-limit decorator runs *after*
+    ``require_auth``.
+
+    Returns:
+        The user id as a string, suitable for embedding in a Redis key.
+    """
+    user = get_current_user()
+    return str(user.id)
+
+
+@api_v1.route("/maps/places/search", methods=["GET"])
+@require_auth
+@rate_limit(
+    "maps_places_search_user",
+    limit=20,
+    window_seconds=60,
+    key_fn=_user_key,
+)
+def search_places() -> tuple[dict[str, Any], int]:
+    """Authed autocomplete for the "Leave a tip" place picker.
+
+    Wraps :func:`backend.services.apple_maps.search_nearby_places` and
+    returns the top matches as a ranked list. Auth is required and the
+    limiter is keyed per-user (not per-IP), so the heavier Apple Maps
+    calls can't be pounded by anonymous traffic.
+
+    Query parameters:
+        lat: WGS-84 latitude. Required.
+        lng: WGS-84 longitude. Required.
+        q: Optional free-text substring. When provided the results are
+            post-filtered to names/categories that contain the query.
+        categories: Comma-separated Apple POI categories. Defaults to
+            ``"Restaurant,Bar,Cafe"`` to match the "food & drinks"
+            framing of the tips feature.
+        radius_m: Hard distance cap in metres. Default 1000 (matches
+            the venue guardrail), clamped to ``[50, 5000]``.
+        limit: Max results returned. Default 8, clamped to ``[1, 20]``.
+
+    Returns:
+        Tuple of JSON body and HTTP 200. Body shape:
+        ``{"data": [NearbyPlace, ...], "meta": {"count": int}}``.
+
+    Raises:
+        AppError: ``INVALID_REQUEST`` (400) for malformed coords;
+            ``APPLE_MAPS_UNAVAILABLE`` propagated.
+        UnauthorizedError: When the bearer token is missing or invalid.
+        RateLimitExceededError: When the per-user cap is exceeded.
+    """
+    latitude = _required_float("lat")
+    longitude = _required_float("lng")
+    categories = _parse_categories(default=("Restaurant", "Bar", "Cafe"))
+    radius_m = _clamped_int("radius_m", default=1000, low=50, high=5000)
+    limit = _clamped_int("limit", default=8, low=1, high=20)
+    query = (request.args.get("q") or "").strip()
+
+    places = service.search_nearby_places(
+        latitude=latitude,
+        longitude=longitude,
+        categories=categories,
+        radius_m=radius_m,
+        limit=limit,
+        query=query or None,
+    )
+    return (
+        {
+            "data": [asdict(place) for place in places],
+            "meta": {"count": len(places)},
+        },
+        200,
+    )
 
 
 @api_v1.route("/maps/places/nearby", methods=["GET"])

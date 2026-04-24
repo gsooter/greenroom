@@ -189,6 +189,7 @@ def serialize_event_summary(event: Event) -> dict[str, Any]:
         "slug": event.slug,
         "starts_at": event.starts_at.isoformat() if event.starts_at else None,
         "artists": event.artists or [],
+        "genres": event.genres or [],
         "image_url": event.image_url,
         "min_price": event.min_price,
         "max_price": event.max_price,

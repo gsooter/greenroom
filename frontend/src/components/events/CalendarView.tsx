@@ -14,8 +14,32 @@
 
 import Link from "next/link";
 
+import CalendarDayCell from "@/components/events/CalendarDayCell";
 import { etDateKey } from "@/lib/dates";
+import {
+  pinColorForGenres,
+  pinColorVariable,
+  type MapPinColor,
+} from "@/lib/genre-colors";
 import type { EventSummary } from "@/types";
+
+const BUCKET_ORDER: readonly MapPinColor[] = [
+  "green",
+  "blush",
+  "amber",
+  "coral",
+  "gold",
+  "navy",
+];
+
+const BUCKET_LABEL: Readonly<Record<MapPinColor, string>> = {
+  green: "Indie & rock",
+  blush: "Pop & folk",
+  amber: "Electronic",
+  coral: "Hip-hop",
+  gold: "Jazz & soul",
+  navy: "Other",
+};
 
 interface CalendarViewProps {
   events: EventSummary[];
@@ -35,30 +59,60 @@ const MONTH_FORMAT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 });
 
+interface DayEntry {
+  event: EventSummary;
+  bucket: MapPinColor;
+}
+
+interface DayBuckets {
+  count: number;
+  buckets: Map<MapPinColor, number>;
+  entries: DayEntry[];
+}
+
 interface CalendarCell {
   key: string;
   day: number;
   inMonth: boolean;
   count: number;
+  buckets: Map<MapPinColor, number>;
+  entries: DayEntry[];
   isToday: boolean;
 }
 
-function countsByDate(events: EventSummary[]): Map<string, number> {
-  const map = new Map<string, number>();
+function bucketsByDate(events: EventSummary[]): Map<string, DayBuckets> {
+  const map = new Map<string, DayBuckets>();
   for (const event of events) {
     if (!event.starts_at) continue;
     const d = new Date(event.starts_at);
     if (Number.isNaN(d.getTime())) continue;
     const key = etDateKey(d);
-    map.set(key, (map.get(key) ?? 0) + 1);
+    const bucket = pinColorForGenres(event.genres);
+    const entry = map.get(key) ?? {
+      count: 0,
+      buckets: new Map(),
+      entries: [] as DayEntry[],
+    };
+    entry.count += 1;
+    entry.buckets.set(bucket, (entry.buckets.get(bucket) ?? 0) + 1);
+    entry.entries.push({ event, bucket });
+    map.set(key, entry);
   }
   return map;
+}
+
+function orderedBuckets(
+  buckets: Map<MapPinColor, number>,
+): Array<[MapPinColor, number]> {
+  return BUCKET_ORDER.filter((b) => buckets.has(b)).map(
+    (b) => [b, buckets.get(b) ?? 0] as [MapPinColor, number],
+  );
 }
 
 function buildMonthCells(
   year: number,
   monthIndex: number,
-  counts: Map<string, number>,
+  byDate: Map<string, DayBuckets>,
   todayKey: string,
 ): CalendarCell[] {
   const firstOfMonth = new Date(Date.UTC(year, monthIndex, 1));
@@ -70,27 +124,38 @@ function buildMonthCells(
 
   const cells: CalendarCell[] = [];
 
+  const readDay = (key: string): DayBuckets => {
+    const hit = byDate.get(key);
+    return hit ?? { count: 0, buckets: new Map(), entries: [] };
+  };
+
   for (let i = firstDow - 1; i >= 0; i--) {
     const day = prevMonthDays - i;
     const prevMonthIndex = monthIndex === 0 ? 11 : monthIndex - 1;
     const prevYear = monthIndex === 0 ? year - 1 : year;
     const key = `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const dayData = readDay(key);
     cells.push({
       key,
       day,
       inMonth: false,
-      count: counts.get(key) ?? 0,
+      count: dayData.count,
+      buckets: dayData.buckets,
+      entries: dayData.entries,
       isToday: key === todayKey,
     });
   }
 
   for (let day = 1; day <= daysInMonth; day++) {
     const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const dayData = readDay(key);
     cells.push({
       key,
       day,
       inMonth: true,
-      count: counts.get(key) ?? 0,
+      count: dayData.count,
+      buckets: dayData.buckets,
+      entries: dayData.entries,
       isToday: key === todayKey,
     });
   }
@@ -100,11 +165,14 @@ function buildMonthCells(
     const nextMonthIndex = monthIndex === 11 ? 0 : monthIndex + 1;
     const nextYear = monthIndex === 11 ? year + 1 : year;
     const key = `${nextYear}-${String(nextMonthIndex + 1).padStart(2, "0")}-${String(next).padStart(2, "0")}`;
+    const dayData = readDay(key);
     cells.push({
       key,
       day: next,
       inMonth: false,
-      count: counts.get(key) ?? 0,
+      count: dayData.count,
+      buckets: dayData.buckets,
+      entries: dayData.entries,
       isToday: key === todayKey,
     });
   }
@@ -128,8 +196,8 @@ export default function CalendarView({
   prevMonthHref,
   nextMonthHref,
 }: CalendarViewProps): JSX.Element {
-  const counts = countsByDate(events);
-  const cells = buildMonthCells(year, monthIndex, counts, todayKey);
+  const byDate = bucketsByDate(events);
+  const cells = buildMonthCells(year, monthIndex, byDate, todayKey);
   const displayLabel = MONTH_FORMAT.format(
     new Date(Date.UTC(year, monthIndex, 15)),
   );
@@ -164,6 +232,22 @@ export default function CalendarView({
         </div>
       </div>
 
+      <ul
+        aria-label="Genre color key"
+        className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-secondary"
+      >
+        {BUCKET_ORDER.map((bucket) => (
+          <li key={bucket} className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: pinColorVariable(bucket) }}
+            />
+            {BUCKET_LABEL[bucket]}
+          </li>
+        ))}
+      </ul>
+
       <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg border border-border bg-border">
         {WEEKDAY_LABELS.map((label) => (
           <div
@@ -189,17 +273,20 @@ export default function CalendarView({
           );
 
           if (hasEvents && cell.inMonth) {
+            const chips = orderedBuckets(cell.buckets);
             return (
-              <Link
+              <CalendarDayCell
                 key={cell.key}
                 href={buildDayHref(cell.key, citySlug)}
-                className={`${base} ${tone} transition hover:bg-green-soft/40`}
-              >
-                {dayNumber}
-                <span className="inline-flex items-center gap-1 rounded-full bg-green-primary px-2 py-0.5 text-xs font-semibold text-text-inverse">
-                  {cell.count}
-                </span>
-              </Link>
+                dayNumber={cell.day}
+                dayNumberClass={textColor}
+                cellClass={base}
+                toneClass={tone}
+                chips={chips}
+                entries={cell.entries}
+                bucketLabels={BUCKET_LABEL}
+                bucketOrder={BUCKET_ORDER}
+              />
             );
           }
 

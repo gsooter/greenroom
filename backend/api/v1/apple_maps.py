@@ -65,7 +65,9 @@ def venue_map_snapshot(slug: str) -> tuple[dict[str, Any], int]:
         height: Image height in CSS pixels. Clamped to 1-640. Default 400.
         zoom: Apple zoom level. Default 15.
         scheme: ``"light"`` or ``"dark"``. Default ``"light"``.
-        label: Optional pin glyph (2 chars max). Default ``"V"``.
+        label: Optional pin glyph (2 chars max). Default is no glyph —
+            Apple renders a plain red balloon pin, matching the native
+            Apple Maps look. Pass an explicit value to override.
 
     Returns:
         Tuple of JSON body and HTTP 200. Body shape:
@@ -91,7 +93,7 @@ def venue_map_snapshot(slug: str) -> tuple[dict[str, Any], int]:
     height = _int_arg("height", default=400)
     zoom = _float_arg("zoom", default=15.0)
     scheme = (request.args.get("scheme") or "light").strip().lower()
-    label = (request.args.get("label") or "V").strip() or "V"
+    label = (request.args.get("label") or "").strip() or None
 
     url = service.build_snapshot_url(
         latitude=venue.latitude,

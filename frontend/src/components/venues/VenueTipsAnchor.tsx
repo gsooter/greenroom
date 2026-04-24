@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from "react";
 
-import { listVenueComments } from "@/lib/api/venue-comments";
+import { listVenueTips } from "@/lib/api/maps";
 import { getGuestSessionId } from "@/lib/guest-session";
 import { useAuth } from "@/lib/auth";
 
@@ -36,9 +36,9 @@ export default function VenueTipsAnchor({ slug }: Props): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     const sessionId = isAuthenticated ? undefined : getGuestSessionId();
-    void listVenueComments(slug, token, { sessionId })
-      .then((res) => {
-        if (!cancelled) setCount(res.meta.count);
+    void listVenueTips(slug, token, { sessionId })
+      .then((rows) => {
+        if (!cancelled) setCount(rows.length);
       })
       .catch(() => {
         if (!cancelled) setCount(0);

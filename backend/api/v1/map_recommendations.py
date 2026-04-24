@@ -88,10 +88,13 @@ def submit_recommendation() -> tuple[dict[str, Any], int]:
 
     Request body:
         ``{"query": str, "by": "name" | "address", "lat"?: float,
-        "lng"?: float, "category": str, "body": str, "honeypot"?: str,
-        "session_id"?: str}``. ``lat`` and ``lng`` are only required
-        when ``by == "name"``. ``session_id`` is only read when the
-        caller is signed out. ``honeypot`` must be empty or absent.
+        "lng"?: float, "venue_id"?: str, "category": str, "body": str,
+        "honeypot"?: str, "session_id"?: str}``. ``lat`` and ``lng`` are
+        only required when ``by == "name"`` and ``venue_id`` is absent.
+        When ``venue_id`` is present the venue's own coords become the
+        anchor and the verified place must sit within 1000 m of the
+        venue. ``session_id`` is only read when the caller is signed
+        out. ``honeypot`` must be empty or absent.
 
     Returns:
         Tuple of JSON response body and HTTP 201 status code.
@@ -99,8 +102,11 @@ def submit_recommendation() -> tuple[dict[str, Any], int]:
     Raises:
         UnauthorizedError: If neither auth nor session_id is supplied.
         ValidationError: For any honeypot / input / spam-gate failure.
-        AppError: ``PLACE_NOT_VERIFIED`` (404) when Apple cannot match
-            the query; ``APPLE_MAPS_UNAVAILABLE`` propagated.
+        AppError: ``PLACE_VERIFICATION_FAILED`` (422) when Apple cannot
+            match the query or the venue guardrail is violated;
+            ``APPLE_MAPS_UNAVAILABLE`` propagated.
+        NotFoundError: ``VENUE_NOT_FOUND`` when ``venue_id`` is set but
+            no venue exists with that id.
         RateLimitExceededError: If the caller exceeds the per-IP cap.
     """
     session = get_db()
@@ -108,6 +114,13 @@ def submit_recommendation() -> tuple[dict[str, Any], int]:
     payload = _require_json_object()
     session_id = (
         None if viewer is not None else _sanitized_session_id(payload.get("session_id"))
+    )
+
+    raw_venue_id = payload.get("venue_id")
+    venue_id = (
+        _parse_uuid(raw_venue_id, field="venue_id")
+        if isinstance(raw_venue_id, str) and raw_venue_id.strip()
+        else None
     )
 
     recommendation = service.submit_recommendation(
@@ -118,6 +131,7 @@ def submit_recommendation() -> tuple[dict[str, Any], int]:
         by=_require_string(payload, "by"),
         near_latitude=_optional_float(payload.get("lat")),
         near_longitude=_optional_float(payload.get("lng")),
+        venue_id=venue_id,
         category=_require_string(payload, "category"),
         body=_require_string(payload, "body"),
         honeypot=payload.get("honeypot"),

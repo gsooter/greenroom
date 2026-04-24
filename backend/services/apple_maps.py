@@ -16,10 +16,11 @@ different purposes:
   card.
 
 * :func:`fetch_nearby_poi` — calls Apple's Maps Server API
-  ``/v1/searchNearby`` for a lat/lng and returns restaurants, bars,
-  and cafes within a 400 m radius. Results are cached in Redis for
-  7 days; the backend's Apple access token is cached for its natural
-  lifetime (typically 30 minutes).
+  ``/v1/search`` (once per category, or once with the caller's query)
+  for a lat/lng and returns restaurants, bars, and cafes within a
+  400 m radius. Results are cached in Redis for 7 days; the backend's
+  Apple access token is cached for its natural lifetime (typically
+  30 minutes).
 
 **Runtime contract.** Every public function guards on
 :func:`is_configured`; if any Apple Maps credential is missing the call
@@ -84,9 +85,9 @@ _SNAPSHOT_VALID_SCHEMES = frozenset({"light", "dark"})
 # request to ``maps-api.apple.com`` must first exchange a developer
 # JWT for a short-lived access token. We cache that access token in
 # Redis for its natural lifetime so the overwhelming majority of
-# ``/searchNearby`` calls skip the exchange entirely.
+# ``/search`` calls skip the exchange entirely.
 _MAPS_API_HOST = "https://maps-api.apple.com"
-_NEARBY_CACHE_KEY = "apple_maps:nearby_poi:v1"
+_NEARBY_CACHE_KEY = "apple_maps:nearby_poi:v2"
 _NEARBY_CACHE_TTL = timedelta(days=7)
 _NEARBY_RADIUS_M_DEFAULT = 400
 _NEARBY_LIMIT_DEFAULT = 12
@@ -266,6 +267,7 @@ def build_snapshot_url(
     scale: int = 2,
     color_scheme: str = "light",
     annotation_label: str | None = None,
+    show_pin: bool = True,
     redis_client: redis.Redis | None = None,
 ) -> str:
     """Return a 24-hour-cached, ES256-signed Apple Maps Snapshot URL.
@@ -284,8 +286,10 @@ def build_snapshot_url(
         height: Image height in CSS pixels. Clamped to 640.
         scale: Retina factor — 1 or 2. Doubles the physical pixels.
         color_scheme: ``"light"`` or ``"dark"``.
-        annotation_label: Optional glyph text for a red pin at center.
-            Pass None for a pin-less snapshot.
+        annotation_label: Optional glyph text (1-2 chars) rendered inside
+            the pin. Has no effect when ``show_pin`` is False.
+        show_pin: When True (default), a red balloon pin is placed at the
+            map center. Set to False for a pin-less snapshot.
         redis_client: Optional Redis client for URL caching. When None
             the module-level client is used; when unusable, the URL is
             signed fresh on every call.
@@ -321,6 +325,7 @@ def build_snapshot_url(
         scale=scale,
         color_scheme=color_scheme,
         annotation_label=annotation_label,
+        show_pin=show_pin,
     )
     cached = _read_snapshot_cache(client, cache_key)
     if cached is not None:
@@ -336,15 +341,14 @@ def build_snapshot_url(
         ("teamId", settings.apple_mapkit_team_id),
         ("keyId", settings.apple_mapkit_key_id),
     ]
-    if annotation_label:
-        pin = [
-            {
-                "point": f"{latitude:.6f},{longitude:.6f}",
-                "color": "red",
-                "glyphText": annotation_label[:2],
-            }
-        ]
-        params.append(("annotations", json.dumps(pin, separators=(",", ":"))))
+    if show_pin:
+        pin_entry: dict[str, str] = {
+            "point": f"{latitude:.6f},{longitude:.6f}",
+            "color": "red",
+        }
+        if annotation_label:
+            pin_entry["glyphText"] = annotation_label[:2]
+        params.append(("annotations", json.dumps([pin_entry], separators=(",", ":"))))
 
     query = urlencode(params, quote_via=quote)
     to_sign = f"{_SNAPSHOT_PATH}?{query}"
@@ -397,6 +401,7 @@ def _build_snapshot_cache_key(
     scale: int,
     color_scheme: str,
     annotation_label: str | None,
+    show_pin: bool,
 ) -> str:
     """Compose a deterministic Redis key for a snapshot URL.
 
@@ -412,6 +417,7 @@ def _build_snapshot_cache_key(
         scale: Retina scale factor.
         color_scheme: ``"light"`` or ``"dark"``.
         annotation_label: Pin glyph or None.
+        show_pin: Whether the rendered URL includes a balloon pin.
 
     Returns:
         ``apple_maps:snapshot_url:v1:<sha256-hex-prefix>``.
@@ -419,6 +425,7 @@ def _build_snapshot_cache_key(
     raw = (
         f"{latitude:.6f}|{longitude:.6f}|{zoom:g}|{width}x{height}"
         f"|s{scale}|{color_scheme}|{annotation_label or ''}"
+        f"|pin={'1' if show_pin else '0'}"
     )
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
     return f"{_SNAPSHOT_CACHE_KEY}:{digest}"
@@ -485,27 +492,37 @@ def fetch_nearby_poi(
     categories: tuple[str, ...] = _DEFAULT_POI_CATEGORIES,
     radius_m: int = _NEARBY_RADIUS_M_DEFAULT,
     limit: int = _NEARBY_LIMIT_DEFAULT,
+    query: str | None = None,
     http_client: _HttpClient | None = None,
     redis_client: redis.Redis | None = None,
 ) -> list[dict[str, Any]]:
     """Return a list of POIs near a venue via Apple's Maps Server API.
 
-    Calls ``GET /v1/searchNearby`` with the venue's coordinates and the
-    supplied category filter, then post-filters by a hard ``radius_m``
-    cap (Apple's own region may be larger) and sorts by ascending
-    distance. The result list is cached in Redis for 7 days keyed by
-    (lat, lng, categories, radius) — a venue's neighborhood does not
-    churn often.
+    Calls ``GET /v1/search`` with the venue's coordinates as
+    ``searchLocation`` and a query term (either the caller-supplied
+    ``query`` or — when omitted — each category name in sequence),
+    then post-filters by a hard ``radius_m`` cap and sorts by
+    ascending distance. Apple's ``/v1/search`` does not honor the
+    ``includePoiCategories`` filter, so category-restriction happens
+    client-side by comparing Apple's ``poiCategory`` against
+    ``categories``. Results are cached in Redis for 7 days keyed by
+    (lat, lng, categories, radius, query) — a venue's neighborhood
+    does not churn often.
 
     Args:
         latitude: Venue latitude in WGS-84.
         longitude: Venue longitude.
-        categories: Apple POI category names to include. Defaults to
-            restaurant / bar / cafe, which is what the venue detail
-            page needs today.
+        categories: Apple POI category names to accept. Defaults to
+            restaurant / bar / cafe. Also drives per-category queries
+            when ``query`` is not provided.
         radius_m: Hard cap on distance from the venue in meters. POIs
             beyond this cap are dropped.
         limit: Maximum number of POIs to return after filtering.
+        query: Optional user-typed search term. When provided Apple is
+            hit once with this string and results are not restricted to
+            ``categories`` (Apple's search is a better judge of intent
+            than our category list). When omitted we issue one call per
+            category using the category name as the query term.
         http_client: Optional requests-compatible client (for tests).
             When None the module-level ``requests`` library is used.
         redis_client: Optional Redis client. When None the module-level
@@ -533,6 +550,7 @@ def fetch_nearby_poi(
         longitude=longitude,
         categories=categories,
         radius_m=radius_m,
+        query=query,
     )
     cached = _read_nearby_cache(client, cache_key)
     if cached is not None:
@@ -540,52 +558,64 @@ def fetch_nearby_poi(
 
     http = http_client if http_client is not None else requests
     access_token = _get_access_token(client=client, http_client=http)
-
-    params: dict[str, str] = {
-        "loc": f"{latitude:.6f},{longitude:.6f}",
-        "includePoiCategories": ",".join(categories),
-        "lang": "en-US",
-    }
     headers = {"Authorization": f"Bearer {access_token}"}
-    try:
-        response = http.get(
-            f"{_MAPS_API_HOST}/v1/searchNearby",
-            params=params,
-            headers=headers,
-            timeout=_NEARBY_HTTP_TIMEOUT,
-        )
-    except Exception as exc:
-        logger.warning("apple_maps_nearby_http_failed")
-        raise AppError(
-            code=APPLE_MAPS_UNAVAILABLE,
-            message="Apple Maps nearby lookup failed.",
-            status_code=502,
-        ) from exc
 
-    if not _is_ok(response):
-        status = getattr(response, "status_code", "?")
-        raise AppError(
-            code=APPLE_MAPS_UNAVAILABLE,
-            message=f"Apple Maps /searchNearby returned {status}.",
-            status_code=502,
-        )
-
-    try:
-        body = response.json()
-    except Exception as exc:
-        raise AppError(
-            code=APPLE_MAPS_UNAVAILABLE,
-            message="Apple Maps /searchNearby returned a non-JSON body.",
-            status_code=502,
-        ) from exc
-
-    results = _normalize_nearby_results(
-        raw=body.get("results") or [],
-        origin_lat=latitude,
-        origin_lng=longitude,
-        radius_m=radius_m,
-        limit=limit,
+    queries = [query] if query else [cat.lower() for cat in categories]
+    category_filter: set[str] | None = (
+        None if query else {cat.casefold() for cat in categories}
     )
+
+    merged: dict[tuple[float, float], dict[str, Any]] = {}
+    for q in queries:
+        params: dict[str, str] = {
+            "q": q,
+            "searchLocation": f"{latitude:.6f},{longitude:.6f}",
+            "lang": "en-US",
+            "resultTypeFilter": "Poi",
+        }
+        try:
+            response = http.get(
+                f"{_MAPS_API_HOST}/v1/search",
+                params=params,
+                headers=headers,
+                timeout=_NEARBY_HTTP_TIMEOUT,
+            )
+        except Exception as exc:
+            logger.warning("apple_maps_nearby_http_failed")
+            raise AppError(
+                code=APPLE_MAPS_UNAVAILABLE,
+                message="Apple Maps nearby lookup failed.",
+                status_code=502,
+            ) from exc
+
+        if not _is_ok(response):
+            status = getattr(response, "status_code", "?")
+            raise AppError(
+                code=APPLE_MAPS_UNAVAILABLE,
+                message=f"Apple Maps /search returned {status}.",
+                status_code=502,
+            )
+
+        try:
+            body = response.json()
+        except Exception as exc:
+            raise AppError(
+                code=APPLE_MAPS_UNAVAILABLE,
+                message="Apple Maps /search returned a non-JSON body.",
+                status_code=502,
+            ) from exc
+
+        for poi in _normalize_nearby_results(
+            raw=body.get("results") or [],
+            origin_lat=latitude,
+            origin_lng=longitude,
+            radius_m=radius_m,
+            limit=limit * max(len(queries), 1),
+            category_filter=category_filter,
+        ):
+            merged.setdefault((poi["latitude"], poi["longitude"]), poi)
+
+    results = sorted(merged.values(), key=lambda p: p["distance_m"])[:limit]
     _write_nearby_cache(client, cache_key, results)
     return results
 
@@ -597,6 +627,7 @@ def _normalize_nearby_results(
     origin_lng: float,
     radius_m: int,
     limit: int,
+    category_filter: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert Apple's POI records into the shape the API layer returns.
 
@@ -606,6 +637,9 @@ def _normalize_nearby_results(
         origin_lng: Venue longitude.
         radius_m: Hard distance cap in meters.
         limit: Max items to retain after sorting by distance.
+        category_filter: Optional set of case-folded Apple ``poiCategory``
+            values to accept. When None, every POI is kept. Entries with
+            no ``poiCategory`` are dropped when a filter is active.
 
     Returns:
         Sorted, trimmed list of normalized POI dicts.
@@ -622,12 +656,17 @@ def _normalize_nearby_results(
         distance = _haversine_m(origin_lat, origin_lng, plat, plng)
         if distance > radius_m:
             continue
+        category = item.get("poiCategory")
+        if category_filter is not None and (
+            not isinstance(category, str) or category.casefold() not in category_filter
+        ):
+            continue
         address_lines = item.get("formattedAddressLines") or []
         address = ", ".join(str(line) for line in address_lines if line) or None
         normalized.append(
             {
                 "name": item.get("name"),
-                "category": item.get("poiCategory"),
+                "category": category,
                 "address": address,
                 "latitude": float(plat),
                 "longitude": float(plng),
@@ -794,6 +833,7 @@ def _build_nearby_cache_key(
     longitude: float,
     categories: tuple[str, ...],
     radius_m: int,
+    query: str | None = None,
 ) -> str:
     """Return a deterministic Redis key for a nearby-POI result set.
 
@@ -802,11 +842,18 @@ def _build_nearby_cache_key(
         longitude: Center longitude.
         categories: Tuple of Apple POI category filters applied.
         radius_m: Distance cap in meters.
+        query: Optional user query string. Included in the key so
+            free-text searches don't collide with the category-only
+            nearby results.
 
     Returns:
-        ``apple_maps:nearby_poi:v1:<sha256-hex-prefix>``.
+        ``apple_maps:nearby_poi:v2:<sha256-hex-prefix>``.
     """
-    raw = f"{latitude:.5f}|{longitude:.5f}|{radius_m}|{'/'.join(sorted(categories))}"
+    q_part = (query or "").strip().casefold()
+    raw = (
+        f"{latitude:.5f}|{longitude:.5f}|{radius_m}"
+        f"|{'/'.join(sorted(categories))}|q={q_part}"
+    )
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
     return f"{_NEARBY_CACHE_KEY}:{digest}"
 
@@ -992,7 +1039,7 @@ def _write_cache(
 # ---------------------------------------------------------------------------
 
 
-# Apple's geocode endpoint shares the access-token lifecycle with searchNearby,
+# Apple's geocode endpoint shares the access-token lifecycle with search,
 # but it is not a per-venue lookup — it's "did this user-typed string resolve
 # to a real Apple Maps place?" Verification is the gate for community-submitted
 # recommendations: a name-only or address-only submission must round-trip
@@ -1005,7 +1052,7 @@ _PLACE_VERIFY_SIMILARITY_FLOOR = 0.80
 
 @dataclass(frozen=True, slots=True)
 class NearbyPlace:
-    """A normalized POI returned from Apple Maps' searchNearby surface.
+    """A normalized POI returned from Apple Maps' ``/v1/search`` surface.
 
     Attributes:
         name: Place display name (e.g. ``"The Gibson"``).
@@ -1053,6 +1100,7 @@ def search_nearby_places(
     categories: tuple[str, ...] = _DEFAULT_POI_CATEGORIES,
     radius_m: int = _NEARBY_RADIUS_M_DEFAULT,
     limit: int = _NEARBY_LIMIT_DEFAULT,
+    query: str | None = None,
     http_client: _HttpClient | None = None,
     redis_client: redis.Redis | None = None,
 ) -> list[NearbyPlace]:
@@ -1067,9 +1115,12 @@ def search_nearby_places(
         latitude: Search anchor latitude.
         longitude: Search anchor longitude.
         categories: Apple POI category filter, default restaurant /
-            bar / cafe.
+            bar / cafe. Only applied when ``query`` is None — a typed
+            query is trusted as the better intent signal.
         radius_m: Hard distance cap in meters.
         limit: Max results after sorting by ascending distance.
+        query: Optional user-typed substring. When provided it's sent
+            to Apple directly rather than post-filtered locally.
         http_client: Optional requests-compatible client (tests only).
         redis_client: Optional Redis client; same semantics as
             :func:`fetch_nearby_poi`.
@@ -1087,6 +1138,7 @@ def search_nearby_places(
         categories=categories,
         radius_m=radius_m,
         limit=limit,
+        query=query,
         http_client=http_client,
         redis_client=redis_client,
     )

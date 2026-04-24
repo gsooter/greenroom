@@ -138,6 +138,7 @@ def test_map_snapshot_returns_signed_url(
     assert captured["build_kwargs"]["width"] == 600
     assert captured["build_kwargs"]["height"] == 400
     assert captured["build_kwargs"]["color_scheme"] == "light"
+    assert captured["build_kwargs"]["annotation_label"] is None
 
 
 def test_map_snapshot_forwards_custom_dimensions_and_scheme(

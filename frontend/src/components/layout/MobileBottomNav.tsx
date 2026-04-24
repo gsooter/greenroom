@@ -145,7 +145,7 @@ export default function MobileBottomNav(): JSX.Element {
                   "flex w-full items-center justify-center px-2 py-3 text-xs font-medium " +
                   (meActive || isMeOpen
                     ? "text-accent"
-                    : "text-muted hover:text-foreground")
+                    : "text-text-primary/75 hover:text-foreground")
                 }
               >
                 Me
@@ -184,7 +184,7 @@ function NavTab({ item, active }: NavTabProps): JSX.Element {
       href={item.href}
       className={
         "flex items-center justify-center px-2 py-3 text-xs font-medium " +
-        (active ? "text-accent" : "text-muted hover:text-foreground")
+        (active ? "text-accent" : "text-text-primary/75 hover:text-foreground")
       }
     >
       {item.label}

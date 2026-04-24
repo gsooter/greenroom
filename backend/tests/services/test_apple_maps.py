@@ -413,7 +413,11 @@ class _StubHttp:
 
 
 def _nearby_response() -> _StubResponse:
-    """Build a stubbed ``/searchNearby`` response with two sample POIs."""
+    """Build a stubbed ``/v1/search`` response with two in-range POIs.
+
+    Includes a landmark outside both our category filter and the radius
+    cap so the caller can assert both filters kicked in.
+    """
     return _StubResponse(
         status_code=200,
         payload={
@@ -442,6 +446,11 @@ def _nearby_response() -> _StubResponse:
     )
 
 
+def _nearby_responses(n: int) -> list[_StubResponse]:
+    """Return ``n`` identical nearby stubs — one per category query."""
+    return [_nearby_response() for _ in range(n)]
+
+
 def _token_response() -> _StubResponse:
     """Canned ``/v1/token`` exchange response."""
     return _StubResponse(
@@ -451,37 +460,36 @@ def _token_response() -> _StubResponse:
 
 
 def test_fetch_nearby_poi_exchanges_token_and_parses_results() -> None:
-    http = _StubHttp([_token_response(), _nearby_response()])
+    http = _StubHttp([_token_response(), *_nearby_responses(3)])
     pois = service.fetch_nearby_poi(
         latitude=38.917,
         longitude=-77.032,
         http_client=http,
         redis_client=None,
     )
+    # Results deduplicated across three per-category queries, then
+    # sorted by ascending distance with the landmark dropped by both
+    # the radius cap and the category filter.
     assert [poi["name"] for poi in pois] == ["The Gibson", "Ben's Chili Bowl"]
-    # Distances ascend; the far-away POI was dropped.
     distances = [poi["distance_m"] for poi in pois]
     assert distances == sorted(distances)
     assert all(d <= 400 for d in distances)
-    # First request minted the token; second passed the token as Bearer.
+    # First request minted the token; the rest hit /v1/search.
     assert http.calls[0]["url"].endswith("/v1/token")
-    assert http.calls[1]["url"].endswith("/v1/searchNearby")
-    assert http.calls[1]["headers"]["Authorization"] == "Bearer AT-123"
-    # Categories flow through as a comma-joined include list.
-    assert http.calls[1]["params"]["includePoiCategories"] == "Restaurant,Bar,Cafe"
+    search_calls = [c for c in http.calls if c["url"].endswith("/v1/search")]
+    assert len(search_calls) == 3
+    assert search_calls[0]["headers"]["Authorization"] == "Bearer AT-123"
+    # Each category drives its own /v1/search call with the category
+    # name (lowercased) as the query term.
+    assert [c["params"]["q"] for c in search_calls] == ["restaurant", "bar", "cafe"]
+    assert all("includePoiCategories" not in c["params"] for c in search_calls)
+    assert search_calls[0]["params"]["searchLocation"] == "38.917000,-77.032000"
 
 
 def test_fetch_nearby_poi_caches_access_token_in_redis() -> None:
     fake = _FakeRedis()
-    http = _StubHttp(
-        [
-            _token_response(),
-            _nearby_response(),
-            # Second call skips the /v1/token exchange — it's the
-            # searchNearby result for a different venue.
-            _nearby_response(),
-        ]
-    )
+    # Two venues with default categories → 1 token + 3 + 3 search stubs.
+    http = _StubHttp([_token_response(), *_nearby_responses(6)])
     service.fetch_nearby_poi(
         latitude=38.917,
         longitude=-77.032,
@@ -502,14 +510,15 @@ def test_fetch_nearby_poi_caches_access_token_in_redis() -> None:
 
 def test_fetch_nearby_poi_serves_cached_results_without_http() -> None:
     fake = _FakeRedis()
-    http = _StubHttp([_token_response(), _nearby_response()])
+    # 1 token + 3 per-category searches on the first call; the second
+    # call hits the Redis cache and makes no HTTP requests at all.
+    http = _StubHttp([_token_response(), *_nearby_responses(3)])
     first = service.fetch_nearby_poi(
         latitude=38.917,
         longitude=-77.032,
         http_client=http,
         redis_client=fake,
     )
-    # Second call consumes no HTTP responses — cache hit.
     second = service.fetch_nearby_poi(
         latitude=38.917,
         longitude=-77.032,
@@ -517,7 +526,7 @@ def test_fetch_nearby_poi_serves_cached_results_without_http() -> None:
         redis_client=fake,
     )
     assert first == second
-    assert len(http.calls) == 2  # token + initial searchNearby only
+    assert len(http.calls) == 4  # token + three category searches
 
 
 def test_fetch_nearby_poi_raises_when_unconfigured(
@@ -566,12 +575,18 @@ def test_fetch_nearby_poi_honors_custom_categories_and_limit() -> None:
         http_client=http,
         redis_client=None,
     )
-    # Limit trims the result list even when more items fit the radius.
-    assert len(pois) == 1
-    assert http.calls[1]["params"]["includePoiCategories"] == "Bar"
+    # Single category → single /v1/search call, and the category name
+    # becomes the query term. Post-filter keeps only Bar records, limit
+    # trims to one.
+    assert [poi["name"] for poi in pois] == ["The Gibson"]
+    search_calls = [c for c in http.calls if c["url"].endswith("/v1/search")]
+    assert len(search_calls) == 1
+    assert search_calls[0]["params"]["q"] == "bar"
+    assert "includePoiCategories" not in search_calls[0]["params"]
 
 
 def test_fetch_nearby_poi_drops_records_missing_coordinates() -> None:
+    # Single category so the test only needs one /v1/search stub.
     http = _StubHttp(
         [
             _token_response(),
@@ -595,6 +610,7 @@ def test_fetch_nearby_poi_drops_records_missing_coordinates() -> None:
     pois = service.fetch_nearby_poi(
         latitude=38.917,
         longitude=-77.032,
+        categories=("Bar",),
         http_client=http,
         redis_client=None,
     )
@@ -608,7 +624,7 @@ def test_fetch_nearby_poi_drops_records_missing_coordinates() -> None:
 
 def test_search_nearby_places_returns_dataclasses() -> None:
     """The typed wrapper hands back ``NearbyPlace`` objects, not dicts."""
-    http = _StubHttp([_token_response(), _nearby_response()])
+    http = _StubHttp([_token_response(), *_nearby_responses(3)])
     places = service.search_nearby_places(
         latitude=38.917,
         longitude=-77.032,
@@ -634,8 +650,34 @@ def test_search_nearby_places_propagates_radius_and_categories() -> None:
         redis_client=None,
     )
     assert len(places) == 1
-    # Apple's includePoiCategories param mirrors the requested filter.
-    assert http.calls[1]["params"]["includePoiCategories"] == "Bar"
+    # The single category drove a single /v1/search call with the
+    # category name as the query term — Apple's /v1/search does not
+    # honor includePoiCategories, so the filter is applied post hoc.
+    search_calls = [c for c in http.calls if c["url"].endswith("/v1/search")]
+    assert len(search_calls) == 1
+    assert search_calls[0]["params"]["q"] == "bar"
+
+
+def test_search_nearby_places_forwards_query_as_q() -> None:
+    """A user-typed ``query`` is sent to Apple instead of post-filtered.
+
+    When the tip form's autocomplete hands us a string, we trust Apple's
+    ranking of that term rather than running per-category fan-out.
+    """
+    http = _StubHttp([_token_response(), _nearby_response()])
+    places = service.search_nearby_places(
+        latitude=38.917,
+        longitude=-77.032,
+        query="taco",
+        http_client=http,
+        redis_client=None,
+    )
+    search_calls = [c for c in http.calls if c["url"].endswith("/v1/search")]
+    assert len(search_calls) == 1
+    assert search_calls[0]["params"]["q"] == "taco"
+    # With a query in play we don't restrict by category — Apple's
+    # relevance ranking is the better judge.
+    assert {p.name for p in places} >= {"The Gibson", "Ben's Chili Bowl"}
 
 
 # ---------------------------------------------------------------------------

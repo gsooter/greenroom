@@ -79,10 +79,10 @@ export default function SaveEventButton({
       aria-label={label}
       aria-pressed={saved}
       className={
-        "inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-sm backdrop-blur transition disabled:opacity-50 " +
+        "inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-sm ring-1 ring-black/5 backdrop-blur transition disabled:opacity-50 " +
         (saved
           ? "border-blush-accent bg-blush-soft text-blush-accent"
-          : "border-border bg-bg-white/90 text-text-secondary hover:border-blush-accent hover:text-blush-accent")
+          : "border-border bg-bg-white/90 text-text-primary hover:border-blush-accent hover:text-blush-accent")
       }
     >
       <HeartIcon filled={saved} />

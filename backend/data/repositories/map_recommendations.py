@@ -163,6 +163,7 @@ def create_recommendation(
     *,
     submitter_user_id: uuid.UUID | None,
     session_id: str | None,
+    venue_id: uuid.UUID | None = None,
     place_name: str,
     place_address: str | None,
     latitude: float,
@@ -184,6 +185,9 @@ def create_recommendation(
         submitter_user_id: UUID of the author. None for guest submits.
         session_id: Opaque browser session id for guests. None when a
             user_id is supplied.
+        venue_id: Optional FK to the venue this recommendation anchors
+            to. Service layer enforces the 1000 m guardrail before
+            calling this function.
         place_name: Apple's canonical name for the verified place.
         place_address: Apple's formatted address, when available.
         latitude: Verified WGS-84 latitude.
@@ -208,6 +212,7 @@ def create_recommendation(
     recommendation = MapRecommendation(
         submitter_user_id=submitter_user_id,
         session_id=session_id,
+        venue_id=venue_id,
         place_name=place_name,
         place_address=place_address,
         latitude=latitude,
@@ -220,6 +225,70 @@ def create_recommendation(
     session.add(recommendation)
     session.flush()
     return recommendation
+
+
+def list_recommendations_for_venue(
+    session: Session,
+    *,
+    venue_id: uuid.UUID,
+    category: MapRecommendationCategory | None = None,
+    limit: int = 100,
+    include_suppressed: bool = False,
+) -> list[tuple[MapRecommendation, int, int]]:
+    """List non-suppressed recommendations anchored to a venue, ranked by net votes.
+
+    Powers the "tips" section on the venue detail page. Ordering is
+    ``(likes - dislikes) DESC, created_at DESC`` — no recency boost,
+    because a pinned-to-venue tip is already a curated surface.
+
+    Args:
+        session: Active SQLAlchemy session.
+        venue_id: UUID of the venue whose tips we want.
+        category: Optional category filter.
+        limit: Max rows. Clamped to 200.
+        include_suppressed: When True, includes suppressed rows (admin
+            tooling). Defaults to False.
+
+    Returns:
+        List of ``(recommendation, like_count, dislike_count)`` tuples
+        ordered by net votes, newest as tiebreaker.
+    """
+    limit = min(max(limit, 1), 200)
+
+    votes_sq = (
+        select(
+            MapRecommendationVote.recommendation_id.label("rid"),
+            func.coalesce(
+                func.sum(case((MapRecommendationVote.value == 1, 1), else_=0)),
+                0,
+            ).label("likes"),
+            func.coalesce(
+                func.sum(case((MapRecommendationVote.value == -1, 1), else_=0)),
+                0,
+            ).label("dislikes"),
+        )
+        .group_by(MapRecommendationVote.recommendation_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            MapRecommendation,
+            func.coalesce(votes_sq.c.likes, 0).label("likes"),
+            func.coalesce(votes_sq.c.dislikes, 0).label("dislikes"),
+        )
+        .outerjoin(votes_sq, votes_sq.c.rid == MapRecommendation.id)
+        .where(MapRecommendation.venue_id == venue_id)
+    )
+    if not include_suppressed:
+        stmt = stmt.where(MapRecommendation.suppressed_at.is_(None))
+    if category is not None:
+        stmt = stmt.where(MapRecommendation.category == category.value)
+
+    net = func.coalesce(votes_sq.c.likes, 0) - func.coalesce(votes_sq.c.dislikes, 0)
+    stmt = stmt.order_by(net.desc(), MapRecommendation.created_at.desc()).limit(limit)
+    rows = session.execute(stmt).all()
+    return [(row[0], int(row[1]), int(row[2])) for row in rows]
 
 
 def update_recommendation_body(

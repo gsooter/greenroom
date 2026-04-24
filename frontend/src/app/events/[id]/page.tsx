@@ -36,11 +36,19 @@ interface EventDetailPageProps {
   params: { id: string };
 }
 
+function decodeParamId(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export async function generateMetadata({
   params,
 }: EventDetailPageProps): Promise<Metadata> {
   try {
-    const event = await getEvent(params.id, 300);
+    const event = await getEvent(decodeParamId(params.id), 300);
     return buildEventDetailMetadata(event);
   } catch {
     return {};
@@ -52,7 +60,7 @@ export default async function EventDetailPage({
 }: EventDetailPageProps) {
   let event;
   try {
-    event = await getEvent(params.id, 300);
+    event = await getEvent(decodeParamId(params.id), 300);
   } catch (err) {
     if (err instanceof ApiNotFoundError) notFound();
     throw err;

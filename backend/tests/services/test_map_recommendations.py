@@ -17,7 +17,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from backend.core.exceptions import (
-    PLACE_NOT_VERIFIED,
+    PLACE_VERIFICATION_FAILED,
+    VENUE_NOT_FOUND,
     AppError,
     ForbiddenError,
     NotFoundError,
@@ -42,6 +43,7 @@ class _FakeRec:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     submitter_user_id: uuid.UUID | None = field(default_factory=uuid.uuid4)
     session_id: str | None = None
+    venue_id: uuid.UUID | None = None
     place_name: str = "Black Cat"
     place_address: str | None = "1811 14th St NW, Washington, DC"
     latitude: float = 38.9152
@@ -52,6 +54,14 @@ class _FakeRec:
     suppressed_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
+class _FakeVenue:
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+    name: str = "Black Cat"
+    latitude: float | None = 38.9152
+    longitude: float | None = -77.0316
 
 
 def _verified(**overrides: Any) -> VerifiedPlace:
@@ -335,7 +345,7 @@ def test_submit_recommendation_name_requires_anchor() -> None:
         )
 
 
-def test_submit_recommendation_404s_on_apple_no_match(
+def test_submit_recommendation_422s_on_apple_no_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(service.apple_maps, "verify_place_by_name", lambda **_kw: None)
@@ -353,8 +363,8 @@ def test_submit_recommendation_404s_on_apple_no_match(
             honeypot=None,
             ip_hash=None,
         )
-    assert exc_info.value.code == PLACE_NOT_VERIFIED
-    assert exc_info.value.status_code == 404
+    assert exc_info.value.code == PLACE_VERIFICATION_FAILED
+    assert exc_info.value.status_code == 422
 
 
 def test_submit_recommendation_happy_path_user(
@@ -407,6 +417,161 @@ def test_submit_recommendation_happy_path_user(
     assert result["suppressed"] is False
 
 
+def test_submit_recommendation_with_venue_id_enforces_guardrail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tip anchored to a venue must verify to a place within 1000 m."""
+    user = _FakeUser()
+    venue = _FakeVenue()
+    monkeypatch.setattr(service.venues_repo, "get_venue_by_id", lambda _s, _vid: venue)
+    # Verified place sits ~3 km north — well outside the 1000 m guardrail.
+    monkeypatch.setattr(
+        service.apple_maps,
+        "verify_place_by_name",
+        lambda **_kw: _verified(latitude=38.94, longitude=-77.0316),
+    )
+    with pytest.raises(AppError) as exc_info:
+        service.submit_recommendation(
+            MagicMock(),
+            user=user,
+            session_id=None,
+            query="Far Away",
+            by="name",
+            near_latitude=None,
+            near_longitude=None,
+            venue_id=venue.id,
+            category="drinks",
+            body="too far to be a real tip",
+            honeypot=None,
+            ip_hash=None,
+        )
+    assert exc_info.value.code == PLACE_VERIFICATION_FAILED
+    assert exc_info.value.status_code == 422
+
+
+def test_submit_recommendation_with_venue_id_within_guardrail_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A verified place within 1000 m of the venue is persisted with venue_id."""
+    user = _FakeUser()
+    venue = _FakeVenue()
+    monkeypatch.setattr(service.venues_repo, "get_venue_by_id", lambda _s, _vid: venue)
+    # Verified place ~100 m from the venue.
+    monkeypatch.setattr(
+        service.apple_maps,
+        "verify_place_by_name",
+        lambda **_kw: _verified(
+            latitude=venue.latitude + 0.0009, longitude=venue.longitude
+        ),
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_create(_s: Any, **kwargs: Any) -> _FakeRec:
+        captured.update(kwargs)
+        return _FakeRec(
+            submitter_user_id=kwargs["submitter_user_id"],
+            venue_id=kwargs["venue_id"],
+            latitude=kwargs["latitude"],
+            longitude=kwargs["longitude"],
+        )
+
+    monkeypatch.setattr(service.rec_repo, "create_recommendation", fake_create)
+    result = service.submit_recommendation(
+        MagicMock(),
+        user=user,
+        session_id=None,
+        query="Nearby Bar",
+        by="name",
+        near_latitude=None,
+        near_longitude=None,
+        venue_id=venue.id,
+        category="drinks",
+        body="block from the venue",
+        honeypot=None,
+        ip_hash=None,
+    )
+    assert captured["venue_id"] == venue.id
+    assert result["venue_id"] == str(venue.id)
+    assert result["distance_from_venue_m"] is not None
+    assert 0 < result["distance_from_venue_m"] < 200
+
+
+def test_submit_recommendation_with_venue_id_uses_venue_coords_as_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When venue_id is set the passed near_lat/lng is ignored; venue coords win."""
+    venue = _FakeVenue()
+    monkeypatch.setattr(service.venues_repo, "get_venue_by_id", lambda _s, _vid: venue)
+    captured_anchor: dict[str, Any] = {}
+
+    def fake_verify(**kwargs: Any) -> VerifiedPlace:
+        captured_anchor.update(kwargs)
+        return _verified(latitude=venue.latitude, longitude=venue.longitude)
+
+    monkeypatch.setattr(service.apple_maps, "verify_place_by_name", fake_verify)
+    monkeypatch.setattr(
+        service.rec_repo,
+        "create_recommendation",
+        lambda _s, **kwargs: _FakeRec(
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k
+                in {
+                    "submitter_user_id",
+                    "session_id",
+                    "venue_id",
+                    "place_name",
+                    "place_address",
+                    "latitude",
+                    "longitude",
+                    "similarity_score",
+                    "category",
+                    "body",
+                }
+            }
+        ),
+    )
+    service.submit_recommendation(
+        MagicMock(),
+        user=_FakeUser(),
+        session_id=None,
+        query="Black Cat",
+        by="name",
+        near_latitude=0.0,
+        near_longitude=0.0,
+        venue_id=venue.id,
+        category="drinks",
+        body="body text",
+        honeypot=None,
+        ip_hash=None,
+    )
+    assert captured_anchor["near_latitude"] == venue.latitude
+    assert captured_anchor["near_longitude"] == venue.longitude
+
+
+def test_submit_recommendation_with_unknown_venue_id_404s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service.venues_repo, "get_venue_by_id", lambda _s, _vid: None)
+    with pytest.raises(NotFoundError) as exc_info:
+        service.submit_recommendation(
+            MagicMock(),
+            user=_FakeUser(),
+            session_id=None,
+            query="Black Cat",
+            by="name",
+            near_latitude=None,
+            near_longitude=None,
+            venue_id=uuid.uuid4(),
+            category="drinks",
+            body="hello",
+            honeypot=None,
+            ip_hash=None,
+        )
+    assert exc_info.value.code == VENUE_NOT_FOUND
+
+
 def test_submit_recommendation_happy_path_guest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -441,6 +606,46 @@ def test_submit_recommendation_happy_path_guest(
     )
     assert captured["submitter_user_id"] is None
     assert captured["session_id"] == "guest-1"
+
+
+# ---------------------------------------------------------------------------
+# list_tips_for_venue
+# ---------------------------------------------------------------------------
+
+
+def test_list_tips_for_venue_serializes_with_distance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    venue = _FakeVenue()
+    rec = _FakeRec(
+        venue_id=venue.id,
+        latitude=venue.latitude + 0.0009,
+        longitude=venue.longitude,
+    )
+    monkeypatch.setattr(
+        service.rec_repo,
+        "list_recommendations_for_venue",
+        lambda _s, **_kw: [(rec, 2, 1)],
+    )
+    monkeypatch.setattr(
+        service.rec_repo,
+        "get_voter_values_for_recommendations",
+        lambda _s, _ids, **_kw: {},
+    )
+    result = service.list_tips_for_venue(MagicMock(), venue=venue)  # type: ignore[arg-type]
+    assert len(result) == 1
+    tip = result[0]
+    assert tip["venue_id"] == str(venue.id)
+    assert tip["likes"] == 2
+    assert tip["dislikes"] == 1
+    assert tip["distance_from_venue_m"] is not None
+    assert 0 < tip["distance_from_venue_m"] < 200
+
+
+def test_list_tips_for_venue_rejects_unknown_category() -> None:
+    venue = _FakeVenue()
+    with pytest.raises(ValidationError):
+        service.list_tips_for_venue(MagicMock(), venue=venue, category="bogus")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
