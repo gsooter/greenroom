@@ -1710,6 +1710,73 @@ layer also leaves every other event query path untouched.
 
 ---
 
+### 043 — Dice.fm Scraper Uses JSON-LD, Not CSS Selectors
+
+**Date:** 2026-04-24
+**Status:** Decided
+
+**Decision:** `DiceScraper` (`backend/scraper/platforms/dice.py`)
+parses the `schema.org` JSON-LD `Place.event` array that dice.fm
+embeds in every venue page's `<script type="application/ld+json">`.
+The scraper falls back to the page's `__NEXT_DATA__` bootstrap JSON
+when JSON-LD carries no events, and raises `DiceScraperError` only
+when both sources are absent or empty. One scraper class serves
+every Dice-ticketed DMV venue (DC9, BERHTA, Songbyrd, Byrdland);
+each is registered in `scraper/config/venues.py` with its
+`dice_venue_url` in `platform_config`.
+
+**Rationale:**
+Dice's venue pages are a Next.js SPA. CSS selectors over the
+rendered DOM are both brittle (class names are hash-suffixed and
+change on every deploy) and require a headless browser to execute,
+which triples infra cost and adds flake. JSON-LD, by contrast, is
+contractual output Dice maintains for Google rich-results parity:
+stable field names (`startDate`, `offers`, `performer`, `url`),
+machine-readable timestamps with timezone offsets, and a single
+`Place.event` array covering every upcoming show at the venue.
+`__NEXT_DATA__` exists as a defensive fallback — occasionally
+Dice's server renders the page before hydration populates the
+JSON-LD event list, in which case the bootstrap payload at
+`props.pageProps.profile.sections[*].events` still carries the
+full lineup (with prices in cents under `price.amount`).
+
+**Alternatives considered:**
+- **Playwright/Selenium headless browser.** Rejected — adds a
+  Chromium dependency and a multi-second render budget per venue
+  for data we can pull out of the initial HTML response.
+- **Official Dice partner API.** No such public API exists.
+  Reaching out for partnership would delay launch by weeks for a
+  worse contract than the public JSON-LD Dice already maintains.
+- **Scrape `__NEXT_DATA__` as primary source.** Rejected — it is
+  a private implementation detail and its shape has shifted in the
+  past (nested under different section keys). JSON-LD's schema.org
+  contract is more stable.
+- **CSS selectors over server-rendered HTML.** Rejected — Dice's
+  event list hydrates client-side; there is no pre-hydration DOM
+  to select against without a headless browser.
+
+**Consequences:**
+- Adding a new Dice-ticketed venue is one config entry plus a
+  `llms.txt` line — no new scraper code.
+- If Dice ever removes the JSON-LD block, `_parse_next_data()`
+  keeps the fleet alive for at least one deploy cycle while we
+  rewrite. The validator's zero-result alert (`backend/scraper/
+  validator.py`) will fire if both sources disappear.
+- The scraper enforces a 2 s inter-request delay and retries once
+  on `requests.ConnectionError` with a 5 s backoff. These are
+  tuned against dice.fm's observed rate-limit behaviour; do not
+  lower them without testing against production traffic.
+- Dice event URLs are the `source_url`, and (when offers carry no
+  explicit URL) the `ticket_url` as well. The event URL is also
+  stamped into `RawEvent.raw_data["id"]` so the runner's idempotent
+  upsert key is stable across scrapes.
+- Tests (`backend/tests/scraper/test_dice.py`) mock every HTTP call
+  via the `responses` library and monkeypatch `time.sleep`/
+  `time.monotonic`, so the suite never touches dice.fm and the
+  rate-limit guard can be exercised in microseconds.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
