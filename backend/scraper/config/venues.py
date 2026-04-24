@@ -123,18 +123,59 @@ _DMV_VENUES: list[VenueScraperConfig] = [
         city_slug="washington-dc",
         region="DMV",
     ),
+    # -----------------------------------------------------------------------
+    # DICE-BACKED VENUES
+    # The DiceScraper parses the JSON-LD Place.event array that dice.fm
+    # embeds in every venue page. All DICE venues share one scraper
+    # class — add new DC venues below. To find a venue's Dice URL search
+    # dice.fm/browse/washington-dc and copy the full `/venue/<slug>-<id>`
+    # URL. See backend/scraper/platforms/dice.py for the field mapping.
+    # -----------------------------------------------------------------------
     VenueScraperConfig(
         venue_slug="dc9",
         display_name="DC9",
         scraper_class=_DICE,
-        platform_config={"url": "https://dc9.club/events/"},
-        # DC9 embeds a DICE widget on dc9.club/events, but as of
-        # 2026-04-17 the widget <div> + <script> are HTML-commented
-        # out — no events are published at the source. Blocked until
-        # the venue re-enables the widget OR a DICE API scraper
-        # implementation + DICE credentials land. See DECISIONS.md
-        # entry on JSON-LD-first strategy for context.
-        enabled=False,
+        platform_config={
+            "venue_external_id": "dc9",
+            "dice_venue_url": "https://dice.fm/venue/dc9-q2xvo",
+        },
+        enabled=True,
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="berhta",
+        display_name="BERHTA",
+        scraper_class=_DICE,
+        platform_config={
+            "venue_external_id": "berhta",
+            "dice_venue_url": "https://dice.fm/venue/berhta-8emn5",
+        },
+        enabled=True,
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="songbyrd",
+        display_name="Songbyrd",
+        scraper_class=_DICE,
+        platform_config={
+            "venue_external_id": "songbyrd",
+            "dice_venue_url": "https://dice.fm/venue/songbyrd-r58r",
+        },
+        enabled=True,
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="byrdland",
+        display_name="Byrdland",
+        scraper_class=_DICE,
+        platform_config={
+            "venue_external_id": "byrdland",
+            "dice_venue_url": "https://dice.fm/venue/byrdland-wo3n",
+        },
+        enabled=True,
         city_slug="washington-dc",
         region="DMV",
     ),
