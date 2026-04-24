@@ -207,7 +207,65 @@ _DMV_VENUES: list[VenueScraperConfig] = [
         region="DMV",
     ),
     # -----------------------------------------------------------------------
-    # Maryland
+    # DC — additional Ticketmaster venues
+    # -----------------------------------------------------------------------
+    VenueScraperConfig(
+        venue_slug="the-atlantis",
+        display_name="The Atlantis",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZ917AinI",
+            "venue_name": "The Atlantis",
+        },
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="warner-theatre-dc",
+        display_name="Warner Theatre",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAJv7aA",
+            "venue_name": "Warner Theatre",
+        },
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="dar-constitution-hall",
+        display_name="DAR Constitution Hall",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpaKdYe",
+            "venue_name": "DAR Constitution Hall",
+        },
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="capital-one-arena",
+        display_name="Capital One Arena",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpaKuJe",
+            "venue_name": "Capital One Arena",
+        },
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="lisner-auditorium",
+        display_name="Lisner Auditorium",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAa1eEA",
+            "venue_name": "Lisner Auditorium",
+        },
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    # -----------------------------------------------------------------------
+    # Maryland (suburbs — DMV region; Baltimore is its own region below)
     # -----------------------------------------------------------------------
     VenueScraperConfig(
         venue_slug="merriweather-post-pavilion",
@@ -229,17 +287,6 @@ _DMV_VENUES: list[VenueScraperConfig] = [
             "venue_name": "The Fillmore Silver Spring",
         },
         city_slug="silver-spring-md",
-        region="DMV",
-    ),
-    VenueScraperConfig(
-        venue_slug="rams-head-live",
-        display_name="Rams Head Live!",
-        scraper_class=_TM,
-        platform_config={
-            "venue_id": "KovZpZAFk6tA",
-            "venue_name": "Rams Head Live!",
-        },
-        city_slug="baltimore-md",
         region="DMV",
     ),
     # -----------------------------------------------------------------------
@@ -278,6 +325,187 @@ _DMV_VENUES: list[VenueScraperConfig] = [
         city_slug="vienna-va",
         region="DMV",
     ),
+    VenueScraperConfig(
+        venue_slug="the-barns-at-wolf-trap",
+        display_name="The Barns at Wolf Trap",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "ZFr9jZea1F",
+            "venue_name": "The Barns at Wolf Trap",
+        },
+        city_slug="vienna-va",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="eaglebank-arena",
+        display_name="EagleBank Arena",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAE76EA",
+            "venue_name": "EagleBank Arena",
+        },
+        city_slug="fairfax-va",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="jiffy-lube-live",
+        display_name="Jiffy Lube Live",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAEk6JA",
+            "venue_name": "Jiffy Lube Live",
+        },
+        city_slug="bristow-va",
+        region="DMV",
+    ),
+]
+
+
+# ============================================================================
+# Baltimore — own region (not DMV)
+# ============================================================================
+
+_BALTIMORE_VENUES: list[VenueScraperConfig] = [
+    VenueScraperConfig(
+        venue_slug="rams-head-live",
+        display_name="Rams Head Live!",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAFk6tA",
+            "venue_name": "Rams Head Live!",
+        },
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
+    VenueScraperConfig(
+        venue_slug="pier-six-pavilion",
+        display_name="Pier Six Pavilion",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAa1enA",
+            "venue_name": "Pier Six Pavilion",
+        },
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
+    VenueScraperConfig(
+        venue_slug="cfg-bank-arena",
+        display_name="CFG Bank Arena",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAJe6dA",
+            "venue_name": "CFG Bank Arena",
+        },
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
+    VenueScraperConfig(
+        venue_slug="baltimore-soundstage",
+        display_name="Baltimore Soundstage",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpa4fJe",
+            "venue_name": "Baltimore Soundstage",
+        },
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
+    VenueScraperConfig(
+        venue_slug="the-lyric-baltimore",
+        display_name="The Lyric",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAJIAtA",
+            "venue_name": "The Lyric",
+        },
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
+    VenueScraperConfig(
+        venue_slug="hippodrome-theatre-baltimore",
+        display_name="Hippodrome Theatre at France-Merrick PAC",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpaKu3e",
+            "venue_name": "Hippodrome Theatre",
+        },
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
+]
+
+
+# ============================================================================
+# RVA — Richmond, VA (own region, south of the DMV)
+# ============================================================================
+
+_RVA_VENUES: list[VenueScraperConfig] = [
+    VenueScraperConfig(
+        venue_slug="the-national-richmond",
+        display_name="The National",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAF7vtA",
+            "venue_name": "The National",
+        },
+        city_slug="richmond-va",
+        region="RVA",
+    ),
+    VenueScraperConfig(
+        venue_slug="canal-club",
+        display_name="Canal Club",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAFkleA",
+            "venue_name": "Canal Club",
+        },
+        city_slug="richmond-va",
+        region="RVA",
+    ),
+    VenueScraperConfig(
+        venue_slug="allianz-amphitheater",
+        display_name="Allianz Amphitheater at Riverfront",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZ917ARgg",
+            "venue_name": "Allianz Amphitheater",
+        },
+        city_slug="richmond-va",
+        region="RVA",
+    ),
+    VenueScraperConfig(
+        venue_slug="altria-theater",
+        display_name="Altria Theater",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAJJltA",
+            "venue_name": "Altria Theater",
+        },
+        city_slug="richmond-va",
+        region="RVA",
+    ),
+    VenueScraperConfig(
+        venue_slug="carpenter-theatre",
+        display_name="Carpenter Theatre at Dominion Energy Center",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAaFnEA",
+            "venue_name": "Carpenter Theatre",
+        },
+        city_slug="richmond-va",
+        region="RVA",
+    ),
+    VenueScraperConfig(
+        venue_slug="the-broadberry",
+        display_name="The Broadberry",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "Z7r9jZaeES",
+            "venue_name": "The Broadberry",
+        },
+        city_slug="richmond-va",
+        region="RVA",
+    ),
 ]
 
 
@@ -287,6 +515,8 @@ _DMV_VENUES: list[VenueScraperConfig] = [
 
 VENUE_CONFIGS: list[VenueScraperConfig] = [
     *_DMV_VENUES,
+    *_BALTIMORE_VENUES,
+    *_RVA_VENUES,
 ]
 
 

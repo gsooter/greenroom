@@ -210,6 +210,153 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "website_url": "https://www.wolftrap.org/",
         "capacity": 7000,
     },
+    # ------------------------------------------------------------------
+    # DC — Ticketmaster-ticketed additions (Discovery-API ids resolved
+    # against https://app.ticketmaster.com/discovery/v2/venues/<id>.json
+    # on 2026-04-24; coordinates pulled from the same response).
+    # ------------------------------------------------------------------
+    "the-atlantis": {
+        "address": "2047 9th St NW, Washington, DC 20001",
+        "latitude": 38.918190,
+        "longitude": -77.022410,
+        "website_url": "https://theatlantis.com/",
+        "capacity": 450,
+    },
+    "warner-theatre-dc": {
+        "address": "513 13th St NW, Washington, DC 20004",
+        "latitude": 38.896121,
+        "longitude": -77.029610,
+        "website_url": "https://www.warnertheatredc.com/",
+        "capacity": 1850,
+    },
+    "dar-constitution-hall": {
+        "address": "1776 D Street NW, Washington, DC 20006",
+        "latitude": 38.894236,
+        "longitude": -77.040922,
+        "website_url": "https://dar.org/constitution-hall",
+        "capacity": 3702,
+    },
+    "capital-one-arena": {
+        "address": "601 F Street NW, Washington, DC 20004",
+        "latitude": 38.897412,
+        "longitude": -77.020029,
+        "website_url": "https://www.capitalonearena.com/",
+        "capacity": 20000,
+    },
+    "lisner-auditorium": {
+        "address": "730 21st Street NW, Washington, DC 20052",
+        "latitude": 38.899404,
+        "longitude": -77.047142,
+        "website_url": "https://lisner.gwu.edu/",
+        "capacity": 1490,
+    },
+    # ------------------------------------------------------------------
+    # Baltimore (own region, not DMV)
+    # ------------------------------------------------------------------
+    "pier-six-pavilion": {
+        "address": "731 Eastern Ave, Baltimore, MD 21202",
+        "latitude": 39.284033,
+        "longitude": -76.604426,
+        "website_url": "https://www.piersixpavilion.com/",
+        "capacity": 4400,
+    },
+    "cfg-bank-arena": {
+        "address": "201 W Baltimore St, Baltimore, MD 21201",
+        "latitude": 39.288494,
+        "longitude": -76.618700,
+        "website_url": "https://www.cfgbankarena.com/",
+        "capacity": 14000,
+    },
+    "baltimore-soundstage": {
+        "address": "124 Market Place, Baltimore, MD 21202",
+        "latitude": 39.287637,
+        "longitude": -76.607190,
+        "website_url": "https://www.baltimoresoundstage.com/",
+        "capacity": 1000,
+    },
+    "the-lyric-baltimore": {
+        "address": "140 W Mount Royal Ave, Baltimore, MD 21201",
+        "latitude": 39.305619,
+        "longitude": -76.618710,
+        "website_url": "https://modell-lyric.com/",
+        "capacity": 2564,
+    },
+    "hippodrome-theatre-baltimore": {
+        "address": "12 N Eutaw St, Baltimore, MD 21201",
+        "latitude": 39.289634,
+        "longitude": -76.621342,
+        "website_url": "https://baltimorehippodrome.com/",
+        "capacity": 2286,
+    },
+    # ------------------------------------------------------------------
+    # Northern Virginia additions
+    # ------------------------------------------------------------------
+    "the-barns-at-wolf-trap": {
+        "address": "1635 Trap Rd, Vienna, VA 22182",
+        "latitude": 38.935398,
+        "longitude": -77.272102,
+        "website_url": "https://www.wolftrap.org/the-barns",
+        "capacity": 380,
+    },
+    "eaglebank-arena": {
+        "address": "4500 Patriot Circle, Fairfax, VA 22030",
+        "latitude": 38.833051,
+        "longitude": -77.309850,
+        "website_url": "https://eaglebankarena.com/",
+        "capacity": 10000,
+    },
+    "jiffy-lube-live": {
+        "address": "7800 Cellar Door Drive, Bristow, VA 20136",
+        "latitude": 38.786120,
+        "longitude": -77.587777,
+        "website_url": "https://www.livenation.com/venue/KovZpZAEk6JA/jiffy-lube-live-tickets",
+        "capacity": 25000,
+    },
+    # ------------------------------------------------------------------
+    # Richmond (RVA) — separate region from DMV
+    # ------------------------------------------------------------------
+    "the-national-richmond": {
+        "address": "708 East Broad St, Richmond, VA 23219",
+        "latitude": 37.541836,
+        "longitude": -77.435343,
+        "website_url": "https://www.thenationalva.com/",
+        "capacity": 1500,
+    },
+    "canal-club": {
+        "address": "1545 East Cary St, Richmond, VA 23219",
+        "latitude": 37.537405,
+        "longitude": -77.437154,
+        "website_url": "https://www.thecanalclub.com/",
+        "capacity": 600,
+    },
+    "allianz-amphitheater": {
+        "address": "350 Tredegar St, Richmond, VA 23219",
+        "latitude": 37.535730,
+        "longitude": -77.445760,
+        "website_url": "https://www.allianzamphitheaterrva.com/",
+        "capacity": 7500,
+    },
+    "altria-theater": {
+        "address": "6 N Laurel St, Richmond, VA 23220",
+        "latitude": 37.546521,
+        "longitude": -77.451545,
+        "website_url": "https://altriatheater.com/",
+        "capacity": 3565,
+    },
+    "carpenter-theatre": {
+        "address": "600 East Grace St, Richmond, VA 23219",
+        "latitude": 37.541637,
+        "longitude": -77.436915,
+        "website_url": "https://www.dominionenergycenter.com/",
+        "capacity": 1800,
+    },
+    "the-broadberry": {
+        "address": "2729 W Broad St, Richmond, VA 23220",
+        "latitude": 37.549801,
+        "longitude": -77.459801,
+        "website_url": "https://thebroadberry.com/",
+        "capacity": 400,
+    },
 }
 
 
@@ -239,7 +386,7 @@ DMV_CITY_SEEDS: list[CitySeed] = [
         name="Baltimore",
         slug="baltimore-md",
         state="MD",
-        region="DMV",
+        region="Baltimore",
         description="Live music and concerts in Baltimore, Maryland.",
     ),
     CitySeed(
@@ -262,6 +409,27 @@ DMV_CITY_SEEDS: list[CitySeed] = [
         state="VA",
         region="DMV",
         description="Live music and concerts in Vienna, Virginia.",
+    ),
+    CitySeed(
+        name="Fairfax",
+        slug="fairfax-va",
+        state="VA",
+        region="DMV",
+        description="Live music and concerts in Fairfax, Virginia.",
+    ),
+    CitySeed(
+        name="Bristow",
+        slug="bristow-va",
+        state="VA",
+        region="DMV",
+        description="Live music and concerts in Bristow, Virginia.",
+    ),
+    CitySeed(
+        name="Richmond",
+        slug="richmond-va",
+        state="VA",
+        region="RVA",
+        description="Live music and concerts in Richmond, Virginia.",
     ),
 ]
 
