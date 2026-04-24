@@ -1,9 +1,10 @@
 /**
  * Top navigation bar — server component.
  *
- * Fetches the DMV city list at render time so every page gets a
- * consistent picker without a client round-trip. If the backend is
- * unavailable, the picker is omitted but navigation links still render.
+ * Fetches the full mid-Atlantic city list at render time so every page
+ * gets a consistent picker without a client round-trip. If the backend
+ * is unavailable, the picker is omitted but navigation links still
+ * render.
  */
 
 import Link from "next/link";
@@ -17,7 +18,7 @@ import type { City } from "@/types";
 export default async function TopNav() {
   let cities: City[] = [];
   try {
-    cities = await listCities({ region: "DMV", revalidateSeconds: 300 });
+    cities = await listCities({ revalidateSeconds: 300 });
   } catch {
     cities = [];
   }
@@ -66,7 +67,7 @@ function NavLink({
   return (
     <Link
       href={href}
-      className="rounded-md px-3 py-1.5 font-medium text-muted hover:bg-surface hover:text-foreground"
+      className="rounded-md px-3 py-1.5 font-medium text-text-primary/80 hover:bg-surface hover:text-foreground"
     >
       {children}
     </Link>
