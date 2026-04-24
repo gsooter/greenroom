@@ -288,6 +288,23 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "website_url": "https://baltimorehippodrome.com/",
         "capacity": 2286,
     },
+    # Dice-ticketed Baltimore venues. Coordinates from Ticketmaster
+    # Discovery API venue records (both clubs are indexed there even
+    # though they sell via Dice).
+    "the-8x10": {
+        "address": "10 E Cross St, Baltimore, MD 21230",
+        "latitude": 39.276931,
+        "longitude": -76.613705,
+        "website_url": "https://www.the8x10.com/",
+        "capacity": 300,
+    },
+    "metro-baltimore": {
+        "address": "1700 N Charles St, Baltimore, MD 21201",
+        "latitude": 39.308912,
+        "longitude": -76.616746,
+        "website_url": "https://metrobmore.com/",
+        "capacity": 200,
+    },
     # ------------------------------------------------------------------
     # Northern Virginia additions
     # ------------------------------------------------------------------

@@ -432,6 +432,34 @@ _BALTIMORE_VENUES: list[VenueScraperConfig] = [
         city_slug="baltimore-md",
         region="Baltimore",
     ),
+    # Dice-ticketed Baltimore venues (indie clubs, Dice JSON-LD /
+    # __NEXT_DATA__ fallback). The 8x10 is scheduled to close
+    # 2026-06-30; keep registered until then so its remaining
+    # calendar stays live.
+    VenueScraperConfig(
+        venue_slug="the-8x10",
+        display_name="The 8x10",
+        scraper_class=_DICE,
+        platform_config={
+            "venue_external_id": "the-8x10",
+            "dice_venue_url": "https://dice.fm/venue/the-8x10-vqp6",
+        },
+        enabled=True,
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
+    VenueScraperConfig(
+        venue_slug="metro-baltimore",
+        display_name="Metro Baltimore",
+        scraper_class=_DICE,
+        platform_config={
+            "venue_external_id": "metro-baltimore",
+            "dice_venue_url": "https://dice.fm/venue/metro-baltimore-xaya",
+        },
+        enabled=True,
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
 ]
 
 
