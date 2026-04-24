@@ -1777,6 +1777,99 @@ full lineup (with prices in cents under `price.amount`).
 
 ---
 
+### 044 — Apple Music Listening Signals: Library + Recently Played + Heavy Rotation
+
+**Date:** 2026-04-24
+**Status:** Decided
+
+**Decision:** `backend/services/apple_music.py::sync_top_artists` pulls
+three Apple Music endpoints on every sync and merges them into
+`users.apple_top_artists`:
+
+1. `GET /v1/me/library/artists` — the breadth signal (library).
+2. `GET /v1/me/recent/played/tracks` — the recency signal, flattened
+   to unique artists by `artistName`.
+3. `GET /v1/me/history/heavy-rotation` — the dominant-taste signal,
+   albums flattened to unique artists by `artistName` (playlists are
+   skipped — a curator is not a listening signal about a specific
+   artist).
+
+Each merged entry carries a `source` ∈ `{heavy_rotation,
+recently_played, library}` and an `affinity_score` ∈ `{0.9, 0.6, 0.4}`.
+Duplicates across sources collapse by normalized artist name; the
+highest-affinity source wins, genres are unioned, and a real Apple
+library id (`l.*`) is preserved over any synthetic `am:name:*` id from
+the recently-played / heavy-rotation flatteners. The persisted list
+is ordered affinity-descending.
+
+A new Celery task `backend.services.apple_music_tasks
+.sync_user_apple_music_data` mirrors the Spotify task so the sync can
+be re-triggered off-request. It is not wired into the beat schedule —
+Apple Music re-syncs happen on connect today, same as Spotify; the
+task exists so a future nightly or reconnect-triggered refresh is a
+one-line addition.
+
+**Rationale:**
+Before this change the scorer saw only a user's Apple Music *library*,
+which is a breadth signal with no recency. A user who has 400 saved
+artists but actively listens to four of them would get the same
+treatment as someone who saves only the things they play — the scorer
+couldn't tell a dead entry from a heavy rotation. Adding recently-played
+and heavy-rotation brings the Apple Music signal to parity with
+Spotify's `top + recently-played` pair. Heavy rotation in particular
+is Apple's *own* "most played" bucket — a stronger signal than anything
+Spotify surfaces without a top-artists pull.
+
+**Alternatives considered:**
+
+- **Create a `user_artist_affinity` table keyed by
+  `(user_id, artist_name, source)` and retire the per-provider JSONB
+  columns.** This is cleaner long-term and what the sprint prompt
+  originally described. Rejected for this change because (1) it
+  forces a cross-cutting refactor of `ArtistMatchScorer`, `Spotify
+  sync_top_artists`, `Tidal sync_top_artists`, and every repository
+  that reads the existing caches; (2) asymmetric introduction — only
+  Apple Music on the new table, Spotify/Tidal on the old columns —
+  would be worse than either endpoint. Per-entry `source` /
+  `affinity_score` fields inside the existing JSONB are
+  forward-compatible: the future affinity table is a migration that
+  reads these fields out of every provider's JSONB in one shot. When
+  that migration ships, this decision updates to Superseded.
+- **Hydrate the library-artist list with catalog genres via
+  `/v1/catalog/{storefront}/artists/{ids}`.** Deferred. Heavy-rotation
+  and recently-played payloads already carry `genreNames`, which
+  backfills most library entries via the merge-and-union step. A
+  dedicated genre-enrichment pass can land later if gaps show up in
+  the genre-overlap tier of the scorer.
+- **Skip heavy rotation and rely on recently-played alone.** Rejected.
+  Heavy rotation is specifically the signal a listener would label
+  "this is what I listen to"; recently-played is noisier (background
+  plays, throwaway listens). Dropping heavy rotation loses the best
+  signal Apple exposes.
+
+**Consequences:**
+
+- `users.apple_top_artists` now contains entries shaped
+  `{id, name, genres, image_url, source, affinity_score}`. Existing
+  rows written by the pre-change sync are still valid — the scorer
+  ignores the new fields and library-only data remains
+  meaningful. A reconnect refreshes any account in-place.
+- A stale Music User Token surfaces a 401/502 from Apple on any of
+  the three endpoints. The library fetch remains load-bearing (its
+  failure still propagates); recently-played and heavy-rotation
+  failures are swallowed and logged so a flaky endpoint does not
+  prevent the other signals from persisting.
+- `PROVIDER_SIGNAL_NOTE.apple_music` in
+  `frontend/src/app/settings/page.tsx` is updated to advertise the
+  expanded signal set.
+- No MusicKit scope changes are needed. Apple Music does not use
+  OAuth scopes — a Music User Token granted at authorize time gates
+  all three endpoints uniformly.
+- No new environment variables. The existing Apple Developer
+  credentials cover every endpoint.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

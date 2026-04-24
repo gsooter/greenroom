@@ -36,6 +36,7 @@ def _build_app() -> Celery:
         include=[
             "backend.scraper.runner",
             "backend.scraper.watchdogs.dc9_dice_widget",
+            "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
             "backend.services.spotify_tasks",
         ],

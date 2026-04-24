@@ -406,7 +406,7 @@ const PROVIDER_PITCH: Record<MusicProvider, string> = {
 // know what's feeding the recommender rather than assuming parity.
 const PROVIDER_SIGNAL_NOTE: Record<MusicProvider, string> = {
   spotify: "Uses your top and recently-played artists.",
-  apple_music: "Uses artists saved in your library.",
+  apple_music: "Uses heavy rotation, recently-played, and library artists.",
   tidal: "Uses artists in your favorites collection.",
 };
 
