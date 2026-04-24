@@ -1,14 +1,15 @@
 # Greenroom
 
-> The DMV's concert calendar with Spotify-powered recommendations.
-> Aggregates shows from all major DC, Maryland, and Virginia venues nightly.
+> Mid-Atlantic concert calendar with Spotify-powered recommendations.
+> Aggregates shows nightly from DC, Maryland, Northern Virginia,
+> Baltimore, and Richmond.
 
 ## What this site contains
 
 - Upcoming concerts and live music events across the DMV (Washington DC,
-  Maryland, and Northern Virginia)
+  Maryland suburbs, Northern Virginia), Baltimore, and Richmond, VA
 - Full event details: dates, venues, artists, ticket prices, availability
-- Venue directory covering the DMV music scene
+- Venue directory covering the mid-Atlantic music scene
 - Personalized recommendations via Spotify listening history
 
 ## Key pages
@@ -29,19 +30,30 @@
 Event listings updated nightly at 4am ET from venue websites and Ticketmaster.
 Ticket pricing updated every 6 hours from SeatGeek.
 
-## DMV Cities Covered
+## Cities Covered
 
-Washington DC, Silver Spring MD, Columbia MD, Baltimore MD,
-Tysons VA, Alexandria VA, Vienna VA.
+DMV: Washington DC, Silver Spring MD, Columbia MD, Alexandria VA,
+Tysons VA, Vienna VA, Fairfax VA, Bristow VA.
+Baltimore: Baltimore MD.
+RVA: Richmond VA.
 
-## DMV Venues Covered
+## Venues Covered
 
-Washington, DC: 9:30 Club, The Anthem, Echostage, Howard Theatre,
-Lincoln Theatre, Union Stage, Black Cat, DC9, BERHTA, Songbyrd, Byrdland,
-Comet Ping Pong, Flash, Pie Shop.
+Washington, DC: 9:30 Club, The Anthem, The Atlantis, Warner Theatre,
+DAR Constitution Hall, Capital One Arena, Lisner Auditorium,
+Echostage, Howard Theatre, Lincoln Theatre, Union Stage, Black Cat,
+DC9, BERHTA, Songbyrd, Byrdland, Comet Ping Pong, Flash, Pie Shop.
 
-Maryland: Merriweather Post Pavilion (Columbia), The Fillmore Silver Spring
-(Silver Spring), Rams Head Live! (Baltimore).
+Maryland suburbs: Merriweather Post Pavilion (Columbia),
+The Fillmore Silver Spring (Silver Spring).
 
-Virginia: Capital One Hall (Tysons), The Birchmere (Alexandria),
-Wolf Trap (Vienna).
+Northern Virginia: Capital One Hall (Tysons), The Birchmere (Alexandria),
+Wolf Trap, The Barns at Wolf Trap (Vienna), EagleBank Arena (Fairfax),
+Jiffy Lube Live (Bristow).
+
+Baltimore: Rams Head Live!, Pier Six Pavilion, CFG Bank Arena,
+Baltimore Soundstage, The Lyric, Hippodrome Theatre.
+
+Richmond (RVA): The National, Canal Club, Allianz Amphitheater,
+Altria Theater, Carpenter Theatre at Dominion Energy Center,
+The Broadberry.
