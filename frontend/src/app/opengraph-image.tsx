@@ -56,7 +56,7 @@ export default async function Image(): Promise<ImageResponse> {
             lineHeight: 1,
           }}
         >
-          GREENROOM
+          Greenroom
         </div>
         <div
           style={{
