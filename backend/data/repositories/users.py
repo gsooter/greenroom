@@ -110,6 +110,70 @@ def update_user(
     return user
 
 
+def list_users(
+    session: Session,
+    *,
+    search: str | None = None,
+    is_active: bool | None = None,
+    page: int = 1,
+    per_page: int = 50,
+) -> tuple[list[User], int]:
+    """List users with optional search and active-state filter.
+
+    Newest accounts first. ``search`` does a case-insensitive substring
+    match against ``email`` and ``display_name`` so an admin can locate
+    a user by partial name or domain without remembering the UUID.
+
+    Args:
+        session: Active SQLAlchemy session.
+        search: Optional case-insensitive substring of email or
+            display_name. Whitespace is stripped; an empty/blank value
+            is treated as no filter.
+        is_active: Optional active-state filter. None means both.
+        page: Page number, 1-indexed. Defaults to 1.
+        per_page: Results per page. Defaults to 50.
+
+    Returns:
+        Tuple of (users list, total count).
+    """
+    base = select(User)
+    if is_active is not None:
+        base = base.where(User.is_active.is_(is_active))
+    if search is not None and search.strip():
+        like = f"%{search.strip()}%"
+        base = base.where(
+            func.lower(User.email).like(func.lower(like))
+            | func.lower(func.coalesce(User.display_name, "")).like(func.lower(like))
+        )
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = session.execute(count_stmt).scalar_one()
+
+    stmt = (
+        base.order_by(User.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    users = list(session.execute(stmt).scalars().all())
+    return users, total
+
+
+def delete_user(session: Session, user: User) -> None:
+    """Hard-delete a Greenroom user row and its cascaded children.
+
+    Removes the local profile, music-service connections, saved events,
+    and recommendations via the ORM cascade. Does *not* touch the
+    Knuckles identity record — that lives in the identity service and
+    must be deleted there separately if a full erase is required.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user: The User instance to delete.
+    """
+    session.delete(user)
+    session.flush()
+
+
 def update_last_login(session: Session, user: User) -> User:
     """Update the user's last_login_at timestamp to now.
 

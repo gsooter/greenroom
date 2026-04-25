@@ -15,7 +15,7 @@ from backend.core.database import init_db
 from backend.core.exceptions import AppError
 from backend.core.logging import setup_logging
 
-_CORS_ALLOWED_HEADERS = "Content-Type, Authorization"
+_CORS_ALLOWED_HEADERS = "Content-Type, Authorization, X-Admin-Key"
 _CORS_ALLOWED_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 _CORS_MAX_AGE_SECONDS = 600
 

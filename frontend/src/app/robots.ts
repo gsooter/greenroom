@@ -14,11 +14,11 @@ export default function robots(): MetadataRoute.Robots {
   const base = config.baseUrl.replace(/\/$/, "");
   return {
     rules: [
-      { userAgent: "*", allow: "/" },
-      { userAgent: "GPTBot", allow: "/" },
-      { userAgent: "ClaudeBot", allow: "/" },
-      { userAgent: "PerplexityBot", allow: "/" },
-      { userAgent: "GoogleBot", allow: "/" },
+      { userAgent: "*", allow: "/", disallow: ["/admin", "/admin/"] },
+      { userAgent: "GPTBot", allow: "/", disallow: ["/admin", "/admin/"] },
+      { userAgent: "ClaudeBot", allow: "/", disallow: ["/admin", "/admin/"] },
+      { userAgent: "PerplexityBot", allow: "/", disallow: ["/admin", "/admin/"] },
+      { userAgent: "GoogleBot", allow: "/", disallow: ["/admin", "/admin/"] },
     ],
     sitemap: `${base}/sitemap.xml`,
   };
