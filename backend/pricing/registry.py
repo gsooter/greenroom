@@ -16,9 +16,35 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from backend.pricing.providers.scraper_origin import ScraperOriginPricingProvider
 from backend.pricing.providers.seatgeek import SeatGeekPricingProvider
 from backend.pricing.providers.ticketmaster import TicketmasterPricingProvider
 from backend.pricing.providers.tickpick import TickPickPricingProvider
+
+TIER_B_SCRAPER_ORIGINS: tuple[str, ...] = (
+    "dice",
+    "eventbrite",
+    "etix",
+    "axs",
+    "see_tickets",
+    "generic_html",
+    "black_cat",
+    "comet_ping_pong",
+    "pie_shop",
+    "the_hamilton",
+    "the_camel",
+    "ottobar",
+    "bethesda_theater",
+    "pearl_street_warehouse",
+)
+"""Origin platforms that surface as standalone Tier B sources.
+
+Each entry becomes a registered provider that quotes only events
+whose ``source_platform`` matches. The list is the inventory of
+scraper names the orchestrator will treat as first-class pricing
+surfaces — adding a new venue-specific scraper means appending its
+``source_platform`` here so its captured prices are exposed.
+"""
 
 if TYPE_CHECKING:
     from backend.pricing.base import BasePricingProvider
@@ -39,11 +65,15 @@ def _build_default_providers() -> list[BasePricingProvider]:
         Newly constructed provider instances ready to call
         :meth:`fetch`.
     """
-    return [
+    providers: list[BasePricingProvider] = [
         SeatGeekPricingProvider(),
         TicketmasterPricingProvider(),
         TickPickPricingProvider(),
     ]
+    providers.extend(
+        ScraperOriginPricingProvider(name=origin) for origin in TIER_B_SCRAPER_ORIGINS
+    )
+    return providers
 
 
 def get_providers() -> list[BasePricingProvider]:
