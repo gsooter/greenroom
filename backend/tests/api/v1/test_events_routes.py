@@ -112,6 +112,50 @@ def test_list_events_defaults_date_from_to_today(
     assert captured["date_from"] == date.today()
 
 
+def test_list_events_forwards_new_filter_params(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """artist_id, artist_search, price_max, free_only, available_only round-trip."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    artist_id = str(uuid.uuid4())
+    resp = client.get(
+        "/api/v1/events"
+        f"?artist_id={artist_id}&artist_search=phoebe"
+        "&price_max=45.5&free_only=true&available_only=1"
+    )
+    assert resp.status_code == 200
+    assert captured["artist_ids"] == [uuid.UUID(artist_id)]
+    assert captured["artist_search"] == "phoebe"
+    assert captured["price_max"] == 45.5
+    assert captured["free_only"] is True
+    assert captured["available_only"] is True
+
+
+def test_list_events_bool_flags_default_to_false(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitted boolean flags pass as False, not None."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    client.get("/api/v1/events")
+    assert captured["free_only"] is False
+    assert captured["available_only"] is False
+    assert captured["price_max"] is None
+    assert captured["artist_ids"] is None
+    assert captured["artist_search"] is None
+
+
 def test_list_events_surfaces_validation_error(
     client: FlaskClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -28,6 +28,15 @@ def list_events() -> tuple[dict[str, Any], int]:
             shows; pass an explicit value to query historical events.
         date_to: YYYY-MM-DD — end of date range.
         genre: string (repeatable) — filter by genre overlap.
+        artist_id: UUID (repeatable) — filter to events whose Spotify
+            artist IDs overlap any of these enriched artists.
+        artist_search: string — case-insensitive substring on the
+            ``artists`` array.
+        price_max: float — upper bound on ``min_price``. Drops unpriced
+            events.
+        free_only: ``"true"`` to restrict to free shows.
+        available_only: ``"true"`` to drop cancelled, sold-out, and past
+            events.
         event_type: string — filter by event type.
         status: string — filter by event status.
         page: int — page number (default 1).
@@ -41,6 +50,11 @@ def list_events() -> tuple[dict[str, Any], int]:
     city_id = _parse_uuid(request.args.get("city_id"))
     region = request.args.get("region")
     venue_ids = _parse_uuid_list(request.args.getlist("venue_id"))
+    artist_ids = _parse_uuid_list(request.args.getlist("artist_id"))
+    artist_search = request.args.get("artist_search")
+    price_max = request.args.get("price_max", type=float)
+    free_only = _parse_bool(request.args.get("free_only"))
+    available_only = _parse_bool(request.args.get("available_only"))
     raw_date_from = request.args.get("date_from")
     date_from = (
         _parse_date(raw_date_from) if raw_date_from is not None else date.today()
@@ -60,6 +74,11 @@ def list_events() -> tuple[dict[str, Any], int]:
         date_from=date_from,
         date_to=date_to,
         genres=genres,
+        artist_ids=artist_ids,
+        artist_search=artist_search,
+        price_max=price_max,
+        free_only=free_only,
+        available_only=available_only,
         event_type=event_type,
         status=status,
         page=page,
@@ -193,3 +212,22 @@ def _parse_date(value: str | None) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _parse_bool(value: str | None) -> bool:
+    """Coerce a query-string flag to ``bool`` with truthy short-forms.
+
+    Treats ``"true"``, ``"1"``, ``"yes"``, ``"on"`` (case-insensitive)
+    as True and everything else (including ``None``) as False, so the
+    common idioms ``?free_only=1`` and ``?free_only=true`` both work
+    without forcing the frontend onto a single spelling.
+
+    Args:
+        value: Raw query-string value or None.
+
+    Returns:
+        Parsed boolean.
+    """
+    if value is None:
+        return False
+    return value.strip().lower() in {"true", "1", "yes", "on"}

@@ -154,6 +154,114 @@ def test_list_events_per_page_cap_and_ordering(
     assert len(rows) == 3
 
 
+def test_list_events_filters_by_spotify_artist_ids(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """``spotify_artist_ids`` filter overlaps the event array column."""
+    city = make_city()
+    venue = make_venue(city=city)
+    make_event(venue=venue, title="A", spotify_artist_ids=["sp1"])
+    make_event(venue=venue, title="B", spotify_artist_ids=["sp2"])
+    make_event(venue=venue, title="C", spotify_artist_ids=None)
+
+    rows, total = events_repo.list_events(session, spotify_artist_ids=["sp1"])
+    assert total == 1 and rows[0].title == "A"
+
+    # Empty list short-circuits to zero results so callers can pass an
+    # empty "follows" list without accidentally widening the query.
+    rows, total = events_repo.list_events(session, spotify_artist_ids=[])
+    assert total == 0
+
+
+def test_list_events_artist_search_substring(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """Substring search hits any element of the ``artists`` array."""
+    city = make_city()
+    venue = make_venue(city=city)
+    make_event(venue=venue, title="A", artists=["Phoebe Bridgers", "Julien Baker"])
+    make_event(venue=venue, title="B", artists=["MUNA"])
+    make_event(venue=venue, title="C", artists=[])
+
+    rows, total = events_repo.list_events(session, artist_search="phoebe")
+    assert total == 1 and rows[0].title == "A"
+
+    rows, total = events_repo.list_events(session, artist_search="muna")
+    assert total == 1 and rows[0].title == "B"
+
+    # Whitespace-only search is treated as no filter.
+    rows, total = events_repo.list_events(session, artist_search="   ")
+    assert total == 3
+
+
+def test_list_events_price_max_excludes_unpriced(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """``price_max`` filters by ``min_price`` and drops null-priced rows."""
+    city = make_city()
+    venue = make_venue(city=city)
+    make_event(venue=venue, title="Cheap", min_price=15.0)
+    make_event(venue=venue, title="Mid", min_price=35.0)
+    make_event(venue=venue, title="Expensive", min_price=120.0)
+    make_event(venue=venue, title="Unpriced", min_price=None)
+
+    rows, total = events_repo.list_events(session, price_max=50.0)
+    assert total == 2
+    assert {e.title for e in rows} == {"Cheap", "Mid"}
+
+
+def test_list_events_free_only_zero_price(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """``free_only`` matches exactly ``min_price = 0``."""
+    city = make_city()
+    venue = make_venue(city=city)
+    make_event(venue=venue, title="Free", min_price=0.0)
+    make_event(venue=venue, title="Paid", min_price=10.0)
+    make_event(venue=venue, title="Unpriced", min_price=None)
+
+    rows, total = events_repo.list_events(session, free_only=True)
+    assert total == 1 and rows[0].title == "Free"
+
+
+def test_list_events_available_only_drops_terminal_states(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """``available_only`` excludes cancelled/sold-out/past events."""
+    city = make_city()
+    venue = make_venue(city=city)
+    make_event(venue=venue, title="OK", status=EventStatus.CONFIRMED)
+    make_event(venue=venue, title="Postponed", status=EventStatus.POSTPONED)
+    make_event(venue=venue, title="Cancelled", status=EventStatus.CANCELLED)
+    make_event(venue=venue, title="SoldOut", status=EventStatus.SOLD_OUT)
+    make_event(venue=venue, title="Past", status=EventStatus.PAST)
+
+    rows, total = events_repo.list_events(session, available_only=True)
+    assert total == 2
+    assert {e.title for e in rows} == {"OK", "Postponed"}
+
+    # Explicit status= takes precedence over available_only.
+    rows, total = events_repo.list_events(
+        session, available_only=True, status=EventStatus.CANCELLED
+    )
+    assert total == 1 and rows[0].title == "Cancelled"
+
+
 def test_list_events_by_venue_upcoming_only(
     session: Session,
     make_city: Callable[..., City],

@@ -109,6 +109,13 @@ def list_all_event_artist_names(session: Session) -> list[str]:
     return names
 
 
+_UNAVAILABLE_STATUSES: tuple[EventStatus, ...] = (
+    EventStatus.CANCELLED,
+    EventStatus.SOLD_OUT,
+    EventStatus.PAST,
+)
+
+
 def list_events(
     session: Session,
     *,
@@ -118,6 +125,11 @@ def list_events(
     date_from: date | None = None,
     date_to: date | None = None,
     genres: list[str] | None = None,
+    spotify_artist_ids: list[str] | None = None,
+    artist_search: str | None = None,
+    price_max: float | None = None,
+    free_only: bool = False,
+    available_only: bool = False,
     event_type: EventType | None = None,
     status: EventStatus | None = None,
     page: int = 1,
@@ -134,8 +146,25 @@ def list_events(
         date_from: Start of date range (inclusive). None means no lower bound.
         date_to: End of date range (inclusive). None means no upper bound.
         genres: Filter to events matching any of these genres (overlap).
+        spotify_artist_ids: Filter to events whose ``spotify_artist_ids``
+            array overlaps any of these IDs. An empty list short-circuits
+            to zero results — the caller asked for "events matching
+            artists I follow" but supplied no artists.
+        artist_search: Case-insensitive substring on the ``artists``
+            JSONB array. ``"phoebe"`` matches an event with
+            ``artists = ["Phoebe Bridgers"]``. Whitespace-only strings
+            are ignored.
+        price_max: Upper bound (inclusive) for ``min_price``. Events
+            with ``min_price IS NULL`` are excluded so unpriced shows
+            don't pollute "under $X" results.
+        free_only: Restrict to events whose ``min_price`` is exactly
+            zero. Mutually exclusive in spirit with ``price_max``; the
+            caller decides which to apply.
+        available_only: Drop events whose ``status`` is cancelled,
+            sold out, or past. Useful as a default for browse listings.
         event_type: Filter to a specific event type.
-        status: Filter to a specific event status.
+        status: Filter to a specific event status. Takes precedence over
+            ``available_only`` when both are passed.
         page: Page number, 1-indexed. Defaults to 1.
         per_page: Results per page. Maximum 100. Defaults to 20.
 
@@ -174,11 +203,35 @@ def list_events(
     if genres is not None:
         base = base.where(Event.genres.overlap(genres))
 
+    if spotify_artist_ids is not None:
+        if not spotify_artist_ids:
+            # Empty list = "match nothing" rather than "no filter".
+            base = base.where(False)
+        else:
+            base = base.where(Event.spotify_artist_ids.overlap(spotify_artist_ids))
+
+    if artist_search is not None and artist_search.strip():
+        pattern = f"%{artist_search.strip()}%"
+        # `array_to_string` flattens the artists list so a single ILIKE
+        # check covers every element. Avoids the unnest+lateral subquery
+        # pattern at the cost of pulling each row's artist list into a
+        # text scan — fine for our row counts.
+        base = base.where(func.array_to_string(Event.artists, "|").ilike(pattern))
+
+    if free_only:
+        base = base.where(Event.min_price == 0)
+    elif price_max is not None:
+        base = base.where(Event.min_price.is_not(None)).where(
+            Event.min_price <= price_max
+        )
+
     if event_type is not None:
         base = base.where(Event.event_type == event_type)
 
     if status is not None:
         base = base.where(Event.status == status)
+    elif available_only:
+        base = base.where(Event.status.notin_(_UNAVAILABLE_STATUSES))
 
     count_stmt = select(func.count()).select_from(base.subquery())
     total = session.execute(count_stmt).scalar_one()

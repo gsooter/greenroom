@@ -149,6 +149,99 @@ def test_list_events_normalizes_enum_strings_and_delegates(
     assert captured["status"] is EventStatus.CONFIRMED
 
 
+def test_list_events_rejects_negative_price_max() -> None:
+    """Negative price ceilings are user errors, not silently coerced."""
+    with pytest.raises(ValidationError):
+        events_service.list_events(MagicMock(), price_max=-1.0)
+
+
+def test_list_events_resolves_artist_ids_to_spotify_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``artist_ids`` UUIDs are translated to Spotify IDs for the repo."""
+
+    @dataclass
+    class _FakeArtist:
+        id: uuid.UUID
+        spotify_id: str | None
+
+    enriched_id = uuid.uuid4()
+    unenriched_id = uuid.uuid4()
+    fake_artists = [
+        _FakeArtist(id=enriched_id, spotify_id="sp123"),
+        _FakeArtist(id=unenriched_id, spotify_id=None),
+    ]
+    monkeypatch.setattr(
+        events_service.artists_repo,
+        "list_artists_by_ids",
+        lambda _s, _ids: fake_artists,
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), artist_ids=[enriched_id, unenriched_id])
+    # Unenriched artists are dropped — only the resolved Spotify ID is sent.
+    assert captured["spotify_artist_ids"] == ["sp123"]
+
+
+def test_list_events_artist_ids_with_no_enrichment_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If none of the supplied artists are enriched, the empty list signals
+    'match nothing' to the repo rather than silently dropping the filter."""
+
+    @dataclass
+    class _FakeArtist:
+        id: uuid.UUID
+        spotify_id: str | None
+
+    a_id = uuid.uuid4()
+    monkeypatch.setattr(
+        events_service.artists_repo,
+        "list_artists_by_ids",
+        lambda _s, _ids: [_FakeArtist(id=a_id, spotify_id=None)],
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), artist_ids=[a_id])
+    assert captured["spotify_artist_ids"] == []
+
+
+def test_list_events_forwards_new_filters_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """artist_search, price_max, free_only, available_only round-trip to the repo."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(
+        MagicMock(),
+        artist_search="phoebe",
+        price_max=50.0,
+        free_only=True,
+        available_only=True,
+    )
+    assert captured["artist_search"] == "phoebe"
+    assert captured["price_max"] == 50.0
+    assert captured["free_only"] is True
+    assert captured["available_only"] is True
+
+
 def test_serialize_event_includes_venue_and_city() -> None:
     """Full serializer emits nested venue + city blocks."""
     event = _FakeEvent()

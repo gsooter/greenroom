@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.exceptions import EVENT_NOT_FOUND, NotFoundError, ValidationError
 from backend.data.models.events import Event, EventStatus, EventType
+from backend.data.repositories import artists as artists_repo
 from backend.data.repositories import events as events_repo
 
 _ET_ZONE = ZoneInfo("America/New_York")
@@ -76,6 +77,11 @@ def list_events(
     date_from: date | None = None,
     date_to: date | None = None,
     genres: list[str] | None = None,
+    artist_ids: list[uuid.UUID] | None = None,
+    artist_search: str | None = None,
+    price_max: float | None = None,
+    free_only: bool = False,
+    available_only: bool = False,
     event_type: str | None = None,
     status: str | None = None,
     page: int = 1,
@@ -91,8 +97,22 @@ def list_events(
         date_from: Start of date range.
         date_to: End of date range.
         genres: Filter by genre overlap.
+        artist_ids: Filter to events whose Spotify artist IDs overlap
+            those of the supplied :class:`Artist` UUIDs. Artists without
+            a resolved ``spotify_id`` are silently skipped — once
+            enrichment lands they'll start matching automatically. If
+            none of the supplied artists have a Spotify ID, the result
+            set is empty (the caller asked for "shows by these artists"
+            and we can't answer that yet).
+        artist_search: Case-insensitive substring on ``events.artists``.
+        price_max: Upper bound (inclusive) for ``min_price``. Must be
+            non-negative when supplied.
+        free_only: Restrict to free shows. When True, ``price_max`` is
+            ignored.
+        available_only: Hide cancelled/sold-out/past shows.
         event_type: Filter by event type string.
-        status: Filter by event status string.
+        status: Filter by event status string. Takes precedence over
+            ``available_only`` when both are passed.
         page: Page number, 1-indexed.
         per_page: Results per page. Maximum 100.
 
@@ -100,10 +120,14 @@ def list_events(
         Tuple of (events list, total count).
 
     Raises:
-        ValidationError: If per_page exceeds 100 or enum values are invalid.
+        ValidationError: If ``per_page`` exceeds 100, ``price_max`` is
+            negative, or an enum string is unrecognized.
     """
     if per_page > 100:
         raise ValidationError("per_page cannot exceed 100.")
+
+    if price_max is not None and price_max < 0:
+        raise ValidationError("price_max cannot be negative.")
 
     parsed_type: EventType | None = None
     if event_type is not None:
@@ -125,6 +149,11 @@ def list_events(
                 f"Valid values: {[s.value for s in EventStatus]}"
             ) from err
 
+    spotify_ids: list[str] | None = None
+    if artist_ids is not None:
+        artists = artists_repo.list_artists_by_ids(session, artist_ids)
+        spotify_ids = [a.spotify_id for a in artists if a.spotify_id]
+
     return events_repo.list_events(
         session,
         city_id=city_id,
@@ -133,6 +162,11 @@ def list_events(
         date_from=date_from,
         date_to=date_to,
         genres=genres,
+        spotify_artist_ids=spotify_ids,
+        artist_search=artist_search,
+        price_max=price_max,
+        free_only=free_only,
+        available_only=available_only,
         event_type=parsed_type,
         status=parsed_status,
         page=page,
