@@ -38,6 +38,7 @@ def _build_app() -> Celery:
             "backend.scraper.watchdogs.dc9_dice_widget",
             "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
+            "backend.services.pricing_tasks",
             "backend.services.scraper_digest",
             "backend.services.spotify_tasks",
         ],
@@ -102,6 +103,16 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "task": "backend.services.scraper_digest.send_daily_digest",
             "schedule": crontab(hour=7, minute=30),
             "options": {"expires": 60 * 60 * 6},
+        },
+        # Sweeps every Tier A and Tier B pricing provider at 05:00 ET,
+        # one hour after the nightly scrape so the latest event rows are
+        # already settled but well before any morning traffic. Runs with
+        # ``force=True`` inside the task so the manual-refresh cooldown
+        # can't short-circuit the cron.
+        "refresh-all-event-pricing-daily": {
+            "task": "backend.services.pricing_tasks.refresh_all_event_pricing",
+            "schedule": crontab(hour=5, minute=0),
+            "options": {"expires": 60 * 60 * 4},
         },
     }
 

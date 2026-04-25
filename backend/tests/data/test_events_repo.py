@@ -563,6 +563,111 @@ def test_stamp_prices_refreshed_at_is_no_op_for_missing_event(
 
 
 # ---------------------------------------------------------------------------
+# list_events_for_pricing_sweep
+# ---------------------------------------------------------------------------
+
+
+def test_list_events_for_pricing_sweep_orders_stalest_first(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """Never-refreshed events come first, then oldest refresh, then date.
+
+    Fairness in the sweep: a brand-new event has zero pricing history,
+    so giving it priority over re-priced ones means a sold-out
+    inventory check still happens for shows that just landed.
+    """
+    city = make_city()
+    venue = make_venue(city=city)
+    now = datetime.now(UTC)
+
+    fresh = make_event(
+        venue=venue,
+        slug="fresh",
+        starts_at=now + timedelta(days=10),
+    )
+    fresh.prices_refreshed_at = now - timedelta(minutes=10)
+
+    stale = make_event(
+        venue=venue,
+        slug="stale",
+        starts_at=now + timedelta(days=20),
+    )
+    stale.prices_refreshed_at = now - timedelta(hours=20)
+
+    make_event(
+        venue=venue,
+        slug="never",
+        starts_at=now + timedelta(days=30),
+    )
+    session.flush()
+
+    rows = events_repo.list_events_for_pricing_sweep(session, now=now)
+
+    assert [e.slug for e in rows] == ["never", "stale", "fresh"]
+
+
+def test_list_events_for_pricing_sweep_excludes_past_events(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """Events whose ``starts_at`` is before ``now`` are not swept.
+
+    Once a show has happened the price doesn't matter; including past
+    events in the sweep would burn API budget on dead inventory.
+    """
+    city = make_city()
+    venue = make_venue(city=city)
+    now = datetime.now(UTC)
+
+    make_event(
+        venue=venue,
+        slug="past",
+        starts_at=now - timedelta(days=1),
+    )
+    make_event(
+        venue=venue,
+        slug="upcoming",
+        starts_at=now + timedelta(days=5),
+    )
+    session.flush()
+
+    rows = events_repo.list_events_for_pricing_sweep(session, now=now)
+    assert [e.slug for e in rows] == ["upcoming"]
+
+
+def test_list_events_for_pricing_sweep_respects_limit(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """The limit caps the batch size for the sweep run.
+
+    The cron processes one bounded batch per run; the next morning's
+    run picks up what's left because it re-orders by stalest-first.
+    """
+    city = make_city()
+    venue = make_venue(city=city)
+    now = datetime.now(UTC)
+
+    for i in range(5):
+        make_event(
+            venue=venue,
+            slug=f"e{i}",
+            starts_at=now + timedelta(days=i + 1),
+        )
+    session.flush()
+
+    rows = events_repo.list_events_for_pricing_sweep(session, now=now, limit=3)
+    assert len(rows) == 3
+
+
+# ---------------------------------------------------------------------------
 # list_all_event_artist_names
 # ---------------------------------------------------------------------------
 

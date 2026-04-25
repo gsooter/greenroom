@@ -599,6 +599,46 @@ def list_pricing_links(
     return list(session.execute(stmt).scalars().all())
 
 
+def list_events_for_pricing_sweep(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    limit: int = 500,
+) -> list[Event]:
+    """Return upcoming events ordered by stalest-first for the daily sweep.
+
+    The Celery sweep iterates this list, hitting every Tier A and Tier B
+    provider per event. Stalest first so a sweep that gets interrupted
+    still spreads coverage rather than re-refreshing the same head of
+    the list. Past events are excluded — once a show has happened, no
+    new pricing is meaningful.
+
+    Args:
+        session: Active SQLAlchemy session.
+        now: Reference clock; injected by tests so the upcoming-only
+            filter is deterministic. Defaults to ``datetime.now(UTC)``.
+        limit: Maximum events to return per sweep run. The 5am cron
+            takes one batch; the next morning's run picks up where this
+            one left off if the catalog ever exceeds the limit.
+
+    Returns:
+        Events with ``starts_at >= now``, ordered by
+        ``prices_refreshed_at`` ascending (NULLs first so brand-new
+        events get priced before re-pricing recently-swept ones).
+    """
+    anchor = now or datetime.now(UTC)
+    stmt = (
+        select(Event)
+        .where(Event.starts_at >= anchor)
+        .order_by(
+            Event.prices_refreshed_at.asc().nulls_first(),
+            Event.starts_at.asc(),
+        )
+        .limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
 def stamp_prices_refreshed_at(
     session: Session,
     event_id: uuid.UUID,
