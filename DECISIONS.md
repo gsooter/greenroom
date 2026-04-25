@@ -1949,6 +1949,85 @@ either.
 
 ---
 
+### 046 — Scraper Alert Pipeline Layers Six Independent Signals With Per-Severity Cooldowns
+
+**Date:** 2026-04-25
+**Status:** Decided
+
+**Decision:** The scraper alerting layer is composed of six independent
+signals — `zero_results`, `event_drop`, `scraper_failed`, `escalation`,
+`stale_data`, and `fleet_failure` — each with its own stable
+`alert_key` and a severity-specific cooldown window. A daily digest
+(`07:30 ET`) and an admin "send test alert" button complete the
+pipeline. Cooldown state is persisted in `scraper_alerts`; lookups
+fail open (a broken dedup table never silences alerts).
+
+Cooldown windows:
+
+| alert_key prefix | severity | cooldown |
+|---|---|---|
+| `zero_results:<slug>` | error | 12 h |
+| `event_drop:<slug>` | warning | 12 h |
+| `scraper_failed:<slug>` | error | 6 h |
+| `escalation:<slug>` | error | 24 h |
+| `stale_data:<slug>` | warning | 48 h |
+| `fleet_failure` | error | 2 h |
+
+**Rationale:** A single broken venue would otherwise post on every
+nightly run *and* every manual `/admin` re-trigger, drowning the
+on-call channel inside a day. Per-severity cooldowns reflect how often
+the operator actually wants to be reminded — a 6 h window for a fresh
+failure (so a same-day fix gets a fresh ping) but 48 h for stale data
+(silent-failure mode that doesn't get worse when ignored). Layering
+six independent signals catches the failure modes that one signal
+would miss: `zero_results` and `event_drop` need a current run,
+`stale_data` needs no run at all, `escalation` distinguishes a flake
+from a sustained outage, and `fleet_failure` distinguishes
+infrastructure problems from venue problems.
+
+The daily digest is not redundant with the alerts — it covers the
+*absence* of signal. A silent on-call channel could mean "all is
+well" or "the scheduler stopped firing"; the digest distinguishes the
+two.
+
+The notifier records its dedup row *after* the delivery attempt
+regardless of outcome — so a Slack outage still consumes a slot,
+preventing a runaway loop of failed sends.
+
+**Alternatives considered:**
+
+- **Single alert table with one global cooldown.** Rejected: a
+  6 h window appropriate for fresh failures would blast 4× a day
+  on long-running stale-data signals.
+- **No dedup, rely on Slack's "rate-limit me" UX.** Rejected: Slack
+  does not coalesce alerts and the user's channel would be unreadable
+  on a multi-venue outage.
+- **Digest only, no per-event alerts.** Rejected: a 24 h delay on
+  fresh failures is too long when the user wants to fix things during
+  the same evening.
+- **Per-event alerts only, no digest.** Rejected: a silent week
+  cannot be distinguished from a healthy week.
+
+**Consequences:**
+
+- New `scraper_alerts` table with unique `alert_key` and per-row
+  `last_sent_at`, `severity`, `sent_count`. Migration
+  `20260425_add_scraper_alerts.py`.
+- New module `backend.services.scraper_digest` plus a beat schedule
+  entry in `celery_app.py` for `07:30 America/New_York`.
+- New `POST /api/v1/admin/alerts/test` route fronted by a "Send test
+  alert" button on the admin dashboard. Bypasses cooldown; surfaces
+  which channels are configured so a missing webhook is obvious.
+- Failures and successes both train the system: `_check_stale_data`
+  inspects `metadata_json["created"]` over the last 7 successful
+  runs, and `count_consecutive_failed_runs` walks the head of the
+  history newest-first to detect sustained outages.
+- Alerting infrastructure is fail-open by design — every dedup
+  read/write is wrapped in try/except so a corrupt
+  `scraper_alerts` row never gags real signal.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
