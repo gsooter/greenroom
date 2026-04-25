@@ -156,17 +156,19 @@ export interface SavedEvent {
 }
 
 export interface RecommendationMatchReason {
-  scorer: "artist_match" | (string & {});
+  scorer: "artist_match" | "venue_affinity" | (string & {});
   kind:
     | "spotify_id"
     | "artist_name"
     | "genre_preference"
     | "genre_overlap"
+    | "saved_venue"
     | (string & {});
   label: string;
   artist_name?: string;
   genre_slug?: string;
   genre?: string;
+  venue_name?: string;
 }
 
 export interface Recommendation {
