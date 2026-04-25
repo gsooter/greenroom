@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from backend.pricing.providers.seatgeek import SeatGeekPricingProvider
 from backend.pricing.providers.ticketmaster import TicketmasterPricingProvider
+from backend.pricing.providers.tickpick import TickPickPricingProvider
 
 if TYPE_CHECKING:
     from backend.pricing.base import BasePricingProvider
@@ -38,7 +39,11 @@ def _build_default_providers() -> list[BasePricingProvider]:
         Newly constructed provider instances ready to call
         :meth:`fetch`.
     """
-    return [SeatGeekPricingProvider(), TicketmasterPricingProvider()]
+    return [
+        SeatGeekPricingProvider(),
+        TicketmasterPricingProvider(),
+        TickPickPricingProvider(),
+    ]
 
 
 def get_providers() -> list[BasePricingProvider]:
