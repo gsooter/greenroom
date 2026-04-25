@@ -123,6 +123,26 @@ _DMV_VENUES: list[VenueScraperConfig] = [
         city_slug="washington-dc",
         region="DMV",
     ),
+    VenueScraperConfig(
+        venue_slug="the-hamilton",
+        display_name="The Hamilton Live",
+        scraper_class="backend.scraper.venues.the_hamilton.TheHamiltonScraper",
+        platform_config={},
+        enabled=True,
+        city_slug="washington-dc",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="pearl-street-warehouse",
+        display_name="Pearl Street Warehouse",
+        scraper_class=(
+            "backend.scraper.venues.pearl_street_warehouse.PearlStreetWarehouseScraper"
+        ),
+        platform_config={},
+        enabled=True,
+        city_slug="washington-dc",
+        region="DMV",
+    ),
     # -----------------------------------------------------------------------
     # DICE-BACKED VENUES
     # The DiceScraper parses the JSON-LD Place.event array that dice.fm
@@ -298,6 +318,17 @@ _DMV_VENUES: list[VenueScraperConfig] = [
             "venue_name": "The Fillmore Silver Spring",
         },
         city_slug="silver-spring-md",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="bethesda-theater",
+        display_name="Bethesda Theater",
+        scraper_class=(
+            "backend.scraper.venues.bethesda_theater.BethesdaTheaterScraper"
+        ),
+        platform_config={},
+        enabled=True,
+        city_slug="bethesda-md",
         region="DMV",
     ),
     VenueScraperConfig(
@@ -538,6 +569,15 @@ _BALTIMORE_VENUES: list[VenueScraperConfig] = [
         city_slug="baltimore-md",
         region="Baltimore",
     ),
+    VenueScraperConfig(
+        venue_slug="ottobar",
+        display_name="The Ottobar",
+        scraper_class="backend.scraper.venues.ottobar.OttobarScraper",
+        platform_config={},
+        enabled=True,
+        city_slug="baltimore-md",
+        region="Baltimore",
+    ),
 ]
 
 
@@ -620,6 +660,15 @@ _RVA_VENUES: list[VenueScraperConfig] = [
             "venue_id": "Z7r9jZaAqh",
             "venue_name": "Ember Music Hall",
         },
+        city_slug="richmond-va",
+        region="RVA",
+    ),
+    VenueScraperConfig(
+        venue_slug="the-camel",
+        display_name="The Camel",
+        scraper_class="backend.scraper.venues.the_camel.TheCamelScraper",
+        platform_config={},
+        enabled=True,
         city_slug="richmond-va",
         region="RVA",
     ),

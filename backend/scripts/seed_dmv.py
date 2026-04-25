@@ -115,6 +115,27 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "website_url": "https://blackcatdc.com/",
         "capacity": 700,
     },
+    "the-hamilton": {
+        "address": "600 14th St NW, Washington, DC 20005",
+        "latitude": 38.897694,
+        "longitude": -77.032276,
+        "website_url": "https://live.thehamiltondc.com/",
+        "capacity": 700,
+    },
+    "pearl-street-warehouse": {
+        "address": "33 Pearl St SW, Washington, DC 20024",
+        "latitude": 38.878762,
+        "longitude": -77.024045,
+        "website_url": "https://pearlstreetwarehouse.com/",
+        "capacity": 350,
+    },
+    "bethesda-theater": {
+        "address": "7719 Wisconsin Ave, Bethesda, MD 20814",
+        "latitude": 38.987268,
+        "longitude": -77.094436,
+        "website_url": "https://www.bethesdatheater.com/",
+        "capacity": 500,
+    },
     "dc9": {
         "address": "1940 9th St NW, Washington, DC 20001",
         "latitude": 38.916694,
@@ -347,6 +368,13 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "website_url": "https://metrobmore.com/",
         "capacity": 200,
     },
+    "ottobar": {
+        "address": "2549 N Howard St, Baltimore, MD 21218",
+        "latitude": 39.318851,
+        "longitude": -76.619517,
+        "website_url": "https://theottobar.com/",
+        "capacity": 400,
+    },
     # ------------------------------------------------------------------
     # Northern Virginia additions
     # ------------------------------------------------------------------
@@ -422,6 +450,13 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "longitude": -77.434601,
         "website_url": "https://embermusichall.com/",
         "capacity": 700,
+    },
+    "the-camel": {
+        "address": "1621 W Broad St, Richmond, VA 23220",
+        "latitude": 37.554410,
+        "longitude": -77.457260,
+        "website_url": "https://www.thecamel.org/",
+        "capacity": 250,
     },
     "innsbrook-pavilion": {
         "address": "4901 Lake Brook Dr, Glen Allen, VA 23060",
@@ -517,6 +552,13 @@ DMV_CITY_SEEDS: list[CitySeed] = [
         state="MD",
         region="DMV",
         description="Live music and concerts in North Bethesda, Maryland.",
+    ),
+    CitySeed(
+        name="Bethesda",
+        slug="bethesda-md",
+        state="MD",
+        region="DMV",
+        description="Live music and concerts in Bethesda, Maryland.",
     ),
     CitySeed(
         name="National Harbor",
