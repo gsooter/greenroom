@@ -24,6 +24,11 @@ export interface ListEventsParams {
   dateFrom?: string;
   dateTo?: string;
   genres?: string[];
+  artistIds?: string[];
+  artistSearch?: string;
+  priceMax?: number;
+  freeOnly?: boolean;
+  availableOnly?: boolean;
   eventType?: EventType;
   status?: EventStatus;
   page?: number;
@@ -41,6 +46,11 @@ export async function listEvents(
     dateFrom,
     dateTo,
     genres,
+    artistIds,
+    artistSearch,
+    priceMax,
+    freeOnly,
+    availableOnly,
     eventType,
     status,
     page,
@@ -56,6 +66,11 @@ export async function listEvents(
       date_from: dateFrom,
       date_to: dateTo,
       genre: genres,
+      artist_id: artistIds,
+      artist_search: artistSearch,
+      price_max: priceMax,
+      free_only: freeOnly ? "true" : undefined,
+      available_only: availableOnly ? "true" : undefined,
       event_type: eventType,
       status,
       page,
