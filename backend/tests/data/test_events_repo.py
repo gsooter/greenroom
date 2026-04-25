@@ -414,6 +414,154 @@ def test_ticket_snapshot_crud(
     assert events_repo.get_latest_ticket_snapshot(session, event.id, "missing") is None
 
 
+def test_list_latest_snapshots_by_source_returns_one_per_source(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """Two snapshots per source → only the newest of each comes back.
+
+    Powers the provider-list rendering on the event detail page; the UI
+    needs one row per source, not the full history.
+    """
+    city = make_city()
+    venue = make_venue(city=city)
+    event = make_event(venue=venue)
+
+    older_seatgeek = events_repo.create_ticket_snapshot(
+        session, event_id=event.id, source="seatgeek", min_price=40.0
+    )
+    older_seatgeek.created_at = datetime.now(UTC) - timedelta(hours=2)
+    newer_seatgeek = events_repo.create_ticket_snapshot(
+        session, event_id=event.id, source="seatgeek", min_price=35.0
+    )
+    newer_seatgeek.created_at = datetime.now(UTC)
+    tickpick = events_repo.create_ticket_snapshot(
+        session, event_id=event.id, source="tickpick", min_price=30.0
+    )
+    session.flush()
+
+    rows = events_repo.list_latest_snapshots_by_source(session, event.id)
+
+    by_source = {row.source: row for row in rows}
+    assert set(by_source) == {"seatgeek", "tickpick"}
+    assert by_source["seatgeek"].id == newer_seatgeek.id
+    assert by_source["tickpick"].id == tickpick.id
+
+
+def test_upsert_pricing_link_inserts_then_updates(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """First call inserts; second call to the same (event, source) updates."""
+    city = make_city()
+    venue = make_venue(city=city)
+    event = make_event(venue=venue)
+
+    inserted = events_repo.upsert_pricing_link(
+        session,
+        event_id=event.id,
+        source="seatgeek",
+        url="https://seatgeek.com/x",
+        affiliate_url="https://seatgeek.com/x?aid=42",
+        is_active=True,
+    )
+    assert inserted.url == "https://seatgeek.com/x"
+    assert inserted.is_active is True
+    assert inserted.last_active_at is not None
+    first_seen = inserted.last_seen_at
+
+    # Second call updates the same row in-place — no duplicate insert.
+    updated = events_repo.upsert_pricing_link(
+        session,
+        event_id=event.id,
+        source="seatgeek",
+        url="https://seatgeek.com/y",
+        affiliate_url=None,
+        is_active=False,
+    )
+    assert updated.id == inserted.id
+    assert updated.url == "https://seatgeek.com/y"
+    assert updated.affiliate_url is None
+    assert updated.is_active is False
+    # last_seen always advances; last_active_at sticks at the most recent
+    # active sweep so the UI can still surface the URL when inventory comes
+    # back.
+    assert updated.last_seen_at >= first_seen
+    assert updated.last_active_at == inserted.last_active_at
+
+
+def test_list_pricing_links_filters_by_active(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """only_active=True drops links whose latest sweep was empty."""
+    city = make_city()
+    venue = make_venue(city=city)
+    event = make_event(venue=venue)
+
+    events_repo.upsert_pricing_link(
+        session,
+        event_id=event.id,
+        source="seatgeek",
+        url="https://seatgeek.com/x",
+        is_active=True,
+    )
+    events_repo.upsert_pricing_link(
+        session,
+        event_id=event.id,
+        source="tickpick",
+        url="https://tickpick.com/x",
+        is_active=False,
+    )
+
+    all_links = events_repo.list_pricing_links(session, event.id)
+    active_links = events_repo.list_pricing_links(session, event.id, only_active=True)
+
+    assert {link.source for link in all_links} == {"seatgeek", "tickpick"}
+    assert {link.source for link in active_links} == {"seatgeek"}
+
+
+def test_stamp_prices_refreshed_at_writes_event_column(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """The cooldown gate reads what this helper writes."""
+    city = make_city()
+    venue = make_venue(city=city)
+    event = make_event(venue=venue)
+    assert event.prices_refreshed_at is None
+
+    stamp = datetime.now(UTC)
+    written = events_repo.stamp_prices_refreshed_at(
+        session, event.id, refreshed_at=stamp
+    )
+
+    assert written == stamp
+    session.refresh(event)
+    assert event.prices_refreshed_at == stamp
+
+
+def test_stamp_prices_refreshed_at_is_no_op_for_missing_event(
+    session: Session,
+) -> None:
+    """A missing event id returns the timestamp without raising.
+
+    Lets the service layer call this helper unconditionally — the only
+    path to a missing id is a race against a deletion, which is rare
+    enough not to deserve its own exception.
+    """
+    written = events_repo.stamp_prices_refreshed_at(session, uuid.uuid4())
+    assert isinstance(written, datetime)
+
+
 # ---------------------------------------------------------------------------
 # list_all_event_artist_names
 # ---------------------------------------------------------------------------

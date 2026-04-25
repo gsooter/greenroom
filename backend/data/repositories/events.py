@@ -5,7 +5,7 @@ are defined here. No other module should query these tables directly.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from backend.data.models.events import (
     Event,
+    EventPricingLink,
     EventStatus,
     EventType,
     TicketPricingSnapshot,
@@ -469,3 +470,160 @@ def get_latest_ticket_snapshot(
         .limit(1)
     )
     return session.execute(stmt).scalar_one_or_none()
+
+
+def list_latest_snapshots_by_source(
+    session: Session,
+    event_id: uuid.UUID,
+) -> list[TicketPricingSnapshot]:
+    """Return the most recent snapshot per ``source`` for one event.
+
+    The For-You and event-detail UIs render one row per provider — the
+    cheapest one anchors the buy CTA and the rest fill out a price-
+    comparison list. A naive ``DISTINCT ON (source)`` works here because
+    snapshots are append-only and ``(event_id, created_at desc)`` is
+    indexed.
+
+    Args:
+        session: Active SQLAlchemy session.
+        event_id: UUID of the event.
+
+    Returns:
+        One snapshot per source the event has been priced under,
+        newest-first within the (event_id, source) tuple.
+    """
+    stmt = (
+        select(TicketPricingSnapshot)
+        .where(TicketPricingSnapshot.event_id == event_id)
+        .order_by(
+            TicketPricingSnapshot.source.asc(),
+            TicketPricingSnapshot.created_at.desc(),
+        )
+        .distinct(TicketPricingSnapshot.source)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Pricing-link queries
+# ---------------------------------------------------------------------------
+
+
+def upsert_pricing_link(
+    session: Session,
+    *,
+    event_id: uuid.UUID,
+    source: str,
+    url: str,
+    affiliate_url: str | None = None,
+    is_active: bool = True,
+    currency: str = "USD",
+    seen_at: datetime | None = None,
+) -> EventPricingLink:
+    """Create or update the buy-URL row for one (event, source).
+
+    Decoupled from snapshots so a provider that finds zero listings on
+    this sweep still keeps its URL on file — the next sweep that finds
+    inventory just bumps ``last_active_at`` instead of re-deriving the
+    URL. ``last_seen_at`` always advances; ``last_active_at`` only
+    advances when ``is_active`` is true.
+
+    Args:
+        session: Active SQLAlchemy session.
+        event_id: UUID of the event.
+        source: Provider identifier (e.g., ``"seatgeek"``).
+        url: Canonical buy URL.
+        affiliate_url: Affiliate-tagged URL when the provider has one;
+            preferred over ``url`` in the UI.
+        is_active: Whether this refresh found live listings at the URL.
+        currency: Currency code the source quotes prices in.
+        seen_at: Timestamp to record. Defaults to ``datetime.now(UTC)``.
+
+    Returns:
+        The created or updated :class:`EventPricingLink` row.
+    """
+    now = seen_at or datetime.now(UTC)
+    stmt = select(EventPricingLink).where(
+        EventPricingLink.event_id == event_id,
+        EventPricingLink.source == source,
+    )
+    existing = session.execute(stmt).scalar_one_or_none()
+    if existing is None:
+        link = EventPricingLink(
+            event_id=event_id,
+            source=source,
+            url=url,
+            affiliate_url=affiliate_url,
+            currency=currency,
+            is_active=is_active,
+            last_seen_at=now,
+            last_active_at=now if is_active else None,
+        )
+        session.add(link)
+        session.flush()
+        return link
+
+    existing.url = url
+    existing.affiliate_url = affiliate_url
+    existing.currency = currency
+    existing.is_active = is_active
+    existing.last_seen_at = now
+    if is_active:
+        existing.last_active_at = now
+    session.flush()
+    return existing
+
+
+def list_pricing_links(
+    session: Session,
+    event_id: uuid.UUID,
+    *,
+    only_active: bool = False,
+) -> list[EventPricingLink]:
+    """List the per-source buy-URL rows for an event.
+
+    Args:
+        session: Active SQLAlchemy session.
+        event_id: UUID of the event.
+        only_active: When True, drop rows whose latest refresh found
+            zero listings. The detail UI passes ``True`` so we only
+            render Buy CTAs for surfaces that currently have inventory.
+
+    Returns:
+        Pricing-link rows ordered by source name for stable rendering.
+    """
+    stmt = select(EventPricingLink).where(EventPricingLink.event_id == event_id)
+    if only_active:
+        stmt = stmt.where(EventPricingLink.is_active.is_(True))
+    stmt = stmt.order_by(EventPricingLink.source.asc())
+    return list(session.execute(stmt).scalars().all())
+
+
+def stamp_prices_refreshed_at(
+    session: Session,
+    event_id: uuid.UUID,
+    *,
+    refreshed_at: datetime | None = None,
+) -> datetime:
+    """Mark an event as just-refreshed for the cooldown gate.
+
+    The service layer calls this after a refresh sweep completes so the
+    next request inside the cooldown window short-circuits to the
+    persisted snapshots.
+
+    Args:
+        session: Active SQLAlchemy session.
+        event_id: UUID of the event.
+        refreshed_at: Timestamp to write. Defaults to ``datetime.now(UTC)``.
+
+    Returns:
+        The timestamp that was written, so callers can echo it back to
+        the API caller without re-reading the row.
+    """
+    stamp = refreshed_at or datetime.now(UTC)
+    event = session.get(Event, event_id)
+    if event is None:
+        return stamp
+    event.prices_refreshed_at = stamp
+    session.flush()
+    return stamp
