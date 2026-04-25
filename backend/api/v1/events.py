@@ -23,7 +23,9 @@ def list_events() -> tuple[dict[str, Any], int]:
         city_id: UUID — filter to a specific city.
         region: string — filter to cities in this region (e.g., "DMV").
         venue_id: UUID (repeatable) — filter to specific venues.
-        date_from: YYYY-MM-DD — start of date range.
+        date_from: YYYY-MM-DD — start of date range. Defaults to today
+            when omitted so the public listing only surfaces upcoming
+            shows; pass an explicit value to query historical events.
         date_to: YYYY-MM-DD — end of date range.
         genre: string (repeatable) — filter by genre overlap.
         event_type: string — filter by event type.
@@ -39,7 +41,10 @@ def list_events() -> tuple[dict[str, Any], int]:
     city_id = _parse_uuid(request.args.get("city_id"))
     region = request.args.get("region")
     venue_ids = _parse_uuid_list(request.args.getlist("venue_id"))
-    date_from = _parse_date(request.args.get("date_from"))
+    raw_date_from = request.args.get("date_from")
+    date_from = (
+        _parse_date(raw_date_from) if raw_date_from is not None else date.today()
+    )
     date_to = _parse_date(request.args.get("date_to"))
     genres = request.args.getlist("genre") or None
     event_type = request.args.get("event_type")

@@ -94,6 +94,24 @@ def test_list_events_rejects_malformed_date_as_none(
     assert captured["date_from"] is None
 
 
+def test_list_events_defaults_date_from_to_today(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitted ``date_from`` defaults to today so past events stay hidden."""
+    from datetime import date
+
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = client.get("/api/v1/events?region=DMV")
+    assert resp.status_code == 200
+    assert captured["date_from"] == date.today()
+
+
 def test_list_events_surfaces_validation_error(
     client: FlaskClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
