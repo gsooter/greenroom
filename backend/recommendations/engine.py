@@ -24,6 +24,7 @@ from sqlalchemy import select
 from backend.data.models.events import Event, EventStatus
 from backend.data.repositories import users as users_repo
 from backend.recommendations.scorers.artist_match import ArtistMatchScorer
+from backend.recommendations.scorers.venue_affinity import VenueAffinityScorer
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -92,17 +93,20 @@ def generate_for_user(
     """
     users_repo.delete_recommendations_for_user(session, user.id)
 
+    venue_affinity = users_repo.list_saved_venue_affinity(session, user.id)
+
     if not (
         user.spotify_top_artists
         or user.spotify_recent_artists
         or user.tidal_top_artists
         or user.apple_top_artists
         or user.genre_preferences
+        or venue_affinity
     ):
         return 0
 
     events = _fetch_scoreable_events(session)
-    scorers = _build_scorers(user)
+    scorers = _build_scorers(user, venue_affinity)
 
     scored: list[tuple[float, dict[str, Any], Event]] = []
     for event in events:
@@ -163,19 +167,28 @@ def _fetch_scoreable_events(
     return list(session.execute(stmt).scalars().all())
 
 
-def _build_scorers(user: User) -> list[Scorer]:
+def _build_scorers(
+    user: User,
+    venue_affinity: dict[Any, dict[str, Any]],
+) -> list[Scorer]:
     """Instantiate the active scorer set for a user.
 
-    The only scorer today is artist-match; this helper is the single
-    spot to extend when we add similar-artist, genre-affinity, etc.
+    Order doesn't affect totals (scores sum) but does decide tie-breaks
+    in the breakdown dict's iteration; artist-match leads since it is
+    the strongest signal and the most recognizable reason to surface in
+    the UI ("You listen to X" beats "You've saved shows at Y" for first
+    impressions).
 
     Args:
         user: The user we are scoring events for.
+        venue_affinity: Precomputed map of saved-venue counts. Pass an
+            empty dict when the user has no saved events; the venue
+            scorer will then abstain on every event.
 
     Returns:
         List of scorer instances ready to call :meth:`Scorer.score`.
     """
-    return [ArtistMatchScorer(user)]
+    return [ArtistMatchScorer(user), VenueAffinityScorer(venue_affinity)]
 
 
 def _dedupe_by_show(
@@ -234,8 +247,10 @@ def _build_match_reasons(breakdown: dict[str, Any]) -> list[dict[str, Any]]:
     """
     reasons: list[dict[str, Any]] = []
     artist_match = breakdown.get("artist_match")
+    venue_affinity = breakdown.get("venue_affinity")
+
     if not isinstance(artist_match, dict):
-        return reasons
+        artist_match = {}
 
     for matched in artist_match.get("matched_artists", []) or []:
         name = matched.get("name")
@@ -279,5 +294,17 @@ def _build_match_reasons(breakdown: dict[str, Any]) -> list[dict[str, Any]]:
                 "genre": genre,
             }
         )
+
+    if isinstance(venue_affinity, dict):
+        venue_name = venue_affinity.get("matched_venue_name")
+        if isinstance(venue_name, str) and venue_name.strip():
+            reasons.append(
+                {
+                    "scorer": "venue_affinity",
+                    "kind": "saved_venue",
+                    "label": f"You've saved shows at {venue_name}",
+                    "venue_name": venue_name,
+                }
+            )
 
     return reasons

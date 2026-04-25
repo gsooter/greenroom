@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.data.models.events import Event
 from backend.data.models.recommendations import Recommendation
 from backend.data.models.users import (
     MusicServiceConnection,
@@ -18,6 +19,7 @@ from backend.data.models.users import (
     SavedEvent,
     User,
 )
+from backend.data.models.venues import Venue
 
 # ---------------------------------------------------------------------------
 # User queries
@@ -370,6 +372,49 @@ def create_saved_event(
     session.add(saved)
     session.flush()
     return saved
+
+
+def list_saved_venue_affinity(
+    session: Session,
+    user_id: uuid.UUID,
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """Aggregate the user's saved events by venue.
+
+    Counts how many distinct events at each venue the user has bookmarked
+    and bundles the venue's display name in the same dict so the
+    recommendation scorer can label its match-reason chip ("You've saved
+    shows at Black Cat") without a second lookup.
+
+    A single SQL round-trip joins ``saved_events`` → ``events`` →
+    ``venues`` and aggregates server-side; the scorer treats the result
+    as an in-memory map keyed by venue id.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user_id: UUID of the user.
+
+    Returns:
+        Mapping ``{venue_id: {"count": int, "name": str}}``. Empty when
+        the user has no saved events. Venues whose join row is missing
+        a name (shouldn't happen in practice) are dropped.
+    """
+    stmt = (
+        select(
+            Venue.id,
+            Venue.name,
+            func.count(SavedEvent.id).label("count"),
+        )
+        .join(Event, Event.id == SavedEvent.event_id)
+        .join(Venue, Venue.id == Event.venue_id)
+        .where(SavedEvent.user_id == user_id)
+        .group_by(Venue.id, Venue.name)
+    )
+    result: dict[uuid.UUID, dict[str, Any]] = {}
+    for venue_id, venue_name, count in session.execute(stmt).all():
+        if not venue_name:
+            continue
+        result[venue_id] = {"count": int(count), "name": venue_name}
+    return result
 
 
 def delete_saved_event(session: Session, saved: SavedEvent) -> None:

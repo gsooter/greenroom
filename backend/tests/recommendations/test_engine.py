@@ -68,14 +68,23 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     delete_mock = MagicMock(name="delete_recommendations_for_user")
     create_mock = MagicMock(name="create_recommendation")
     fetch_mock = MagicMock(name="_fetch_scoreable_events", return_value=[])
+    affinity_mock = MagicMock(name="list_saved_venue_affinity", return_value={})
     monkeypatch.setattr(
         engine_module.users_repo,
         "delete_recommendations_for_user",
         delete_mock,
     )
     monkeypatch.setattr(engine_module.users_repo, "create_recommendation", create_mock)
+    monkeypatch.setattr(
+        engine_module.users_repo, "list_saved_venue_affinity", affinity_mock
+    )
     monkeypatch.setattr(engine_module, "_fetch_scoreable_events", fetch_mock)
-    return {"delete": delete_mock, "create": create_mock, "fetch": fetch_mock}
+    return {
+        "delete": delete_mock,
+        "create": create_mock,
+        "fetch": fetch_mock,
+        "affinity": affinity_mock,
+    }
 
 
 def test_generate_returns_zero_when_user_has_no_top_artists(
@@ -191,7 +200,7 @@ def test_generate_caps_total_score_at_one(
     ]
     # Replace _build_scorers so both scorers run for this case.
     original = engine_module._build_scorers
-    engine_module._build_scorers = lambda _user: monkeypatch_scorers  # type: ignore[assignment,return-value]
+    engine_module._build_scorers = lambda _user, _affinity: monkeypatch_scorers  # type: ignore[assignment,return-value]
     try:
         result = generate_for_user(session, user)  # type: ignore[arg-type]
     finally:
@@ -345,6 +354,75 @@ def test_build_match_reasons_orders_artists_before_preferences() -> None:
     }
     reasons = _build_match_reasons(breakdown)
     assert [r["kind"] for r in reasons] == ["spotify_id", "genre_preference"]
+
+
+def test_build_match_reasons_surfaces_venue_affinity_chip() -> None:
+    """A venue-affinity scorer block produces a saved-venue chip."""
+    breakdown = {
+        "venue_affinity": {
+            "score": 0.3,
+            "matched_venue_id": str(uuid.uuid4()),
+            "matched_venue_name": "Black Cat",
+            "saved_count": 2,
+        }
+    }
+    reasons = _build_match_reasons(breakdown)
+    assert reasons == [
+        {
+            "scorer": "venue_affinity",
+            "kind": "saved_venue",
+            "label": "You've saved shows at Black Cat",
+            "venue_name": "Black Cat",
+        }
+    ]
+
+
+def test_build_match_reasons_skips_venue_affinity_without_name() -> None:
+    """A venue block missing a usable name is silently skipped."""
+    assert _build_match_reasons({"venue_affinity": {"score": 0.2}}) == []
+    assert (
+        _build_match_reasons(
+            {"venue_affinity": {"score": 0.2, "matched_venue_name": "   "}}
+        )
+        == []
+    )
+
+
+def test_generate_runs_for_user_with_only_saved_venue_affinity(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """A user with no music cache still gets recs from saved-venue history.
+
+    A login-only user who has never connected Spotify but actively saves
+    shows at the same venue should see venue-affinity matches on
+    For-You instead of an empty page.
+    """
+    session = MagicMock()
+    user = _FakeUser()
+    saved_venue = uuid.uuid4()
+    patched_engine["affinity"].return_value = {
+        saved_venue: {"count": 3, "name": "Black Cat"},
+    }
+    matched = _FakeEvent(venue_id=saved_venue, artists=["Unknown"])
+    other = _FakeEvent(artists=["Unknown"])
+    patched_engine["fetch"].return_value = [matched, other]
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+
+    assert result == 1
+    call = patched_engine["create"].call_args_list[0]
+    assert call.kwargs["event_id"] == matched.id
+    assert call.kwargs["score"] == pytest.approx(0.4)
+    breakdown = call.kwargs["score_breakdown"]
+    assert breakdown["venue_affinity"]["matched_venue_name"] == "Black Cat"
+    assert breakdown["_match_reasons"] == [
+        {
+            "scorer": "venue_affinity",
+            "kind": "saved_venue",
+            "label": "You've saved shows at Black Cat",
+            "venue_name": "Black Cat",
+        }
+    ]
 
 
 def test_fetch_scoreable_events_queries_session(
