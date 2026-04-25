@@ -201,3 +201,72 @@ def test_count_failed_runs_since(session: Session) -> None:
 
     recent_cutoff = base - timedelta(minutes=5)
     assert runs_repo.count_failed_runs_since(session, "bc", recent_cutoff) == 0
+
+
+def test_count_consecutive_failed_runs_walks_head(session: Session) -> None:
+    """Counts FAILED rows newest-first until the first non-FAILED status."""
+    base = _now()
+    # History (oldest → newest): FAILED, SUCCESS, FAILED, FAILED, FAILED.
+    # The head streak is 3 — the older FAILED is broken by the SUCCESS.
+    _seed(
+        session,
+        venue_slug="bc",
+        status=ScraperRunStatus.FAILED,
+        started_at=base - timedelta(hours=10),
+    )
+    _seed(
+        session,
+        venue_slug="bc",
+        status=ScraperRunStatus.SUCCESS,
+        started_at=base - timedelta(hours=8),
+    )
+    for offset in (4, 2, 1):
+        _seed(
+            session,
+            venue_slug="bc",
+            status=ScraperRunStatus.FAILED,
+            started_at=base - timedelta(hours=offset),
+        )
+
+    assert runs_repo.count_consecutive_failed_runs(session, "bc") == 3
+
+
+def test_count_consecutive_failed_runs_zero_when_head_is_success(
+    session: Session,
+) -> None:
+    """A successful most-recent run resets the streak to zero."""
+    base = _now()
+    _seed(
+        session,
+        venue_slug="bc",
+        status=ScraperRunStatus.FAILED,
+        started_at=base - timedelta(hours=2),
+    )
+    _seed(
+        session,
+        venue_slug="bc",
+        status=ScraperRunStatus.SUCCESS,
+        started_at=base - timedelta(minutes=5),
+    )
+
+    assert runs_repo.count_consecutive_failed_runs(session, "bc") == 0
+
+
+def test_count_consecutive_failed_runs_zero_for_unknown_venue(
+    session: Session,
+) -> None:
+    """No history → no streak."""
+    assert runs_repo.count_consecutive_failed_runs(session, "ghost") == 0
+
+
+def test_count_consecutive_failed_runs_respects_limit(session: Session) -> None:
+    """Streak count is capped at the inspection limit."""
+    base = _now()
+    for offset in range(8):
+        _seed(
+            session,
+            venue_slug="bc",
+            status=ScraperRunStatus.FAILED,
+            started_at=base - timedelta(minutes=offset),
+        )
+    assert runs_repo.count_consecutive_failed_runs(session, "bc", limit=5) == 5

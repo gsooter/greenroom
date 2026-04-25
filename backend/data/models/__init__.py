@@ -24,7 +24,7 @@ from backend.data.models.onboarding import (
     UserOnboardingState,
 )
 from backend.data.models.recommendations import Recommendation
-from backend.data.models.scraper import ScraperRun, ScraperRunStatus
+from backend.data.models.scraper import ScraperAlert, ScraperRun, ScraperRunStatus
 from backend.data.models.users import (
     DigestFrequency,
     MusicServiceConnection,
@@ -56,6 +56,7 @@ __all__ = [
     "OAuthProvider",
     "Recommendation",
     "SavedEvent",
+    "ScraperAlert",
     "ScraperRun",
     "ScraperRunStatus",
     "TicketPricingSnapshot",

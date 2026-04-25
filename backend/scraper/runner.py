@@ -104,11 +104,32 @@ def scrape_venue(venue_slug: str) -> dict[str, Any]:
             raise
 
 
+FLEET_FAILURE_THRESHOLD = 0.4
+"""Fraction of venues that must fail in one batch to fire a fleet alert.
+
+Per-venue alerts already deduplicate, but a mass failure (DB outage,
+expired credentials, blocked IP) would still emit N separate alerts in
+quick succession before any cooldown kicks in. The fleet alert is a
+single, distinct signal that lets the operator see "the scraper run
+itself broke, not one venue."
+"""
+
+ESCALATION_FAILURE_THRESHOLD = 3
+"""Consecutive failures that flip a venue from "flake" to "sustained outage."
+
+The first failure already fires a per-venue ``scraper_failed:`` alert.
+Three in a row means the venue has been broken across multiple nightly
+runs and the operator should treat it as a real fix-it task rather
+than a transient blip.
+"""
+
+
 def run_all_scrapers(session: Session) -> dict[str, Any]:
     """Run scrapers for all enabled venues.
 
     Iterates through all enabled venue configs, runs each scraper,
-    ingests results, and returns a summary.
+    ingests results, and returns a summary. Fires a fleet-wide alert
+    when the failure rate exceeds :data:`FLEET_FAILURE_THRESHOLD`.
 
     Args:
         session: Active SQLAlchemy session.
@@ -133,7 +154,69 @@ def run_all_scrapers(session: Session) -> dict[str, Any]:
         len(configs),
     )
 
+    _maybe_alert_fleet_failure(
+        session=session,
+        total=len(configs),
+        failed=failed,
+        results=results,
+    )
+
     return results
+
+
+def _maybe_alert_fleet_failure(
+    *,
+    session: Session,
+    total: int,
+    failed: int,
+    results: dict[str, Any],
+) -> None:
+    """Emit a single fleet-wide alert when too many scrapers failed at once.
+
+    A nightly run with most venues failing usually points at infrastructure
+    (database, Redis, outbound network, expired API keys) rather than at
+    any one venue. Surfacing it as one signal — rather than letting the
+    per-venue alerts pile up in Slack — keeps the on-call channel readable.
+
+    Args:
+        session: Active SQLAlchemy session, reused for the alert dedup row.
+        total: Total number of venues that ran.
+        failed: Number of venues whose run ended in ``status == "failed"``.
+        results: The per-venue results dict, used to enumerate which
+            venues are in the failed set.
+    """
+    if total == 0 or failed == 0:
+        return
+    failure_rate = failed / total
+    if failure_rate < FLEET_FAILURE_THRESHOLD:
+        return
+
+    failed_venues = sorted(
+        slug for slug, info in results.items() if info["status"] == "failed"
+    )
+    preview = ", ".join(failed_venues[:10])
+    if len(failed_venues) > 10:
+        preview += f", ...(+{len(failed_venues) - 10} more)"
+
+    send_alert(
+        title=(f"Fleet failure: {failed}/{total} scrapers failed ({failure_rate:.0%})"),
+        message=(
+            f"{failed} of {total} enabled scrapers ({failure_rate:.0%}) failed "
+            f"in the same batch. This usually means a shared dependency is "
+            f"broken (DB, Redis, outbound network, credentials). "
+            f"Failed venues: {preview}."
+        ),
+        severity="error",
+        details={
+            "total": total,
+            "failed": failed,
+            "failure_rate": f"{failure_rate:.0%}",
+            "venues": preview,
+        },
+        alert_key="fleet_failure",
+        cooldown_hours=2.0,
+        session=session,
+    )
 
 
 def run_scraper_for_venue(
@@ -243,6 +326,16 @@ def run_scraper_for_venue(
                 "scraper_class": config.scraper_class,
                 "error": str(e),
             },
+            alert_key=f"scraper_failed:{config.venue_slug}",
+            cooldown_hours=6.0,
+            session=session,
+        )
+
+        _maybe_alert_escalation(
+            session=session,
+            venue_slug=config.venue_slug,
+            scraper_class=config.scraper_class,
+            last_error=str(e),
         )
 
         return {
@@ -250,6 +343,55 @@ def run_scraper_for_venue(
             "error": str(e),
             "duration_seconds": duration,
         }
+
+
+def _maybe_alert_escalation(
+    *,
+    session: Session,
+    venue_slug: str,
+    scraper_class: str,
+    last_error: str,
+) -> None:
+    """Fire a separate escalation alert when consecutive failures pile up.
+
+    The runner has just inserted a fresh ``FAILED`` row, so the head of
+    the run history reflects the current outage. If the last
+    :data:`ESCALATION_FAILURE_THRESHOLD` runs are all FAILED, the venue
+    is in a sustained-outage state and deserves an attention-grabbing
+    alert distinct from the per-run "scraper failed" notice.
+
+    The escalation alert key is venue-scoped and uses a 24h cooldown
+    so the operator gets a daily reminder until they intervene — but
+    Slack isn't carpet-bombed.
+
+    Args:
+        session: Active SQLAlchemy session, reused for both the count
+            query and the alert dedup row.
+        venue_slug: Slug of the venue that just failed.
+        scraper_class: Fully qualified scraper class for context.
+        last_error: Stringified exception from the most recent failure.
+    """
+    consecutive = runs_repo.count_consecutive_failed_runs(session, venue_slug)
+    if consecutive < ESCALATION_FAILURE_THRESHOLD:
+        return
+    send_alert(
+        title=f"Sustained outage: {venue_slug} ({consecutive} consecutive failures)",
+        message=(
+            f"Scraper for '{venue_slug}' has now failed {consecutive} runs "
+            f"in a row. This is no longer a transient flake — the integration "
+            f"likely needs a fix. Most recent error: {last_error}"
+        ),
+        severity="error",
+        details={
+            "venue": venue_slug,
+            "scraper_class": scraper_class,
+            "consecutive_failures": consecutive,
+            "last_error": last_error,
+        },
+        alert_key=f"escalation:{venue_slug}",
+        cooldown_hours=24.0,
+        session=session,
+    )
 
 
 def _instantiate_scraper(config: VenueScraperConfig) -> BaseScraper:

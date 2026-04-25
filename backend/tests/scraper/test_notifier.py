@@ -216,3 +216,181 @@ def test_email_alert_returns_true_on_success(
     assert kwargs["subject"] == "[Greenroom Scraper] scraper down"
     assert "zero events" in kwargs["text_body"]
     assert "venue: black-cat" in kwargs["text_body"]
+
+
+# ---------------------------------------------------------------------------
+# Cooldown / dedup behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_send_alert_no_dedup_when_alert_key_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without alert_key, the dedup repo is never consulted."""
+    monkeypatch.setattr(notifier, "_send_slack_alert", lambda **_kw: True)
+
+    suppress_mock = MagicMock()
+    record_mock = MagicMock()
+    monkeypatch.setattr(notifier.alerts_repo, "should_suppress", suppress_mock)
+    monkeypatch.setattr(notifier.alerts_repo, "record_alert", record_mock)
+
+    sent = notifier.send_alert(title="t", message="m", severity="warning")
+
+    assert sent is True
+    suppress_mock.assert_not_called()
+    record_mock.assert_not_called()
+
+
+def test_send_alert_suppressed_when_within_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A suppressing prior send short-circuits Slack/email and returns False."""
+    slack_mock = MagicMock(return_value=True)
+    email_mock = MagicMock(return_value=True)
+    record_mock = MagicMock()
+    monkeypatch.setattr(notifier, "_send_slack_alert", slack_mock)
+    monkeypatch.setattr(notifier, "_send_email_alert", email_mock)
+    monkeypatch.setattr(notifier.alerts_repo, "should_suppress", lambda *_a, **_k: True)
+    monkeypatch.setattr(notifier.alerts_repo, "record_alert", record_mock)
+
+    session = MagicMock()
+    sent = notifier.send_alert(
+        title="t",
+        message="m",
+        severity="error",
+        alert_key="zero_results:bc",
+        cooldown_hours=12.0,
+        session=session,
+    )
+
+    assert sent is False
+    slack_mock.assert_not_called()
+    email_mock.assert_not_called()
+    record_mock.assert_not_called()
+
+
+def test_send_alert_records_attempt_when_not_suppressed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-suppressed send records the dedup row with the same payload."""
+    slack_mock = MagicMock(return_value=True)
+    record_mock = MagicMock()
+    monkeypatch.setattr(notifier, "_send_slack_alert", slack_mock)
+    monkeypatch.setattr(
+        notifier.alerts_repo, "should_suppress", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(notifier.alerts_repo, "record_alert", record_mock)
+
+    session = MagicMock()
+    sent = notifier.send_alert(
+        title="Zero results",
+        message="m",
+        severity="error",
+        details={"venue": "bc"},
+        alert_key="zero_results:bc",
+        cooldown_hours=12.0,
+        session=session,
+    )
+
+    assert sent is True
+    slack_mock.assert_called_once()
+    record_mock.assert_called_once()
+    kwargs = record_mock.call_args.kwargs
+    assert kwargs["alert_key"] == "zero_results:bc"
+    assert kwargs["severity"] == "error"
+    assert kwargs["title"] == "Zero results"
+    assert kwargs["details"] == {"venue": "bc"}
+
+
+def test_send_alert_records_attempt_even_when_delivery_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed Slack+email delivery still consumes a cooldown slot.
+
+    Otherwise a broken Slack integration would cause the notifier to
+    retry on every nightly run, hammering the disabled webhook.
+    """
+    monkeypatch.setattr(notifier, "_send_slack_alert", lambda **_kw: False)
+    monkeypatch.setattr(notifier, "_send_email_alert", lambda **_kw: False)
+    monkeypatch.setattr(
+        notifier.alerts_repo, "should_suppress", lambda *_a, **_k: False
+    )
+
+    record_mock = MagicMock()
+    monkeypatch.setattr(notifier.alerts_repo, "record_alert", record_mock)
+
+    sent = notifier.send_alert(
+        title="t",
+        message="m",
+        severity="error",
+        alert_key="scraper_failed:bc",
+        cooldown_hours=6.0,
+        session=MagicMock(),
+    )
+
+    assert sent is True
+    record_mock.assert_called_once()
+
+
+def test_send_alert_fails_open_when_dedup_read_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken dedup table never blocks an alert.
+
+    If ``should_suppress`` raises, we err on the side of delivery — a
+    silent monitoring stack is the worse failure mode.
+    """
+    slack_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(notifier, "_send_slack_alert", slack_mock)
+    monkeypatch.setattr(notifier.alerts_repo, "record_alert", lambda *_a, **_k: None)
+
+    def boom(*_a: object, **_k: object) -> bool:
+        raise RuntimeError("DB down")
+
+    monkeypatch.setattr(notifier.alerts_repo, "should_suppress", boom)
+
+    sent = notifier.send_alert(
+        title="t",
+        message="m",
+        severity="error",
+        alert_key="zero_results:bc",
+        cooldown_hours=12.0,
+        session=MagicMock(),
+    )
+
+    assert sent is True
+    slack_mock.assert_called_once()
+
+
+def test_send_alert_uses_scoped_session_when_none_supplied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the caller omits ``session``, notifier opens its own scoped one."""
+    monkeypatch.setattr(notifier, "_send_slack_alert", lambda **_kw: True)
+    suppress_mock = MagicMock(return_value=False)
+    record_mock = MagicMock()
+    monkeypatch.setattr(notifier.alerts_repo, "should_suppress", suppress_mock)
+    monkeypatch.setattr(notifier.alerts_repo, "record_alert", record_mock)
+
+    fake_session = MagicMock()
+
+    class _FakeFactory:
+        def __call__(self) -> MagicMock:
+            return fake_session
+
+    monkeypatch.setattr(notifier, "get_session_factory", lambda: _FakeFactory())
+
+    sent = notifier.send_alert(
+        title="t",
+        message="m",
+        severity="error",
+        alert_key="zero_results:bc",
+        cooldown_hours=12.0,
+    )
+
+    assert sent is True
+    # The scoped session is committed independently and closed.
+    fake_session.commit.assert_called_once()
+    fake_session.close.assert_called()
+    suppress_mock.assert_called_once()
+    record_mock.assert_called_once()

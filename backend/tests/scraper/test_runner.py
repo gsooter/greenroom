@@ -553,8 +553,64 @@ def test_run_scraper_for_venue_logs_failure_and_alerts(
     create_run_mock.assert_called_once()
     assert create_run_mock.call_args.kwargs["status"] is ScraperRunStatus.FAILED
     alert_mock.assert_called_once()
-    assert alert_mock.call_args.kwargs["severity"] == "error"
+    alert_kwargs = alert_mock.call_args.kwargs
+    assert alert_kwargs["severity"] == "error"
+    assert alert_kwargs["alert_key"].startswith("scraper_failed:")
+    assert alert_kwargs["cooldown_hours"] > 0
     validate_mock.assert_not_called()
+
+
+def test_run_scraper_for_venue_fires_escalation_after_consecutive_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """3 consecutive failures fires both the per-venue and escalation alerts."""
+    monkeypatch.setattr(runner, "_instantiate_scraper", lambda _c: _ExplodingScraper())
+    monkeypatch.setattr(runner.runs_repo, "create_scraper_run", MagicMock())
+    monkeypatch.setattr(
+        runner.runs_repo,
+        "count_consecutive_failed_runs",
+        lambda *_a, **_k: 3,
+    )
+    alert_mock = MagicMock()
+    monkeypatch.setattr(runner, "send_alert", alert_mock)
+    monkeypatch.setattr(runner, "validate_scraper_result", MagicMock())
+
+    result = runner.run_scraper_for_venue(MagicMock(), _cfg(venue_slug="dc9"))
+
+    assert result["status"] == "failed"
+    assert alert_mock.call_count == 2
+    keys = [call.kwargs["alert_key"] for call in alert_mock.call_args_list]
+    assert "scraper_failed:dc9" in keys
+    assert "escalation:dc9" in keys
+
+    escalation_call = next(
+        c
+        for c in alert_mock.call_args_list
+        if c.kwargs["alert_key"] == "escalation:dc9"
+    )
+    assert escalation_call.kwargs["details"]["consecutive_failures"] == 3
+    assert escalation_call.kwargs["cooldown_hours"] == 24.0
+
+
+def test_run_scraper_for_venue_skips_escalation_below_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single failure in isolation only fires the per-venue alert."""
+    monkeypatch.setattr(runner, "_instantiate_scraper", lambda _c: _ExplodingScraper())
+    monkeypatch.setattr(runner.runs_repo, "create_scraper_run", MagicMock())
+    monkeypatch.setattr(
+        runner.runs_repo,
+        "count_consecutive_failed_runs",
+        lambda *_a, **_k: 1,
+    )
+    alert_mock = MagicMock()
+    monkeypatch.setattr(runner, "send_alert", alert_mock)
+    monkeypatch.setattr(runner, "validate_scraper_result", MagicMock())
+
+    runner.run_scraper_for_venue(MagicMock(), _cfg(venue_slug="dc9"))
+
+    assert alert_mock.call_count == 1
+    assert alert_mock.call_args.kwargs["alert_key"] == "scraper_failed:dc9"
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +637,75 @@ def test_run_all_scrapers_iterates_enabled_configs(
 
     assert seen == ["a", "b"]
     assert set(results.keys()) == {"a", "b"}
+
+
+def test_run_all_scrapers_fires_fleet_alert_when_failure_rate_exceeds_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """4/5 failures → one fleet alert with the failed venues listed."""
+    configs = [_cfg(venue_slug=name) for name in ("a", "b", "c", "d", "e")]
+    monkeypatch.setattr(runner, "get_enabled_configs", lambda: configs)
+
+    def fake_run(_session: Any, config: VenueScraperConfig) -> dict[str, Any]:
+        if config.venue_slug == "a":
+            return {"status": "success"}
+        return {"status": "failed", "error": "boom"}
+
+    monkeypatch.setattr(runner, "run_scraper_for_venue", fake_run)
+    alert_mock = MagicMock()
+    monkeypatch.setattr(runner, "send_alert", alert_mock)
+
+    runner.run_all_scrapers(MagicMock())
+
+    alert_mock.assert_called_once()
+    kwargs = alert_mock.call_args.kwargs
+    assert kwargs["alert_key"] == "fleet_failure"
+    assert kwargs["severity"] == "error"
+    assert kwargs["details"]["failed"] == 4
+    assert kwargs["details"]["total"] == 5
+    # Failed venues are surfaced in the message.
+    for slug in ("b", "c", "d", "e"):
+        assert slug in kwargs["details"]["venues"]
+
+
+def test_run_all_scrapers_does_not_fire_fleet_alert_below_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1/5 failures stays below 40% — no fleet alert."""
+    configs = [_cfg(venue_slug=name) for name in ("a", "b", "c", "d", "e")]
+    monkeypatch.setattr(runner, "get_enabled_configs", lambda: configs)
+
+    def fake_run(_session: Any, config: VenueScraperConfig) -> dict[str, Any]:
+        if config.venue_slug == "a":
+            return {"status": "failed", "error": "boom"}
+        return {"status": "success"}
+
+    monkeypatch.setattr(runner, "run_scraper_for_venue", fake_run)
+    alert_mock = MagicMock()
+    monkeypatch.setattr(runner, "send_alert", alert_mock)
+
+    runner.run_all_scrapers(MagicMock())
+
+    alert_mock.assert_not_called()
+
+
+def test_run_all_scrapers_no_alert_on_zero_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean run never fires the fleet alert, even on a small fleet."""
+    configs = [_cfg(venue_slug="solo")]
+    monkeypatch.setattr(runner, "get_enabled_configs", lambda: configs)
+    monkeypatch.setattr(
+        runner,
+        "run_scraper_for_venue",
+        lambda *_a, **_k: {"status": "success"},
+    )
+    alert_mock = MagicMock()
+    monkeypatch.setattr(runner, "send_alert", alert_mock)
+
+    runner.run_all_scrapers(MagicMock())
+
+    alert_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
