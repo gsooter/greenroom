@@ -38,6 +38,7 @@ def _build_app() -> Celery:
             "backend.scraper.watchdogs.dc9_dice_widget",
             "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
+            "backend.services.scraper_digest",
             "backend.services.spotify_tasks",
         ],
     )
@@ -92,6 +93,15 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             ),
             "schedule": crontab(hour=5, minute=30),
             "options": {"expires": 60 * 60 * 3},
+        },
+        # Posts the daily fleet-health digest at 07:30 ET, after the
+        # nightly scrape and artist enrichment have settled. Acts as a
+        # heartbeat so a silent on-call channel still confirms the job
+        # actually ran.
+        "send-scraper-digest-daily": {
+            "task": "backend.services.scraper_digest.send_daily_digest",
+            "schedule": crontab(hour=7, minute=30),
+            "options": {"expires": 60 * 60 * 6},
         },
     }
 
