@@ -10,6 +10,7 @@ from flask.testing import FlaskClient
 
 from backend.api.v1 import events as events_route
 from backend.core.exceptions import EVENT_NOT_FOUND, NotFoundError, ValidationError
+from backend.services import tickets as tickets_service
 
 
 def _fake_event() -> Any:
@@ -184,10 +185,17 @@ def test_get_event_by_uuid(
     monkeypatch.setattr(
         events_route.events_service, "serialize_event", lambda _e: {"id": "x"}
     )
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": None, "sources": []},
+    )
     eid = str(uuid.uuid4())
     resp = client.get(f"/api/v1/events/{eid}")
     assert resp.status_code == 200
-    assert resp.get_json()["data"] == {"id": "x"}
+    body = resp.get_json()["data"]
+    assert body["id"] == "x"
+    assert body["pricing"] == {"refreshed_at": None, "sources": []}
 
 
 def test_get_event_by_slug_falls_through(
@@ -200,9 +208,16 @@ def test_get_event_by_slug_falls_through(
         lambda _s, slug: {"slug": slug},
     )
     monkeypatch.setattr(events_route.events_service, "serialize_event", lambda e: e)
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": None, "sources": []},
+    )
     resp = client.get("/api/v1/events/phoebe-bridgers-930-club-2026-05-01-abc")
     assert resp.status_code == 200
-    assert resp.get_json()["data"]["slug"] == "phoebe-bridgers-930-club-2026-05-01-abc"
+    body = resp.get_json()["data"]
+    assert body["slug"] == "phoebe-bridgers-930-club-2026-05-01-abc"
+    assert body["pricing"]["sources"] == []
 
 
 def test_get_event_not_found(
@@ -217,6 +232,129 @@ def test_get_event_not_found(
     resp = client.get("/api/v1/events/nope-slug")
     assert resp.status_code == 404
     assert resp.get_json()["error"]["code"] == EVENT_NOT_FOUND
+
+
+def test_get_event_pricing_returns_serialized_state(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pricing endpoint returns the merged sources payload directly."""
+    event = _fake_event()
+    monkeypatch.setattr(events_route.events_service, "get_event", lambda _s, _i: event)
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": "2026-04-25T14:31:00+00:00", "sources": []},
+    )
+    eid = str(uuid.uuid4())
+    resp = client.get(f"/api/v1/events/{eid}/pricing")
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["refreshed_at"] == "2026-04-25T14:31:00+00:00"
+
+
+def test_get_event_pricing_resolves_slug(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-UUID path falls through to slug lookup."""
+    captured: dict[str, Any] = {}
+
+    def fake_by_slug(_s: Any, slug: str) -> Any:
+        captured["slug"] = slug
+        return _fake_event()
+
+    monkeypatch.setattr(events_route.events_service, "get_event_by_slug", fake_by_slug)
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": None, "sources": []},
+    )
+    resp = client.get("/api/v1/events/phoebe-slug/pricing")
+    assert resp.status_code == 200
+    assert captured["slug"] == "phoebe-slug"
+
+
+def test_refresh_event_pricing_returns_full_envelope(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST sweeps providers and returns refresh + pricing in one body."""
+    from datetime import UTC, datetime
+
+    event = _fake_event()
+    monkeypatch.setattr(events_route.events_service, "get_event", lambda _s, _i: event)
+
+    eid = uuid.uuid4()
+    refreshed = datetime(2026, 4, 25, 14, 31, tzinfo=UTC)
+
+    def fake_refresh(_s: Any, _e: Any) -> Any:
+        return tickets_service.RefreshResult(
+            event_id=eid,
+            refreshed_at=refreshed,
+            cooldown_active=False,
+            quotes_persisted=2,
+            links_upserted=3,
+            provider_errors=("seatgeek",),
+        )
+
+    monkeypatch.setattr(
+        events_route.tickets_service, "refresh_event_pricing", fake_refresh
+    )
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": refreshed.isoformat(), "sources": []},
+    )
+
+    resp = client.post(f"/api/v1/events/{eid}/refresh-pricing")
+    assert resp.status_code == 200
+    body = resp.get_json()["data"]
+    assert body["refresh"]["event_id"] == str(eid)
+    assert body["refresh"]["refreshed_at"] == refreshed.isoformat()
+    assert body["refresh"]["cooldown_active"] is False
+    assert body["refresh"]["quotes_persisted"] == 2
+    assert body["refresh"]["links_upserted"] == 3
+    assert body["refresh"]["provider_errors"] == ["seatgeek"]
+    assert body["pricing"]["refreshed_at"] == refreshed.isoformat()
+
+
+def test_refresh_event_pricing_propagates_cooldown(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cooldown short-circuit still returns 200 with the flag set true.
+
+    The frontend treats this as a successful "your view is already
+    fresh" rather than an error — the data was already persisted.
+    """
+    from datetime import UTC, datetime
+
+    event = _fake_event()
+    monkeypatch.setattr(events_route.events_service, "get_event", lambda _s, _i: event)
+
+    eid = uuid.uuid4()
+    refreshed = datetime(2026, 4, 25, 14, 30, tzinfo=UTC)
+
+    def fake_refresh(_s: Any, _e: Any) -> Any:
+        return tickets_service.RefreshResult(
+            event_id=eid,
+            refreshed_at=refreshed,
+            cooldown_active=True,
+            quotes_persisted=0,
+            links_upserted=0,
+            provider_errors=(),
+        )
+
+    monkeypatch.setattr(
+        events_route.tickets_service, "refresh_event_pricing", fake_refresh
+    )
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": refreshed.isoformat(), "sources": []},
+    )
+
+    resp = client.post(f"/api/v1/events/{eid}/refresh-pricing")
+    assert resp.status_code == 200
+    body = resp.get_json()["data"]
+    assert body["refresh"]["cooldown_active"] is True
+    assert body["refresh"]["quotes_persisted"] == 0
 
 
 def test_event_feed_returns_plain_text(

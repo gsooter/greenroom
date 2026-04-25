@@ -13,6 +13,7 @@ from flask import Response, request
 from backend.api.v1 import api_v1
 from backend.core.database import get_db
 from backend.services import events as events_service
+from backend.services import tickets as tickets_service
 
 
 @api_v1.route("/events", methods=["GET"])
@@ -114,7 +115,77 @@ def get_event(event_id: str) -> tuple[dict[str, Any], int]:
     else:
         event = events_service.get_event_by_slug(session, event_id)
 
-    return {"data": events_service.serialize_event(event)}, 200
+    payload = events_service.serialize_event(event)
+    payload["pricing"] = tickets_service.serialize_pricing_state(session, event)
+    return {"data": payload}, 200
+
+
+@api_v1.route("/events/<event_id>/pricing", methods=["GET"])
+def get_event_pricing(event_id: str) -> tuple[dict[str, Any], int]:
+    """Return the multi-source pricing state for one event.
+
+    Lighter than ``GET /events/<id>`` — used by the SSR detail page when
+    only the pricing block needs to refresh after a manual sweep.
+
+    Args:
+        event_id: UUID string or slug of the event.
+
+    Returns:
+        Tuple of JSON response body and HTTP 200 status code.
+    """
+    session = get_db()
+
+    parsed_id = _parse_uuid(event_id)
+    if parsed_id is not None:
+        event = events_service.get_event(session, parsed_id)
+    else:
+        event = events_service.get_event_by_slug(session, event_id)
+
+    return {"data": tickets_service.serialize_pricing_state(session, event)}, 200
+
+
+@api_v1.route("/events/<event_id>/refresh-pricing", methods=["POST"])
+def refresh_event_pricing(event_id: str) -> tuple[dict[str, Any], int]:
+    """Trigger a manual pricing sweep for one event.
+
+    The handler enforces the cooldown via the service layer; a request
+    inside the window short-circuits and returns the persisted state
+    without calling any upstream APIs. The response always carries the
+    full serialized pricing state so the caller can re-render without a
+    second round-trip.
+
+    Args:
+        event_id: UUID string or slug of the event.
+
+    Returns:
+        Tuple of JSON response body and HTTP 200 status code. The body
+        carries ``refresh`` (the :class:`RefreshResult` summary) and
+        ``pricing`` (the merged sources payload).
+    """
+    session = get_db()
+
+    parsed_id = _parse_uuid(event_id)
+    if parsed_id is not None:
+        event = events_service.get_event(session, parsed_id)
+    else:
+        event = events_service.get_event_by_slug(session, event_id)
+
+    result = tickets_service.refresh_event_pricing(session, event)
+    pricing = tickets_service.serialize_pricing_state(session, event)
+
+    return {
+        "data": {
+            "refresh": {
+                "event_id": str(result.event_id),
+                "refreshed_at": result.refreshed_at.isoformat(),
+                "cooldown_active": result.cooldown_active,
+                "quotes_persisted": result.quotes_persisted,
+                "links_upserted": result.links_upserted,
+                "provider_errors": list(result.provider_errors),
+            },
+            "pricing": pricing,
+        }
+    }, 200
 
 
 @api_v1.route("/feed/events", methods=["GET"])
