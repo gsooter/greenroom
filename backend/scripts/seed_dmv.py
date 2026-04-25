@@ -180,6 +180,20 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "website_url": "https://www.fillmoresilverspring.com/",
         "capacity": 2000,
     },
+    "music-center-strathmore": {
+        "address": "5301 Tuckerman Lane, North Bethesda, MD 20852",
+        "latitude": 39.028302,
+        "longitude": -77.101300,
+        "website_url": "https://www.strathmore.org/",
+        "capacity": 1976,
+    },
+    "the-theater-mgm-national-harbor": {
+        "address": "101 MGM National Ave, National Harbor, MD 20745",
+        "latitude": 38.791707,
+        "longitude": -77.003002,
+        "website_url": "https://mgmnationalharbor.mgmresorts.com/en/entertainment.html",
+        "capacity": 3000,
+    },
     "rams-head-live": {
         "address": "20 Market Pl, Baltimore, MD 21202",
         "latitude": 39.289261,
@@ -209,6 +223,27 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "longitude": -77.264480,
         "website_url": "https://www.wolftrap.org/",
         "capacity": 7000,
+    },
+    "wolf-trap-filene-center": {
+        "address": "1551 Trap Rd, Vienna, VA 22182",
+        "latitude": 38.933483,
+        "longitude": -77.265745,
+        "website_url": "https://www.wolftrap.org/the-filene-center.aspx",
+        "capacity": 7028,
+    },
+    "state-theatre-falls-church": {
+        "address": "220 N Washington St, Falls Church, VA 22046",
+        "latitude": 38.883060,
+        "longitude": -77.169868,
+        "website_url": "https://www.thestatetheatre.com/",
+        "capacity": 850,
+    },
+    "tally-ho-theater": {
+        "address": "19 W Market St, Leesburg, VA 20176",
+        "latitude": 39.115700,
+        "longitude": -77.565600,
+        "website_url": "https://tallyhotheater.com/",
+        "capacity": 700,
     },
     # ------------------------------------------------------------------
     # DC — Ticketmaster-ticketed additions (Discovery-API ids resolved
@@ -249,6 +284,13 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "longitude": -77.047142,
         "website_url": "https://lisner.gwu.edu/",
         "capacity": 1490,
+    },
+    "kennedy-center-concert-hall": {
+        "address": "2700 F St NW, Washington, DC 20566",
+        "latitude": 38.896060,
+        "longitude": -77.055198,
+        "website_url": "https://www.kennedy-center.org/",
+        "capacity": 2465,
     },
     # ------------------------------------------------------------------
     # Baltimore (own region, not DMV)
@@ -374,6 +416,20 @@ VENUE_METADATA: dict[str, dict[str, object]] = {
         "website_url": "https://thebroadberry.com/",
         "capacity": 400,
     },
+    "ember-music-hall": {
+        "address": "309 E Broad St, Richmond, VA 23219",
+        "latitude": 37.541100,
+        "longitude": -77.434601,
+        "website_url": "https://embermusichall.com/",
+        "capacity": 700,
+    },
+    "innsbrook-pavilion": {
+        "address": "4901 Lake Brook Dr, Glen Allen, VA 23060",
+        "latitude": 37.683899,
+        "longitude": -77.557999,
+        "website_url": "https://innsbrookafterhours.com/",
+        "capacity": 6500,
+    },
 }
 
 
@@ -442,11 +498,46 @@ DMV_CITY_SEEDS: list[CitySeed] = [
         description="Live music and concerts in Bristow, Virginia.",
     ),
     CitySeed(
+        name="Falls Church",
+        slug="falls-church-va",
+        state="VA",
+        region="DMV",
+        description="Live music and concerts in Falls Church, Virginia.",
+    ),
+    CitySeed(
+        name="Leesburg",
+        slug="leesburg-va",
+        state="VA",
+        region="DMV",
+        description="Live music and concerts in Leesburg, Virginia.",
+    ),
+    CitySeed(
+        name="North Bethesda",
+        slug="north-bethesda-md",
+        state="MD",
+        region="DMV",
+        description="Live music and concerts in North Bethesda, Maryland.",
+    ),
+    CitySeed(
+        name="National Harbor",
+        slug="national-harbor-md",
+        state="MD",
+        region="DMV",
+        description="Live music and concerts in National Harbor, Maryland.",
+    ),
+    CitySeed(
         name="Richmond",
         slug="richmond-va",
         state="VA",
         region="RVA",
         description="Live music and concerts in Richmond, Virginia.",
+    ),
+    CitySeed(
+        name="Glen Allen",
+        slug="glen-allen-va",
+        state="VA",
+        region="RVA",
+        description="Live music and concerts in Glen Allen, Virginia.",
     ),
 ]
 

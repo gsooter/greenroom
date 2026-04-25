@@ -264,6 +264,17 @@ _DMV_VENUES: list[VenueScraperConfig] = [
         city_slug="washington-dc",
         region="DMV",
     ),
+    VenueScraperConfig(
+        venue_slug="kennedy-center-concert-hall",
+        display_name="The Kennedy Center",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZA1JAFA",
+            "venue_name": "The Kennedy Center",
+        },
+        city_slug="washington-dc",
+        region="DMV",
+    ),
     # -----------------------------------------------------------------------
     # Maryland (suburbs — DMV region; Baltimore is its own region below)
     # -----------------------------------------------------------------------
@@ -287,6 +298,28 @@ _DMV_VENUES: list[VenueScraperConfig] = [
             "venue_name": "The Fillmore Silver Spring",
         },
         city_slug="silver-spring-md",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="music-center-strathmore",
+        display_name="Music Center at Strathmore",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZA1eeIA",
+            "venue_name": "Music Center at Strathmore",
+        },
+        city_slug="north-bethesda-md",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="the-theater-mgm-national-harbor",
+        display_name="The Theater at MGM National Harbor",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZ917A5LV",
+            "venue_name": "The Theater at MGM National Harbor",
+        },
+        city_slug="national-harbor-md",
         region="DMV",
     ),
     # -----------------------------------------------------------------------
@@ -336,6 +369,44 @@ _DMV_VENUES: list[VenueScraperConfig] = [
         city_slug="vienna-va",
         region="DMV",
     ),
+    # The Filene Center is the Wolf Trap outdoor amphitheater — a
+    # separate Discovery-API record from the "Wolf Trap" umbrella id.
+    # Verified 2026-04-25: 52 upcoming music events vs. 4 on the
+    # umbrella id. Without this entry the summer concert calendar is
+    # almost entirely missing.
+    VenueScraperConfig(
+        venue_slug="wolf-trap-filene-center",
+        display_name="Wolf Trap Filene Center",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZAEetJA",
+            "venue_name": "Wolf Trap Filene Center",
+        },
+        city_slug="vienna-va",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="state-theatre-falls-church",
+        display_name="State Theatre",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZpZA1tInA",
+            "venue_name": "State Theatre",
+        },
+        city_slug="falls-church-va",
+        region="DMV",
+    ),
+    VenueScraperConfig(
+        venue_slug="tally-ho-theater",
+        display_name="Tally Ho Theater",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "KovZ917AJfx",
+            "venue_name": "Tally Ho Theater",
+        },
+        city_slug="leesburg-va",
+        region="DMV",
+    ),
     VenueScraperConfig(
         venue_slug="eaglebank-arena",
         display_name="EagleBank Arena",
@@ -366,6 +437,12 @@ _DMV_VENUES: list[VenueScraperConfig] = [
 # ============================================================================
 
 _BALTIMORE_VENUES: list[VenueScraperConfig] = [
+    # Rams Head Live! returned 0 upcoming music events on the
+    # Discovery API as of the 2026-04-25 audit. The venue's status
+    # (closed, rebranded, or migrated to a different ticketing
+    # platform) is still under investigation. Parking the entry
+    # disabled — keep the slug + city wired so re-enabling is a
+    # one-line change once a working source is confirmed.
     VenueScraperConfig(
         venue_slug="rams-head-live",
         display_name="Rams Head Live!",
@@ -374,6 +451,7 @@ _BALTIMORE_VENUES: list[VenueScraperConfig] = [
             "venue_id": "KovZpZAFk6tA",
             "venue_name": "Rams Head Live!",
         },
+        enabled=False,
         city_slug="baltimore-md",
         region="Baltimore",
     ),
@@ -532,6 +610,31 @@ _RVA_VENUES: list[VenueScraperConfig] = [
             "venue_name": "The Broadberry",
         },
         city_slug="richmond-va",
+        region="RVA",
+    ),
+    VenueScraperConfig(
+        venue_slug="ember-music-hall",
+        display_name="Ember Music Hall",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "Z7r9jZaAqh",
+            "venue_name": "Ember Music Hall",
+        },
+        city_slug="richmond-va",
+        region="RVA",
+    ),
+    # Innsbrook is a corporate park amphitheater 12 miles west of
+    # downtown Richmond — close enough that the local market treats
+    # it as part of the RVA concert calendar.
+    VenueScraperConfig(
+        venue_slug="innsbrook-pavilion",
+        display_name="The Innsbrook Pavilion",
+        scraper_class=_TM,
+        platform_config={
+            "venue_id": "ZFr9jZdaAk",
+            "venue_name": "The Innsbrook Pavilion",
+        },
+        city_slug="glen-allen-va",
         region="RVA",
     ),
 ]

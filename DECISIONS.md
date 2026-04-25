@@ -1870,6 +1870,85 @@ Spotify surfaces without a top-artists pull.
 
 ---
 
+### 045 — Venue Coverage Audit Uses Discovery API Event Counts as Ground Truth
+
+**Date:** 2026-04-25
+**Status:** Decided
+
+**Decision:** When auditing `scraper/config/venues.py` for missing or
+broken entries, the only ground truth we trust is the live
+Ticketmaster Discovery API event count for a candidate `venue_id`.
+A scraper-config entry is added or kept only when
+`/discovery/v2/events.json?venueId=<id>&classificationName=Music`
+returns a non-zero `totalElements`, and the address / lat-long
+copied into `seed_dmv.VENUE_METADATA` is the value the Discovery
+API returns for that same id.
+
+**Rationale:** The previous expansion (commit 534b64e) already used
+this approach for the 19 venues it added. The 2026-04-25 audit
+revealed two failure modes the public Ticketmaster website papers
+over:
+
+1. **Wrong umbrella id.** Wolf Trap registered with id
+   `KovZpZAtvJeA` (Wolf Trap, the property) returned 4 upcoming
+   music events. The Filene Center's own id `KovZpZAEetJA` returned
+   52. The website routes both to the same listing page, so a human
+   spot-check would look correct, but the API silos them.
+2. **Silently zero.** Rams Head Live! Baltimore returned 0 upcoming
+   music events (`KovZpZAFk6tA`). Without an API check the scraper
+   would have continued to run nightly against a dead id, and the
+   validator only flags scrapers whose count drops below 40 % of
+   their *historical* mean — a venue that has *always* been zero
+   never trips it.
+
+Pinning the audit to the API also lets us mechanically reject
+look-alike ids (e.g. "City Winery - DC" and "City Winery
+Washington D.C." both exist in the venue table; both return 0
+events because the venue ticketed off-platform). We don't add
+either.
+
+**Alternatives considered:**
+
+- **Trust the public Ticketmaster website.** Rejected: routes
+  multiple venue ids to a single canonical listing page so the
+  silos stay invisible.
+- **Pre-emptively add every plausible DC-area venue and let the
+  validator alert on zero counts.** Rejected: adds noise to the
+  alert channel and wastes nightly fetch budget on dead ids.
+- **Crawl the Discovery API once per audit and auto-generate the
+  config.** Deferred: doing this by hand once per quarter is fine
+  while the venue list is in the low hundreds. Worth revisiting
+  when expanding to a new metro.
+
+**Consequences:**
+
+- Eight venues added in this audit:
+  Wolf Trap Filene Center (52 ev), Tally Ho Theater (43 ev),
+  The Theater at MGM National Harbor (27 ev), Music Center at
+  Strathmore (18 ev), The Innsbrook Pavilion (14 ev), The
+  Kennedy Center Concert Hall (7 ev), Ember Music Hall (7 ev),
+  State Theatre Falls Church (1 ev). Five new cities seeded:
+  `falls-church-va`, `leesburg-va`, `north-bethesda-md`,
+  `national-harbor-md`, `glen-allen-va`.
+- Rams Head Live! parked with `enabled=False` and an inline
+  comment explaining the zero-count audit result. The slug stays
+  registered so re-enabling is a one-line change once a working
+  source is identified.
+- A new test module `backend/tests/scraper/test_venues_config.py`
+  locks in the structural invariants of the config (no duplicate
+  slugs, every city referenced has a seed, every venue has
+  metadata, every scraper class is importable, TM and Dice configs
+  carry their required platform_config keys) and pins the eight
+  audit-added venues by id. A future refactor can't silently drop
+  them.
+- Venues whose actual ticketing is off-platform — The Hamilton,
+  Pearl Street Warehouse, Sixth & I, City Winery DC, Jammin Java,
+  Bethesda Blues & Jazz, The Camel — are *not* added with a TM
+  scraper (each shows 0 events). They are tracked in this entry
+  as candidates for a later GenericHtmlScraper pass.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

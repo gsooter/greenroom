@@ -32,29 +32,34 @@ Ticket pricing updated every 6 hours from SeatGeek.
 
 ## Cities Covered
 
-DMV: Washington DC, Silver Spring MD, Columbia MD, Alexandria VA,
-Tysons VA, Vienna VA, Fairfax VA, Bristow VA.
+DMV: Washington DC, Silver Spring MD, Columbia MD, North Bethesda MD,
+National Harbor MD, Alexandria VA, Tysons VA, Vienna VA, Fairfax VA,
+Falls Church VA, Leesburg VA, Bristow VA.
 Baltimore: Baltimore MD.
-RVA: Richmond VA.
+RVA: Richmond VA, Glen Allen VA.
 
 ## Venues Covered
 
 Washington, DC: 9:30 Club, The Anthem, The Atlantis, Warner Theatre,
 DAR Constitution Hall, Capital One Arena, Lisner Auditorium,
-Echostage, Howard Theatre, Lincoln Theatre, Union Stage, Black Cat,
-DC9, BERHTA, Songbyrd, Byrdland, Comet Ping Pong, Flash, Pie Shop.
+The Kennedy Center, Echostage, Howard Theatre, Lincoln Theatre,
+Union Stage, Black Cat, DC9, BERHTA, Songbyrd, Byrdland,
+Comet Ping Pong, Flash, Pie Shop.
 
 Maryland suburbs: Merriweather Post Pavilion (Columbia),
-The Fillmore Silver Spring (Silver Spring).
+The Fillmore Silver Spring (Silver Spring),
+Music Center at Strathmore (North Bethesda),
+The Theater at MGM National Harbor (National Harbor).
 
 Northern Virginia: Capital One Hall (Tysons), The Birchmere (Alexandria),
-Wolf Trap, The Barns at Wolf Trap (Vienna), EagleBank Arena (Fairfax),
-Jiffy Lube Live (Bristow).
+Wolf Trap, Wolf Trap Filene Center, The Barns at Wolf Trap (Vienna),
+EagleBank Arena (Fairfax), State Theatre (Falls Church),
+Tally Ho Theater (Leesburg), Jiffy Lube Live (Bristow).
 
-Baltimore: Rams Head Live!, Pier Six Pavilion, CFG Bank Arena,
+Baltimore: Pier Six Pavilion, CFG Bank Arena,
 Baltimore Soundstage, The Lyric, Hippodrome Theatre, The 8x10,
 Metro Baltimore.
 
 Richmond (RVA): The National, Canal Club, Allianz Amphitheater,
 Altria Theater, Carpenter Theatre at Dominion Energy Center,
-The Broadberry.
+The Broadberry, Ember Music Hall, The Innsbrook Pavilion (Glen Allen).
