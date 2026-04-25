@@ -1,45 +1,85 @@
 """Active pricing-provider registry.
 
-A flat list of :class:`~backend.pricing.base.BasePricingProvider`
-instances the orchestrator should consult on every refresh. Splitting
-the registry from the providers themselves keeps a single, grep-able
-inventory of what surfaces are live, and lets tests substitute their
-own list without monkey-patching the providers.
+The single inventory of which :class:`~backend.pricing.base.BasePricingProvider`
+instances the orchestrator consults on every refresh. Centralising the
+list here keeps adding a new ticketing surface to a one-line change and
+gives tests a single seam to substitute their own provider set without
+monkey-patching the providers themselves.
 
-Adding a new provider is two lines: import its class, append an
-instance. Removing one is deleting one line. No engine code touches
-this file, so the orchestrator never has to know which providers exist
-at import time.
+Providers are constructed lazily on first :func:`get_providers` call —
+they read API credentials from :mod:`backend.core.config`, so deferring
+construction lets unit tests that don't exercise pricing avoid paying
+for client setup.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from backend.pricing.providers.seatgeek import SeatGeekPricingProvider
+
 if TYPE_CHECKING:
     from backend.pricing.base import BasePricingProvider
 
-PROVIDERS: list[BasePricingProvider] = []
-"""The active provider set, evaluated in declaration order.
 
-Empty at the start of the multi-source pricing rollout — providers are
-appended here as each one ships (SeatGeek, Ticketmaster, TickPick, then
-the Tier B scraper-derived sources). The orchestrator iterates this
-list and is stable against an empty registry, so partial rollouts and
-test environments are both safe.
-"""
+_cached_providers: list[BasePricingProvider] | None = None
+
+
+def _build_default_providers() -> list[BasePricingProvider]:
+    """Construct the canonical list of active pricing providers.
+
+    Order matters only for tie-breaking in the UI when two providers
+    return the same effective price; SeatGeek leads because it has the
+    richest stats payload (lowest, highest, average, listing count)
+    and the most reliable inventory.
+
+    Returns:
+        Newly constructed provider instances ready to call
+        :meth:`fetch`.
+    """
+    return [SeatGeekPricingProvider()]
 
 
 def get_providers() -> list[BasePricingProvider]:
-    """Return the currently registered pricing providers.
+    """Return the active pricing providers, constructing on first call.
 
-    Wrapping the module-level list in an accessor keeps test setup
-    consistent — fixtures can monkey-patch this function instead of
-    mutating the global list, which avoids leaking provider sets
-    between test cases.
+    Memoises the list so the orchestrator doesn't rebuild HTTP clients
+    on every refresh. Tests that need to swap provider sets should
+    call :func:`set_providers_for_testing` rather than mutate the
+    returned list — the snapshot semantics here are intentional.
 
     Returns:
-        A snapshot list of the active providers. Callers may iterate
+        A snapshot list of provider instances. Callers may iterate
         but should not mutate; mutation should go through this module.
     """
-    return list(PROVIDERS)
+    global _cached_providers
+    if _cached_providers is None:
+        _cached_providers = _build_default_providers()
+    return list(_cached_providers)
+
+
+def set_providers_for_testing(providers: list[BasePricingProvider]) -> None:
+    """Replace the cached provider set with an explicit list.
+
+    Test-only seam — production code should never call this. Pytest
+    fixtures use it to inject stub providers without touching the
+    real SeatGeek/Ticketmaster constructors.
+
+    Args:
+        providers: The provider set to install. Pass an empty list to
+            disable all providers; pass back the result of a prior
+            :func:`get_providers` call to restore state.
+    """
+    global _cached_providers
+    _cached_providers = list(providers)
+
+
+def reset_providers() -> None:
+    """Drop the cached provider set so the next call rebuilds defaults.
+
+    Used by tests that mutated the registry via
+    :func:`set_providers_for_testing` and want to leave it clean for
+    the next case.
+    """
+    global _cached_providers
+    _cached_providers = None

@@ -169,14 +169,35 @@ def test_concrete_provider_returns_price_quote() -> None:
     assert quote.buy_url == "https://example.test/event"
 
 
-def test_registry_starts_empty_and_get_providers_returns_a_copy() -> None:
-    """The registry begins empty and ``get_providers`` returns a copy.
+def test_registry_returns_snapshot_not_internal_list() -> None:
+    """``get_providers`` returns a copy, not a live view.
 
-    Tests rely on the snapshot semantics of ``get_providers`` so that
-    mutating the returned list doesn't leak into the global registry.
+    Mutating the returned list must not poison the cached registry
+    state — the orchestrator and tests rely on that immutability so
+    one consumer can't silently change the provider set for another.
     """
-    assert registry.PROVIDERS == []
-    snapshot = registry.get_providers()
-    assert snapshot == []
-    snapshot.append(_StaticProvider())
-    assert registry.PROVIDERS == []
+    try:
+        registry.set_providers_for_testing([_StaticProvider()])
+        snapshot = registry.get_providers()
+        assert len(snapshot) == 1
+        snapshot.append(_NoopProvider())
+        assert len(registry.get_providers()) == 1
+    finally:
+        registry.reset_providers()
+
+
+def test_set_providers_for_testing_replaces_cache() -> None:
+    """``set_providers_for_testing`` swaps the registry contents.
+
+    Lets fixtures install stub providers without touching the real
+    SeatGeek/Ticketmaster constructors. ``reset_providers`` then
+    restores the default-building behaviour for subsequent tests.
+    """
+    try:
+        registry.set_providers_for_testing([])
+        assert registry.get_providers() == []
+        registry.set_providers_for_testing([_NoopProvider(), _StaticProvider()])
+        names = [p.name for p in registry.get_providers()]
+        assert names == ["noop", "static"]
+    finally:
+        registry.reset_providers()
