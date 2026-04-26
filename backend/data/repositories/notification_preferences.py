@@ -138,6 +138,27 @@ def pause_all(
     return preferences
 
 
+def list_active_weekly_digest_subscribers(
+    session: Session,
+) -> list[NotificationPreferences]:
+    """Return prefs rows for every user opted into the weekly digest.
+
+    "Active" here means ``weekly_digest=True`` and ``paused_at IS NULL``
+    — the two conditions every send path requires regardless of clock.
+    The hourly dispatcher consults this and then filters the rows
+    by per-user timezone to find candidates due in the current hour.
+
+    Returns:
+        A list of :class:`NotificationPreferences` rows, in no
+        particular order.
+    """
+    stmt = select(NotificationPreferences).where(
+        NotificationPreferences.weekly_digest.is_(True),
+        NotificationPreferences.paused_at.is_(None),
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
 def resume_all(
     session: Session,
     preferences: NotificationPreferences,

@@ -38,6 +38,7 @@ def _build_app() -> Celery:
             "backend.scraper.watchdogs.dc9_dice_widget",
             "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
+            "backend.services.notification_tasks",
             "backend.services.pricing_tasks",
             "backend.services.scraper_digest",
             "backend.services.spotify_tasks",
@@ -113,6 +114,17 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "task": "backend.services.pricing_tasks.refresh_all_event_pricing",
             "schedule": crontab(hour=5, minute=0),
             "options": {"expires": 60 * 60 * 4},
+        },
+        # Fans out the weekly digest hourly. Each fire walks every
+        # active weekly subscriber and only sends to users whose local
+        # weekday/hour matches their stored preferences — so a Pacific
+        # user with digest_hour=8 gets emailed at 08:00 PST, not UTC.
+        # ``expires`` keeps a stuck broker from replaying an hour-old
+        # bucket once the next hourly fire takes over.
+        "dispatch-weekly-digests-hourly": {
+            "task": ("backend.services.notification_tasks.dispatch_weekly_digests"),
+            "schedule": crontab(minute=0),
+            "options": {"expires": 60 * 50},
         },
     }
 

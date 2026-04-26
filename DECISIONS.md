@@ -2313,6 +2313,65 @@ the same URL works for both manual clicks and gateway auto-clicks.
 
 ---
 
+### 051 — Weekly Digest Dispatcher Fires Hourly And Filters In Python By User Timezone
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Celery beat fires
+`backend.services.notification_tasks.dispatch_weekly_digests` once per
+hour at `minute=0`. The task selects every active weekly subscriber
+(`weekly_digest=True AND paused_at IS NULL`) in one query, then loops
+in Python and calls `is_due_for_weekly_digest(prefs, now)` and
+`is_in_quiet_hours(prefs, now)` to decide whether each user is due
+in the current local hour. Per-user send happens inline inside the
+same task (not a fanned-out subtask).
+
+**Rationale:** The dispatcher's filter requires comparing the user's
+*local* weekday/hour to their stored `digest_day_of_week` /
+`digest_hour`, but Postgres has no built-in `AT TIME ZONE` predicate
+that takes a per-row IANA tz name without contortions. Doing the
+filter in Python keeps the SQL trivially indexable
+(`weekly_digest=true`, `paused_at IS NULL`) and lets us reuse the
+same predicate functions the per-user send pipeline calls.
+Inline send (instead of `chain`/`group` of subtasks) is fine at the
+project's expected user count: a single worker can drain an hour's
+bucket inside the 25-minute soft time limit, and Celery's broker-level
+visibility timeout keeps a half-finished bucket from being replayed.
+
+**Alternatives considered:**
+
+- **SQL-level filter using `digest_day_of_week`/`digest_hour` as a
+  composite predicate against `now() AT TIME ZONE prefs.timezone`.**
+  Rejected: requires a `LATERAL` join or a generated column to handle
+  per-row tz naming, and produces a query plan that is harder to
+  reason about than the Python loop. The Python loop is O(N) over a
+  set we're going to send to anyway.
+- **Per-user fanned-out subtasks (`group(send_weekly_digest_task.s(uid)
+  for uid in due)`).** Rejected for now: adds broker round-trips and
+  retry surface area without buying anything at our user count. The
+  per-user task still exists (`send_weekly_digest_task`) for ad-hoc
+  resends, just not as the dispatcher's primary path.
+- **Daily cron at 08:00 ET that sends to everyone "due that day."**
+  Rejected: a Pacific user with `digest_hour=8` would get their digest
+  at 05:00 PT, not 08:00 PT. The hourly cadence is what makes
+  per-user `digest_hour` configurable.
+
+**Consequences:**
+
+- A user changing their `digest_day_of_week` or `digest_hour` takes
+  effect at the next top-of-hour fire — no ad-hoc rescheduling needed.
+- Cap and idempotency guards (`is_at_weekly_cap`,
+  `_has_recent_weekly_log`) live inside the per-user send function and
+  are re-checked on every fire, so a duplicate beat run inside the
+  same hour cannot produce two emails to the same recipient.
+- The dispatcher's structured log line carries six counters
+  (`candidates`, `sent`, `skipped_not_due`, `skipped_quiet_hours`,
+  `skipped_send_returned_false`, `errors`) so a stuck pipeline shows
+  up as a counter that flat-lines, not silence.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
