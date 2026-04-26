@@ -11,6 +11,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
+import EventPricingPanel from "@/components/events/EventPricingPanel";
 import SaveEventButton from "@/components/events/SaveEventButton";
 import EmptyState from "@/components/ui/EmptyState";
 import RegionBadge from "@/components/ui/RegionBadge";
@@ -174,6 +175,11 @@ export default async function EventDetailPage({
             </p>
           </section>
         ) : null}
+
+        <EventPricingPanel
+          eventIdOrSlug={event.slug}
+          initial={event.pricing ?? { refreshed_at: null, sources: [] }}
+        />
 
         {event.genres.length > 0 ? (
           <section className="flex flex-wrap items-center gap-2">

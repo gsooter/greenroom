@@ -98,6 +98,47 @@ export interface EventDetail extends EventSummary {
   source_url: string | null;
   created_at: string;
   updated_at: string;
+  pricing?: PricingState;
+}
+
+/**
+ * One row of the multi-source pricing panel — mirrors the per-source
+ * dict produced by `serialize_pricing_state` on the backend. Every
+ * field is optional in spirit because each provider exposes a
+ * different subset of the schema (TickPick has only the URL, scraper-
+ * origin providers have only prices, SeatGeek has the full set).
+ */
+export interface PricingSource {
+  source: string;
+  buy_url: string | null;
+  affiliate_url: string | null;
+  is_active: boolean;
+  currency: string;
+  min_price: number | null;
+  max_price: number | null;
+  average_price: number | null;
+  listing_count: number | null;
+  last_seen_at: string | null;
+  last_active_at: string | null;
+}
+
+export interface PricingState {
+  refreshed_at: string | null;
+  sources: PricingSource[];
+}
+
+export interface RefreshPricingResult {
+  event_id: string;
+  refreshed_at: string;
+  cooldown_active: boolean;
+  quotes_persisted: number;
+  links_upserted: number;
+  provider_errors: string[];
+}
+
+export interface RefreshPricingResponse {
+  refresh: RefreshPricingResult;
+  pricing: PricingState;
 }
 
 export interface VenueDetail extends Venue {

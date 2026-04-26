@@ -107,3 +107,36 @@ export function joinArtists(
   if (artists.length <= limit) return artists.join(", ");
   return `${artists.slice(0, limit).join(", ")} +${artists.length - limit} more`;
 }
+
+/**
+ * Format a past timestamp as a coarse "X ago" string for the pricing
+ * freshness label. Anchored on a caller-supplied `now` so the same
+ * input is deterministic in SSR and in tests; on the client default
+ * to `Date.now()`.
+ *
+ * Cuts off at "just now" (under 1 minute) and falls back to a date
+ * for anything older than a week — at that point the precise minute-
+ * count adds nothing actionable.
+ */
+export function formatRelativeTime(
+  iso: string | null,
+  now: Date = new Date(),
+): string {
+  if (!iso) return "never";
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "never";
+
+  const deltaSeconds = Math.max(0, Math.floor((now.getTime() - then.getTime()) / 1000));
+  if (deltaSeconds < 60) return "just now";
+
+  const minutes = Math.floor(deltaSeconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+
+  return formatLongDate(iso);
+}

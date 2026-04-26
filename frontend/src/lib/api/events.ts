@@ -14,7 +14,9 @@ import type {
   EventSummary,
   EventType,
   Paginated,
+  PricingState,
   Region,
+  RefreshPricingResponse,
 } from "@/types";
 
 export interface ListEventsParams {
@@ -87,6 +89,39 @@ export async function getEvent(
   const res = await fetchJson<Envelope<EventDetail>>(
     `/api/v1/events/${encodeURIComponent(idOrSlug)}`,
     { revalidateSeconds },
+  );
+  return res.data;
+}
+
+/**
+ * Fetch the latest persisted pricing state for an event without
+ * triggering an upstream sweep. Used by the client-side refresh
+ * panel to rehydrate after a manual refresh, and by anywhere that
+ * needs the panel without re-fetching the whole event payload.
+ */
+export async function getEventPricing(
+  idOrSlug: string,
+  revalidateSeconds?: number,
+): Promise<PricingState> {
+  const res = await fetchJson<Envelope<PricingState>>(
+    `/api/v1/events/${encodeURIComponent(idOrSlug)}/pricing`,
+    { revalidateSeconds },
+  );
+  return res.data;
+}
+
+/**
+ * Trigger a manual pricing sweep for one event. The backend enforces
+ * a 5-minute cooldown shared across every visitor — a request inside
+ * the window short-circuits to the persisted state and sets
+ * `cooldown_active: true` on the returned `refresh` summary.
+ */
+export async function refreshEventPricing(
+  idOrSlug: string,
+): Promise<RefreshPricingResponse> {
+  const res = await fetchJson<Envelope<RefreshPricingResponse>>(
+    `/api/v1/events/${encodeURIComponent(idOrSlug)}/refresh-pricing`,
+    { method: "POST", revalidateSeconds: 0 },
   );
   return res.data;
 }

@@ -9,6 +9,7 @@ import {
   formatEventTime,
   formatLongDate,
   formatPriceRange,
+  formatRelativeTime,
   joinArtists,
 } from "@/lib/format";
 
@@ -66,6 +67,45 @@ describe("formatPriceRange", () => {
 
   it("collapses equal min and max into a single 'From $X'", () => {
     expect(formatPriceRange(30, 30)).toBe("From $30");
+  });
+});
+
+describe("formatRelativeTime", () => {
+  const NOW = new Date("2026-04-26T12:00:00Z");
+
+  it("returns 'never' for null and invalid input", () => {
+    expect(formatRelativeTime(null, NOW)).toBe("never");
+    expect(formatRelativeTime("not-a-date", NOW)).toBe("never");
+  });
+
+  it("returns 'just now' for under one minute", () => {
+    const t = new Date(NOW.getTime() - 30_000).toISOString();
+    expect(formatRelativeTime(t, NOW)).toBe("just now");
+  });
+
+  it("singular 'minute' at exactly 1m", () => {
+    const t = new Date(NOW.getTime() - 60_000).toISOString();
+    expect(formatRelativeTime(t, NOW)).toBe("1 minute ago");
+  });
+
+  it("plural minutes under an hour", () => {
+    const t = new Date(NOW.getTime() - 5 * 60_000).toISOString();
+    expect(formatRelativeTime(t, NOW)).toBe("5 minutes ago");
+  });
+
+  it("hours roll up at 60m", () => {
+    const t = new Date(NOW.getTime() - 60 * 60_000).toISOString();
+    expect(formatRelativeTime(t, NOW)).toBe("1 hour ago");
+  });
+
+  it("days roll up at 24h", () => {
+    const t = new Date(NOW.getTime() - 25 * 60 * 60_000).toISOString();
+    expect(formatRelativeTime(t, NOW)).toBe("1 day ago");
+  });
+
+  it("falls back to long date past one week", () => {
+    const t = new Date(NOW.getTime() - 9 * 24 * 60 * 60_000).toISOString();
+    expect(formatRelativeTime(t, NOW)).toMatch(/2026/);
   });
 });
 
