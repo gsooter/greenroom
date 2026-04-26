@@ -24,11 +24,16 @@ import EventFilterPanel, {
   type FilterPanelGenre,
   type FilterPanelVenue,
 } from "@/components/events/EventFilterPanel";
+import PricingFreshnessBanner from "@/components/events/PricingFreshnessBanner";
 import EmptyState from "@/components/ui/EmptyState";
 import WindowFilterChips from "@/components/events/WindowFilterChips";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
 import { getCityBySlug } from "@/lib/api/cities";
-import { listEvents, type ListEventsParams } from "@/lib/api/events";
+import {
+  getPricingFreshness,
+  listEvents,
+  type ListEventsParams,
+} from "@/lib/api/events";
 import { listGenres } from "@/lib/api/onboarding";
 import { listVenues } from "@/lib/api/venues";
 import {
@@ -199,6 +204,14 @@ async function loadCity(slug: string | undefined): Promise<City | null> {
   }
 }
 
+async function safeGetPricingFreshness(): Promise<string | null> {
+  try {
+    return await getPricingFreshness(300);
+  } catch {
+    return null;
+  }
+}
+
 export async function generateMetadata({
   searchParams,
 }: EventsPageProps): Promise<Metadata> {
@@ -217,6 +230,7 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
   const filters = parseEventFilters(searchParams);
   const { genres: genreOptions, venues: venueOptions } =
     await loadFilterCatalogs(city);
+  const pricingRefreshedAt = await safeGetPricingFreshness();
 
   const now = new Date();
   const todayKey = etDateKey(now);
@@ -342,6 +356,7 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
                   ? `Showing ${results.data.length} of ${results.meta.total} upcoming shows.`
                   : "Updated nightly from venue websites and Ticketmaster."}
             </p>
+            <PricingFreshnessBanner refreshedAt={pricingRefreshedAt} />
           </div>
           <div className="flex items-center gap-2">
             <EventFilterPanel

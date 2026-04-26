@@ -639,6 +639,32 @@ def list_events_for_pricing_sweep(
     return list(session.execute(stmt).scalars().all())
 
 
+def get_latest_pricing_refresh(
+    session: Session,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Return the most recent ``prices_refreshed_at`` across upcoming events.
+
+    Powers the listing-page freshness banner ("Pricing updated X ago").
+    Past events are excluded so a stale stamp on a finished show
+    doesn't anchor the banner forever.
+
+    Args:
+        session: Active SQLAlchemy session.
+        now: Reference clock; injected by tests so the upcoming-only
+            filter is deterministic. Defaults to ``datetime.now(UTC)``.
+
+    Returns:
+        The largest non-null ``prices_refreshed_at`` timestamp on any
+        upcoming event, or ``None`` if no upcoming event has been
+        priced yet.
+    """
+    anchor = now or datetime.now(UTC)
+    stmt = select(func.max(Event.prices_refreshed_at)).where(Event.starts_at >= anchor)
+    return session.execute(stmt).scalar_one_or_none()
+
+
 def stamp_prices_refreshed_at(
     session: Session,
     event_id: uuid.UUID,

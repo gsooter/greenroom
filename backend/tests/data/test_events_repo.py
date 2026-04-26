@@ -668,6 +668,80 @@ def test_list_events_for_pricing_sweep_respects_limit(
 
 
 # ---------------------------------------------------------------------------
+# get_latest_pricing_refresh
+# ---------------------------------------------------------------------------
+
+
+def test_get_latest_pricing_refresh_returns_max_across_upcoming(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """The freshness anchor is the most recent stamp across all upcoming events.
+
+    Listing pages render a single "Pricing updated X ago" banner; the
+    user wants the *most recent* sweep timestamp, not the oldest.
+    """
+    city = make_city()
+    venue = make_venue(city=city)
+    now = datetime.now(UTC)
+
+    older = make_event(venue=venue, slug="older", starts_at=now + timedelta(days=5))
+    older.prices_refreshed_at = now - timedelta(hours=12)
+
+    newer = make_event(venue=venue, slug="newer", starts_at=now + timedelta(days=10))
+    newer.prices_refreshed_at = now - timedelta(minutes=30)
+    session.flush()
+
+    latest = events_repo.get_latest_pricing_refresh(session, now=now)
+    assert latest == newer.prices_refreshed_at
+
+
+def test_get_latest_pricing_refresh_returns_none_when_never_swept(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """Brand-new catalogues (no sweep has run yet) return None.
+
+    The frontend renders "never" in that case rather than a misleading
+    "just now" or hidden banner.
+    """
+    city = make_city()
+    venue = make_venue(city=city)
+    make_event(
+        venue=venue, slug="unrefreshed", starts_at=datetime.now(UTC) + timedelta(days=3)
+    )
+    session.flush()
+
+    assert events_repo.get_latest_pricing_refresh(session) is None
+
+
+def test_get_latest_pricing_refresh_excludes_past_events(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """A stale stamp on a finished show shouldn't anchor the banner.
+
+    If only past events have any pricing history, treat the catalogue
+    as never refreshed — the banner is about *upcoming* listings.
+    """
+    city = make_city()
+    venue = make_venue(city=city)
+    now = datetime.now(UTC)
+
+    past = make_event(venue=venue, slug="past", starts_at=now - timedelta(days=1))
+    past.prices_refreshed_at = now - timedelta(hours=2)
+    session.flush()
+
+    assert events_repo.get_latest_pricing_refresh(session, now=now) is None
+
+
+# ---------------------------------------------------------------------------
 # list_all_event_artist_names
 # ---------------------------------------------------------------------------
 

@@ -125,3 +125,19 @@ export async function refreshEventPricing(
   );
   return res.data;
 }
+
+/**
+ * Fetch the most recent pricing-sweep timestamp across all upcoming
+ * events. Used by the listing-page freshness banner so visitors see
+ * one global "Pricing updated X ago" line rather than per-event noise.
+ * Returns `null` when no event has been swept yet.
+ */
+export async function getPricingFreshness(
+  revalidateSeconds?: number,
+): Promise<string | null> {
+  const res = await fetchJson<Envelope<{ refreshed_at: string | null }>>(
+    "/api/v1/pricing/freshness",
+    { revalidateSeconds },
+  );
+  return res.data.refreshed_at;
+}

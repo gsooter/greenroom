@@ -12,6 +12,7 @@ from flask import Response, request
 
 from backend.api.v1 import api_v1
 from backend.core.database import get_db
+from backend.data.repositories import events as events_repo
 from backend.services import events as events_service
 from backend.services import tickets as tickets_service
 
@@ -184,6 +185,26 @@ def refresh_event_pricing(event_id: str) -> tuple[dict[str, Any], int]:
                 "provider_errors": list(result.provider_errors),
             },
             "pricing": pricing,
+        }
+    }, 200
+
+
+@api_v1.route("/pricing/freshness", methods=["GET"])
+def get_pricing_freshness() -> tuple[dict[str, Any], int]:
+    """Return the most recent pricing-sweep timestamp across all upcoming events.
+
+    Powers the listing-page "Pricing updated X ago" banner. Cheap
+    indexed MAX query — no per-event traversal, no provider calls.
+
+    Returns:
+        Tuple of JSON body and HTTP 200 status code. ``refreshed_at``
+        is an ISO 8601 string, or ``null`` if nothing has been swept.
+    """
+    session = get_db()
+    refreshed_at = events_repo.get_latest_pricing_refresh(session)
+    return {
+        "data": {
+            "refreshed_at": refreshed_at.isoformat() if refreshed_at else None,
         }
     }, 200
 

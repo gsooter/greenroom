@@ -357,6 +357,45 @@ def test_refresh_event_pricing_propagates_cooldown(
     assert body["refresh"]["quotes_persisted"] == 0
 
 
+def test_pricing_freshness_returns_max_timestamp(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The freshness endpoint exposes the listing-page banner anchor."""
+    from datetime import UTC, datetime
+
+    refreshed = datetime(2026, 4, 26, 9, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        events_route.events_repo,
+        "get_latest_pricing_refresh",
+        lambda _s: refreshed,
+    )
+
+    resp = client.get("/api/v1/pricing/freshness")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["refreshed_at"] == refreshed.isoformat()
+
+
+def test_pricing_freshness_returns_null_when_never_swept(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No upcoming event has been priced → null timestamp, not 404.
+
+    The frontend renders this as "never" rather than treating the
+    listing page as broken.
+    """
+    monkeypatch.setattr(
+        events_route.events_repo,
+        "get_latest_pricing_refresh",
+        lambda _s: None,
+    )
+
+    resp = client.get("/api/v1/pricing/freshness")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["data"] == {"refreshed_at": None}
+
+
 def test_event_feed_returns_plain_text(
     client: FlaskClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
