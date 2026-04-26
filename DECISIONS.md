@@ -227,7 +227,7 @@ painful to retrofit if not built in from the start.
 ### 010 — SeatGeek API for Ticket Pricing (Phase 1)
 
 **Date:** 2026-04-16
-**Status:** Decided
+**Status:** Superseded by Decision 047
 
 **Decision:** SeatGeek API as primary ticket pricing source. StubHub as secondary.
 TicketsData aggregator deferred until user volume justifies the cost.
@@ -240,6 +240,13 @@ table so price history and trends are available from day one.
 **Upgrade path:** TicketsData provides a single API covering Ticketmaster,
 StubHub, SeatGeek, VividSeats, and more. Migrate when cross-platform price
 comparison becomes a meaningful feature.
+
+**Why superseded:** SeatGeek-only coverage left every Tier B venue
+(DICE, the venue-direct ticketers, Eventbrite) without any pricing at
+all, and a single-source price was misleading on shows where the
+secondary market diverged sharply from the primary. Decision 047
+replaces this with a provider-registry that fans out across SeatGeek,
+Ticketmaster, TickPick, and the existing scrapers.
 
 ---
 
@@ -2025,6 +2032,85 @@ preventing a runaway loop of failed sends.
 - Alerting infrastructure is fail-open by design — every dedup
   read/write is wrapped in try/except so a corrupt
   `scraper_alerts` row never gags real signal.
+
+---
+
+### 047 — Multi-Source Ticket Pricing With Provider Registry, Append-Only History, And A Shared Cooldown
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Pricing is fetched from many providers per event via a
+small registry of `BasePricingProvider` implementations: live APIs
+(SeatGeek, Ticketmaster, TickPick search-link) and the existing
+scrapers, which now also yield prices when the source page exposes
+them. Quotes are persisted append-only to `ticket_pricing_snapshots`
+keyed by `(event_id, source)`; the latest buy URL per source lives in
+`event_pricing_links`. A nightly Celery sweep at 05:00 America/New_York
+re-prices every upcoming event, and a manual `POST
+/api/v1/events/<id>/refresh-pricing` endpoint lets users trigger a
+sweep on demand, gated by a 5-minute cooldown stamped on
+`events.prices_refreshed_at` and shared across every visitor.
+
+**Rationale:**
+The user needs as much current pricing data as possible from as many
+sources as possible. A single-source price was misleading on shows
+where the secondary market and the venue's primary diverged sharply,
+and Tier B venues (DICE, venue-direct ticketers, Eventbrite) had no
+SeatGeek presence at all so the panel was simply blank for them. The
+provider abstraction lets each platform return whatever subset of the
+schema it can supply (TickPick has only the URL, scraper-origin
+providers have only prices, SeatGeek has the full set). Append-only
+snapshots are the "data is gold" lever — historical buy/sell-side
+divergence is the training set for a future buy-now prediction model;
+overwriting the old row would throw that signal away.
+
+The 5-minute cooldown is DB-backed (not Redis or in-memory) so the
+"refresh just happened" state is visible to every visitor in every
+tab without any cross-process coordination — the next request reads
+`prices_refreshed_at` and short-circuits if it's inside the window.
+The cron forces past the cooldown so it never fights the manual UI.
+
+**Alternatives considered:**
+
+- **Stay with SeatGeek-only (Decision 010).** Rejected: leaves Tier B
+  venues blank, and a single-side quote is misleading on shows where
+  primary and secondary diverge.
+- **TicketsData aggregator.** Deferred per Decision 010 — pricing
+  becomes a cost center long before it pays for itself; the
+  per-provider registry gets us the same multi-source view for free.
+- **In-memory or Redis cooldown.** Rejected: Knuckles-style multi-
+  process deployments would each have their own counter, so a refresh
+  in one tab wouldn't gate the others. The DB column is one read, no
+  extra infrastructure.
+- **Overwrite the latest pricing row instead of appending.** Rejected
+  outright: kills the historical signal that motivates the whole
+  feature.
+- **Single Buy URL per event (the existing `events.ticket_url`).**
+  Rejected: forces a one-true-link choice the user shouldn't have to
+  make. The link panel renders the affiliate URL when present and
+  falls back to the raw URL, per source.
+
+**Consequences:**
+
+- New `event_pricing_links` table and `events.prices_refreshed_at`
+  column (migration `20260426_add_pricing_links_and_refresh_stamp.py`).
+- New `backend.services.tickets` orchestrator owning the cooldown gate
+  and the per-provider fan-out, plus `backend.services.pricing_tasks`
+  for the Celery beat entry at 05:00 ET.
+- `BasePricingProvider` registry in `backend.services.pricing` with
+  Tier A providers (SeatGeek, Ticketmaster, TickPick) and Tier B
+  scraper-origin providers fed by the existing scrapers writing
+  `RawEvent.price_min/price_max` alongside their event payload.
+- Frontend: `EventPricingPanel` (client) on the detail page with a
+  Refresh button + cooldown banner; `PricingFreshnessBanner` (server)
+  on `/events` driven by `GET /api/v1/pricing/freshness` (an indexed
+  MAX over upcoming `prices_refreshed_at`).
+- `affiliate_url` is preferred over `buy_url` on every Buy CTA so
+  monetization can be flipped on per-source without touching the UI.
+- Past events are excluded from the daily sweep, the freshness
+  banner, and the per-event refresh — once a show has happened the
+  price is dead inventory.
 
 ---
 
