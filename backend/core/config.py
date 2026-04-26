@@ -21,6 +21,14 @@ class Settings(BaseSettings):
         jwt_expiry_seconds: JWT token expiry in seconds.
         resend_api_key: Resend API key for transactional email.
         resend_from_email: Sender email address used on every Resend send.
+        resend_webhook_secret: Svix-style ``whsec_...`` secret for
+            verifying inbound Resend webhook signatures. Empty during
+            local dev — the webhook handler refuses delivery rather
+            than accept unverified payloads when this is unset.
+        email_token_secret: HMAC key used to mint and verify the
+            one-click unsubscribe tokens embedded in every outbound
+            email. Falls back to ``jwt_secret_key`` when unset so dev
+            keeps working with the existing secret material.
         ticketmaster_api_key: Ticketmaster Discovery API key.
         seatgeek_client_id: SeatGeek API client ID.
         seatgeek_client_secret: SeatGeek API client secret.
@@ -102,6 +110,16 @@ class Settings(BaseSettings):
     # Resend
     resend_api_key: str
     resend_from_email: str
+    # Resend webhook signing secret (Svix-style "whsec_..."). Empty
+    # during local dev — the webhook handler short-circuits to a 503
+    # when this is unset rather than accept unverified payloads.
+    resend_webhook_secret: str = ""
+
+    # Email
+    # Secret used to mint and verify unsubscribe tokens. Defaults to
+    # JWT_SECRET_KEY so dev environments don't need a separate value;
+    # production should set its own to keep token compromise scoped.
+    email_token_secret: str = ""
 
     # Ticketmaster
     ticketmaster_api_key: str

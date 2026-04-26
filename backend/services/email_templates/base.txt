@@ -1,0 +1,17 @@
+{{ heading }}
+{{ '=' * heading | length }}
+
+{% if intro %}{{ intro | striptags }}
+
+{% endif %}{% for show in shows %}* {{ show.headliner }}
+  {{ show.venue }} · {{ show.date_label }}
+  {{ show.url }}
+
+{% endfor %}{% if cta_url and cta_label %}{{ cta_label }}: {{ cta_url }}
+
+{% endif %}--
+You're receiving this at {{ user_email }} because you signed up for
+Greenroom and turned this notification on.
+
+Unsubscribe: {{ unsubscribe_url }}
+Manage email preferences: {{ manage_url }}

@@ -2250,6 +2250,69 @@ again when I un-pause."
 
 ---
 
+### 050 — Unsubscribe Tokens Are Custom HMAC, Not JWT, And The Endpoint Is Unauthenticated
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Outbound emails carry a one-click unsubscribe link
+signed with a custom `header.payload.signature` HMAC-SHA256 token
+(URL-safe base64, padding stripped) rather than a JWT. The
+`/api/v1/unsubscribe` endpoint is intentionally unauthenticated — the
+signed token in the query string IS the credential — and accepts both
+GET (preview without writing) and POST (commit, including form-encoded
+`List-Unsubscribe=One-Click` per RFC 8058). The signing secret comes
+from `EMAIL_TOKEN_SECRET` with a fallback to `JWT_SECRET_KEY` so dev
+environments don't need new secrets material. Tokens have a 90-day TTL.
+
+**Rationale:**
+The unsubscribe endpoint must work from a stale Inbox search a month
+later, must accept Gmail/Apple Mail's auto-clicks (no Authorization
+header is sent on those), and must never require the user to log in.
+A signed self-contained token meets all three constraints and keeps
+the endpoint stateless. We chose a hand-rolled HMAC over JWT to avoid
+pulling PyJWT in for a one-purpose use case where we control both
+sides — the wire format is ~30 lines of code and doesn't bring along
+JWT's asymmetric-key footguns. RFC 8058 one-click is non-negotiable
+for Gmail bulk-sender compliance starting in 2024+; the POST handler
+ignores the form body and reads the token from the query string, so
+the same URL works for both manual clicks and gateway auto-clicks.
+
+**Alternatives considered:**
+
+- **PyJWT + HS256.** Rejected: extra dependency for a single-purpose
+  token format we fully control. Plain HMAC is auditable in 30 lines.
+- **Server-side token table with a random opaque ID.** Rejected:
+  unbounded growth (one row per outbound email × 90 days), and no
+  benefit over a signed token since we only ever verify, not enumerate.
+- **Require login at the unsubscribe URL.** Rejected: violates RFC 8058
+  one-click, and the recipient expects the Inbox unsubscribe pill to
+  "just work" without a login round-trip. Login-gating is the wrong
+  user model for this affordance.
+- **Bearer-auth on the endpoint.** Rejected: Gmail/Apple Mail
+  auto-clickers don't send Authorization headers, and we're not
+  going to ask mailbox providers to support a custom auth scheme.
+
+**Consequences:**
+
+- Malformed/expired tokens surface as `VALIDATION_ERROR` (HTTP 422)
+  rather than 401 — the endpoint never expected an auth header.
+- `compose_email()` is the canonical way to send a templated email:
+  it mints the token, builds the public unsubscribe URL, injects
+  `unsubscribe_url` into the template context (so the footer renders
+  a clickable link), renders the HTML+text pair, and forwards to
+  `send_email()` with the `List-Unsubscribe` and
+  `List-Unsubscribe-Post` headers attached.
+- The frontend can render a "Confirm unsubscribe" preview screen by
+  GETting the same URL — the GET handler verifies the token and
+  returns the user_id and scope without writing.
+- Rolling the signing secret invalidates only the universe of
+  in-flight links; no DB migration needed. We accept that recipients
+  with very old emails (>90 days) get a "link expired" error and
+  must re-request a manage-subscriptions email.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
