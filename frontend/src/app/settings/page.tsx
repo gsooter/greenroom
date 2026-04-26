@@ -8,6 +8,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -233,6 +234,24 @@ export default function SettingsPage(): JSX.Element {
           )}
         </div>
       </form>
+
+      <hr className="my-10 border-border" />
+
+      <section>
+        <h2 className="text-base font-semibold text-text-primary">
+          Email notifications
+        </h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          Choose exactly which emails Greenroom sends you, with a single
+          pause-all toggle for breaks.
+        </p>
+        <Link
+          href="/settings/notifications"
+          className="mt-3 inline-block rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse"
+        >
+          Manage email preferences
+        </Link>
+      </section>
 
       <hr className="my-10 border-border" />
 

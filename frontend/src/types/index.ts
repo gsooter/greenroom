@@ -177,6 +177,56 @@ export interface UserPatch {
   notification_settings?: Record<string, unknown> | null;
 }
 
+export type DigestDayOfWeek =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+export type ReminderDays = 1 | 2 | 7;
+export type MaxEmailsPerWeek = 1 | 3 | 7;
+
+export interface NotificationPreferences {
+  artist_announcements: boolean;
+  venue_announcements: boolean;
+  selling_fast_alerts: boolean;
+  show_reminders: boolean;
+  show_reminder_days_before: ReminderDays;
+  staff_picks: boolean;
+  artist_spotlights: boolean;
+  similar_artist_suggestions: boolean;
+  weekly_digest: boolean;
+  digest_day_of_week: DigestDayOfWeek;
+  digest_hour: number;
+  max_emails_per_week: MaxEmailsPerWeek | null;
+  quiet_hours_start: number;
+  quiet_hours_end: number;
+  timezone: string;
+  paused: boolean;
+  paused_at: string | null;
+}
+
+export interface NotificationPreferencesPatch {
+  artist_announcements?: boolean;
+  venue_announcements?: boolean;
+  selling_fast_alerts?: boolean;
+  show_reminders?: boolean;
+  show_reminder_days_before?: ReminderDays;
+  staff_picks?: boolean;
+  artist_spotlights?: boolean;
+  similar_artist_suggestions?: boolean;
+  weekly_digest?: boolean;
+  digest_day_of_week?: DigestDayOfWeek;
+  digest_hour?: number;
+  max_emails_per_week?: MaxEmailsPerWeek | null;
+  quiet_hours_start?: number;
+  quiet_hours_end?: number;
+  timezone?: string;
+}
+
 export interface SavedEvent {
   saved_at: string;
   event: EventSummary;

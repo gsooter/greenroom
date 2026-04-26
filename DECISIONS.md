@@ -2186,6 +2186,70 @@ behind it is fine; the UI promise wasn't.
 
 ---
 
+### 049 — Notification Preferences Live In A Dedicated Relational Table With JSONB Pause Snapshot
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Email notification preferences live in a new
+`notification_preferences` table (one row per user, FK to `users`
+with CASCADE) rather than expanding the existing
+`users.notification_settings` JSONB blob. Sixteen typed columns cover
+every per-type toggle, the digest schedule, the weekly cap, quiet
+hours, and the IANA timezone. CHECK constraints lock down the integer
+ranges (`digest_hour`, quiet hours) and whitelisted enums
+(`digest_day_of_week`, `show_reminder_days_before`,
+`max_emails_per_week`). The "pause all" affordance is implemented as
+a `paused_at` timestamp plus a `paused_snapshot` JSONB column that
+captures the per-type flags at pause-time so resume restores the
+user's prior choices instead of forcing them to re-toggle.
+
+**Rationale:**
+Triggered email paths (artist announcements, selling-fast alerts,
+show reminders) read these preferences on every fan-out. With
+sixteen fields, several of them constrained to small whitelists, the
+relational shape gives us indexed reads, CHECK-constraint validation
+at the DB layer, and ordinary column-level migrations when fields
+need to evolve. JSONB-on-`users` would have pushed all of that into
+Python coercion and lost the safety net for the data layer. The
+pause-snapshot keeps the schema flat (one row per user, no shadow
+table) while preserving "I had selling-fast on, and I want it on
+again when I un-pause."
+
+**Alternatives considered:**
+
+- **Expand `users.notification_settings` JSONB.** Rejected: every read
+  path would have to re-validate the dict shape in Python, and the
+  fields most prone to abuse (hour-of-day, weekday name) are exactly
+  the ones a CHECK constraint enforces cheaply.
+- **Per-type rows (one row per (user, type)).** Rejected: every email
+  path would need a join to assemble the full preference picture, and
+  the digest schedule + quiet hours + cap don't fit the per-type
+  shape — they would have lived as orphan rows or as separate columns
+  on `users` anyway.
+- **Encode pause as setting every per-type flag to false.** Rejected:
+  the user would lose their granular choices when un-pausing.
+  Snapshotting into a JSONB column preserves them with no extra
+  schema cost.
+
+**Consequences:**
+
+- A new Alembic migration backfills one row per existing user with
+  the column defaults (actionable alerts on, discovery off, digest
+  off, max 3/week, 21:00–08:00 quiet hours, America/New_York tz).
+- Service layer `_validated_updates` re-validates everything in
+  Python so 422s come back from the API before any DB write — the
+  CHECK constraints are the second line of defense, not the first.
+- The `users.notification_settings` JSONB column is left in place for
+  Phase 5 (frequency-cap counters and any per-event metadata that
+  shouldn't bloat the preferences table).
+- Phases 2–5 of the email sprint can read preferences with a single
+  indexed lookup; the digest scheduler can filter "weekly_digest=true
+  AND paused_at IS NULL AND digest_day_of_week='monday'" without
+  shape gymnastics.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

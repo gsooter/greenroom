@@ -35,6 +35,12 @@ import { getCityBySlug, listCities } from "@/lib/api/cities";
 import { getEvent, listEvents } from "@/lib/api/events";
 import { deleteMe, getMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
 import {
+  getNotificationPreferences,
+  pauseAllEmails,
+  resumeAllEmails,
+  updateNotificationPreferences,
+} from "@/lib/api/notification-preferences";
+import {
   getMapKitToken,
   getMapRecommendations,
   getTonightMap,
@@ -198,6 +204,54 @@ describe("api/me", () => {
     const { url, init } = lastCall();
     expect(url.pathname).toBe("/api/v1/me/music-connections");
     expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+});
+
+describe("api/notification-preferences", () => {
+  it("getNotificationPreferences GETs with bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { weekly_digest: false, paused: false } }),
+    );
+    const out = await getNotificationPreferences("tok");
+    expect(out).toEqual({ weekly_digest: false, paused: false });
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/notification-preferences");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("updateNotificationPreferences PATCHes with the payload as JSON body", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { weekly_digest: true } }),
+    );
+    await updateNotificationPreferences("tok", {
+      weekly_digest: true,
+      digest_hour: 18,
+    });
+    const { init } = lastCall();
+    expect(init.method).toBe("PATCH");
+    expect(init.body).toBe(
+      JSON.stringify({ weekly_digest: true, digest_hour: 18 }),
+    );
+  });
+
+  it("pauseAllEmails POSTs to the pause-all path", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { paused: true } }));
+    await pauseAllEmails("tok");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe(
+      "/api/v1/me/notification-preferences/pause-all",
+    );
+    expect(init.method).toBe("POST");
+  });
+
+  it("resumeAllEmails POSTs to the resume-all path", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { paused: false } }));
+    await resumeAllEmails("tok");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe(
+      "/api/v1/me/notification-preferences/resume-all",
+    );
+    expect(init.method).toBe("POST");
   });
 });
 
