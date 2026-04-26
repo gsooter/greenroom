@@ -127,20 +127,6 @@ export interface PricingState {
   sources: PricingSource[];
 }
 
-export interface RefreshPricingResult {
-  event_id: string;
-  refreshed_at: string;
-  cooldown_active: boolean;
-  quotes_persisted: number;
-  links_upserted: number;
-  provider_errors: string[];
-}
-
-export interface RefreshPricingResponse {
-  refresh: RefreshPricingResult;
-  pricing: PricingState;
-}
-
 export interface VenueDetail extends Venue {
   upcoming_events: EventSummary[];
   upcoming_event_count: number;

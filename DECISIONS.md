@@ -2112,6 +2112,78 @@ The cron forces past the cooldown so it never fights the manual UI.
   banner, and the per-event refresh — once a show has happened the
   price is dead inventory.
 
+**Note:** The manual-refresh-button consequence in this entry was
+reversed by Decision 048 once the free-tier upstream APIs proved
+unable to return prices for most events. The architecture (provider
+registry, append-only snapshots, shared cooldown) is unchanged; only
+the user-facing button was withdrawn.
+
+---
+
+### 048 — Hide The Manual Refresh Button Until Upstream Pricing Coverage Improves
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Remove the per-event "Refresh prices" button and its
+"Price unavailable" copy from `EventPricingPanel`. The panel now
+renders as a pure server component, shows a price line only when one
+exists, and hides itself entirely when no source has a buy-link.
+The backend refresh endpoint (`POST /api/v1/events/<id>/refresh-pricing`),
+its cooldown gate, and the nightly Celery sweep are all retained
+intact — only the user-facing affordance is gone.
+
+**Rationale:**
+After the first full multi-source sweep across 1,303 upcoming events
+the actual price-coverage rate was 22 events (1.7%). The cause is
+upstream and structural, not implementation: Ticketmaster's free
+Discovery API returns `priceRanges: null` for almost every arena
+listing (probed 10/10 DC music events live — all null), and SeatGeek's
+developer-tier API returns `stats: {}` empty for every event (the
+lowest_price/highest_price fields require a higher Partner-Program or
+paid tier). TickPick is search-link-only by design. The result: a
+visible refresh button next to "Price unavailable" on 98% of pages
+made the product feel broken — pressing it could never change
+anything because the data simply isn't there to fetch. Removing the
+affordance until upstream coverage improves is honest. The infra
+behind it is fine; the UI promise wasn't.
+
+**Alternatives considered:**
+
+- **Build per-show detail-page scrapers for the four DC indie venues
+  (Pie Shop, Black Cat, Comet Ping Pong, generic_html).** Probed the
+  listing pages of all eight venue scrapers — none surface ticket
+  prices on the listing HTML (the only `$` matches on the Comet site
+  are food menu prices). Extracting prices would require fetching
+  each show's detail page individually, ~280+ extra HTTP requests
+  per nightly run, plus brittle per-venue parsing. The yield ceiling
+  is small (these venues already have buy-links), so the
+  cost-to-benefit ratio doesn't justify it.
+- **Keep the button but show a tooltip explaining tier limits.**
+  Rejected: the explanation is the kind of detail users shouldn't
+  have to read — better to remove the affordance than to add copy
+  apologizing for it.
+- **Wait until SeatGeek paid tier and StubHub Marketplace are wired
+  up, then re-enable the button.** This is the actual plan; the
+  button can come back when coverage justifies it. Tracked under
+  the Deferred Decisions table below.
+
+**Consequences:**
+
+- `EventPricingPanel` becomes a server component (it had been
+  client-only for the refresh interaction). One fewer client bundle
+  on every event detail page.
+- `refreshEventPricing()` and the `RefreshPricingResponse` /
+  `RefreshPricingResult` types are removed from the frontend client.
+  The backend endpoint and its tests are kept intact for admin
+  triggers and a future re-introduction of the button.
+- The "Updated X ago" line on the panel header still renders — the
+  nightly sweep populates it, and surfacing freshness is still
+  useful even when prices come from a single source.
+- Re-introducing the button is a small change (recreate the client
+  wrapper + types and flip the panel back to client-mode) once the
+  upstream coverage rate makes a manual refresh meaningful.
+
 ---
 
 ## Deferred Decisions
