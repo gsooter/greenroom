@@ -1,26 +1,18 @@
 /**
  * Tests for EventPricingPanel.
  *
- * The panel is a small client component that renders the multi-source
- * pricing list, owns a Refresh button gated by a 5-minute backend
- * cooldown, and prefers affiliate URLs over raw buy URLs. We mock the
- * API client so the assertions stay focused on rendering, error
- * routing, and the cooldown banner.
+ * The panel is a pure render of the multi-source pricing list — the
+ * manual-refresh button was removed when most upstream APIs proved
+ * unable to return prices on our tier. These tests cover provider
+ * label rendering, price/listing-count formatting, the affiliate-URL
+ * preference, sold-out behavior, and the empty-state suppression.
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
 import EventPricingPanel from "@/components/events/EventPricingPanel";
-import type { PricingSource, PricingState, RefreshPricingResponse } from "@/types";
-
-const refreshEventPricing = vi.fn<
-  (idOrSlug: string) => Promise<RefreshPricingResponse>
->();
-
-vi.mock("@/lib/api/events", () => ({
-  refreshEventPricing: (idOrSlug: string) => refreshEventPricing(idOrSlug),
-}));
+import type { PricingSource, PricingState } from "@/types";
 
 function source(overrides: Partial<PricingSource> = {}): PricingSource {
   return {
@@ -48,48 +40,45 @@ function state(overrides: Partial<PricingState> = {}): PricingState {
 }
 
 describe("EventPricingPanel", () => {
-  beforeEach(() => {
-    refreshEventPricing.mockReset();
-  });
-
   it("renders the provider label, price range, and listing count", () => {
-    render(
-      <EventPricingPanel eventIdOrSlug="some-show" initial={state()} />,
-    );
+    render(<EventPricingPanel initial={state()} />);
 
     expect(screen.getByText("SeatGeek")).toBeInTheDocument();
     expect(screen.getByText(/\$30–\$80/)).toBeInTheDocument();
     expect(screen.getByText(/12 listings/)).toBeInTheDocument();
   });
 
-  it("shows a 'never' freshness label when refreshed_at is null", () => {
-    render(
-      <EventPricingPanel
-        eventIdOrSlug="some-show"
-        initial={state({ refreshed_at: null })}
-      />,
+  it("renders nothing when there are no sources", () => {
+    const { container } = render(
+      <EventPricingPanel initial={state({ sources: [] })} />,
     );
-
-    expect(screen.getByText(/Updated never/)).toBeInTheDocument();
+    expect(container.firstChild).toBeNull();
   });
 
-  it("renders the empty-state message when there are no sources", () => {
+  it("omits the metadata line when there is no price, count, or sold-out signal", () => {
     render(
       <EventPricingPanel
-        eventIdOrSlug="some-show"
-        initial={state({ sources: [] })}
+        initial={state({
+          sources: [
+            source({
+              min_price: null,
+              max_price: null,
+              listing_count: null,
+              is_active: true,
+            }),
+          ],
+        })}
       />,
     );
 
-    expect(
-      screen.getByText(/No ticket sources have been priced/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Price unavailable/i)).not.toBeInTheDocument();
+    expect(screen.getByText("SeatGeek")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /buy/i })).toBeInTheDocument();
   });
 
   it("prefers the affiliate URL over the raw buy URL", () => {
     render(
       <EventPricingPanel
-        eventIdOrSlug="some-show"
         initial={state({
           sources: [
             source({
@@ -108,7 +97,6 @@ describe("EventPricingPanel", () => {
   it("labels inactive (sold-out) rows with 'View' instead of 'Buy'", () => {
     render(
       <EventPricingPanel
-        eventIdOrSlug="some-show"
         initial={state({
           sources: [source({ is_active: false })],
         })}
@@ -119,80 +107,16 @@ describe("EventPricingPanel", () => {
     expect(screen.getByRole("link", { name: /view/i })).toBeInTheDocument();
   });
 
-  it("calls refreshEventPricing and merges the new pricing on click", async () => {
-    refreshEventPricing.mockResolvedValueOnce({
-      refresh: {
-        event_id: "evt-1",
-        refreshed_at: "2026-04-26T12:00:00.000Z",
-        cooldown_active: false,
-        quotes_persisted: 1,
-        links_upserted: 1,
-        provider_errors: [],
-      },
-      pricing: state({
-        refreshed_at: "2026-04-26T12:00:00.000Z",
-        sources: [
-          source({ source: "ticketmaster", min_price: 50, max_price: 50 }),
-        ],
-      }),
-    });
-
-    render(
-      <EventPricingPanel eventIdOrSlug="some-show" initial={state()} />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Ticketmaster")).toBeInTheDocument();
-    });
-    expect(refreshEventPricing).toHaveBeenCalledWith("some-show");
-  });
-
-  it("renders the cooldown banner when the backend reports cooldown_active", async () => {
-    refreshEventPricing.mockResolvedValueOnce({
-      refresh: {
-        event_id: "evt-1",
-        refreshed_at: "2026-04-26T11:30:00.000Z",
-        cooldown_active: true,
-        quotes_persisted: 0,
-        links_upserted: 0,
-        provider_errors: [],
-      },
-      pricing: state(),
-    });
-
-    render(
-      <EventPricingPanel eventIdOrSlug="some-show" initial={state()} />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent(
-        /just refreshed/i,
-      );
-    });
-  });
-
-  it("surfaces an error message when the refresh call rejects", async () => {
-    refreshEventPricing.mockRejectedValueOnce(new Error("boom"));
-
-    render(
-      <EventPricingPanel eventIdOrSlug="some-show" initial={state()} />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent("boom");
-    });
+  it("does not render a refresh button", () => {
+    render(<EventPricingPanel initial={state()} />);
+    expect(
+      screen.queryByRole("button", { name: /refresh/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("falls back to a humanized source slug when no label is mapped", () => {
     render(
       <EventPricingPanel
-        eventIdOrSlug="some-show"
         initial={state({
           sources: [source({ source: "made_up_provider" })],
         })}

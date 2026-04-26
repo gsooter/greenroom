@@ -177,7 +177,6 @@ export default async function EventDetailPage({
         ) : null}
 
         <EventPricingPanel
-          eventIdOrSlug={event.slug}
           initial={event.pricing ?? { refreshed_at: null, sources: [] }}
         />
 
