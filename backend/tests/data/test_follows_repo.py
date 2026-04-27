@@ -242,6 +242,60 @@ def test_unfollow_venue_missing_edge_is_noop(
     follows_repo.unfollow_venue(session, user.id, venue.id)
 
 
+def test_list_followed_artist_signals_returns_id_and_name_lookups(
+    session: Session, make_user: Callable[..., User]
+) -> None:
+    user = make_user()
+    enriched = Artist(
+        name="Phoebe Bridgers",
+        normalized_name="phoebe bridgers",
+        spotify_id="spot-pb",
+        genres=[],
+    )
+    unenriched = Artist(name="The Beths", normalized_name="the beths", genres=[])
+    session.add_all([enriched, unenriched])
+    session.flush()
+
+    follows_repo.follow_artist(session, user.id, enriched.id)
+    follows_repo.follow_artist(session, user.id, unenriched.id)
+
+    payload = follows_repo.list_followed_artist_signals(session, user.id)
+    assert payload["spotify_ids"] == {"spot-pb": "Phoebe Bridgers"}
+    assert payload["names"] == {
+        "phoebe bridgers": "Phoebe Bridgers",
+        "the beths": "The Beths",
+    }
+    assert payload["labels"] == {
+        enriched.id: "Phoebe Bridgers",
+        unenriched.id: "The Beths",
+    }
+
+
+def test_list_followed_artist_signals_empty_when_no_follows(
+    session: Session, make_user: Callable[..., User]
+) -> None:
+    user = make_user()
+    payload = follows_repo.list_followed_artist_signals(session, user.id)
+    assert payload == {"spotify_ids": {}, "names": {}, "labels": {}}
+
+
+def test_list_followed_venue_labels_returns_id_to_name_map(
+    session: Session,
+    make_user: Callable[..., User],
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+) -> None:
+    user = make_user()
+    city = make_city()
+    a = make_venue(city=city, name="9:30 Club")
+    b = make_venue(city=city, name="Black Cat")
+    follows_repo.follow_venue(session, user.id, a.id)
+    follows_repo.follow_venue(session, user.id, b.id)
+
+    labels = follows_repo.list_followed_venue_labels(session, user.id)
+    assert labels == {a.id: "9:30 Club", b.id: "Black Cat"}
+
+
 def test_list_followed_venues_newest_first_and_paginates(
     session: Session,
     make_user: Callable[..., User],

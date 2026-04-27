@@ -62,13 +62,19 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     """Wire MagicMocks around every IO-touching engine collaborator.
 
     Returns:
-        Dict with ``delete``, ``create``, and ``fetch`` mocks so tests
+        Dict with ``delete``, ``create``, ``fetch``, ``affinity``,
+        ``followed_artists``, and ``followed_venues`` mocks so tests
         can assert call counts and arguments.
     """
     delete_mock = MagicMock(name="delete_recommendations_for_user")
     create_mock = MagicMock(name="create_recommendation")
     fetch_mock = MagicMock(name="_fetch_scoreable_events", return_value=[])
     affinity_mock = MagicMock(name="list_saved_venue_affinity", return_value={})
+    followed_artists_mock = MagicMock(
+        name="list_followed_artist_signals",
+        return_value={"spotify_ids": {}, "names": {}, "labels": {}},
+    )
+    followed_venues_mock = MagicMock(name="list_followed_venue_labels", return_value={})
     monkeypatch.setattr(
         engine_module.users_repo,
         "delete_recommendations_for_user",
@@ -78,12 +84,24 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     monkeypatch.setattr(
         engine_module.users_repo, "list_saved_venue_affinity", affinity_mock
     )
+    monkeypatch.setattr(
+        engine_module.follows_repo,
+        "list_followed_artist_signals",
+        followed_artists_mock,
+    )
+    monkeypatch.setattr(
+        engine_module.follows_repo,
+        "list_followed_venue_labels",
+        followed_venues_mock,
+    )
     monkeypatch.setattr(engine_module, "_fetch_scoreable_events", fetch_mock)
     return {
         "delete": delete_mock,
         "create": create_mock,
         "fetch": fetch_mock,
         "affinity": affinity_mock,
+        "followed_artists": followed_artists_mock,
+        "followed_venues": followed_venues_mock,
     }
 
 
@@ -200,7 +218,9 @@ def test_generate_caps_total_score_at_one(
     ]
     # Replace _build_scorers so both scorers run for this case.
     original = engine_module._build_scorers
-    engine_module._build_scorers = lambda _user, _affinity: monkeypatch_scorers  # type: ignore[assignment,return-value]
+    engine_module._build_scorers = (  # type: ignore[assignment]
+        lambda _user, _affinity, **_kwargs: monkeypatch_scorers
+    )
     try:
         result = generate_for_user(session, user)  # type: ignore[arg-type]
     finally:
@@ -421,6 +441,152 @@ def test_generate_runs_for_user_with_only_saved_venue_affinity(
             "kind": "saved_venue",
             "label": "You've saved shows at Black Cat",
             "venue_name": "Black Cat",
+        }
+    ]
+
+
+def test_generate_runs_for_user_with_only_followed_artists(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """A user who only followed artists during onboarding still gets recs.
+
+    This is the common shape for new users who skip Spotify connect: a
+    handful of followed acts and nothing else. If the engine
+    short-circuited on the empty music cache, For-You would be empty
+    and the follow Step would feel performative.
+    """
+    session = MagicMock()
+    user = _FakeUser()
+    patched_engine["followed_artists"].return_value = {
+        "spotify_ids": {"spot-a": "Phoebe Bridgers"},
+        "names": {"phoebe bridgers": "Phoebe Bridgers"},
+        "labels": {},
+    }
+    matched = _FakeEvent(spotify_artist_ids=["spot-a"], artists=["Opener"])
+    other = _FakeEvent(artists=["Some Other Band"])
+    patched_engine["fetch"].return_value = [matched, other]
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+
+    assert result == 1
+    call = patched_engine["create"].call_args_list[0]
+    assert call.kwargs["event_id"] == matched.id
+    assert call.kwargs["score"] == pytest.approx(0.9)
+    breakdown = call.kwargs["score_breakdown"]
+    assert breakdown["followed_artist"]["matched_artists"] == [
+        {"name": "Phoebe Bridgers", "match": "spotify_id"}
+    ]
+    assert breakdown["_match_reasons"] == [
+        {
+            "scorer": "followed_artist",
+            "kind": "followed_artist",
+            "label": "You follow Phoebe Bridgers",
+            "artist_name": "Phoebe Bridgers",
+        }
+    ]
+
+
+def test_generate_runs_for_user_with_only_followed_venues(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """A user with only followed venues gets venue-driven recs."""
+    session = MagicMock()
+    user = _FakeUser()
+    venue_id = uuid.uuid4()
+    patched_engine["followed_venues"].return_value = {venue_id: "9:30 Club"}
+    matched = _FakeEvent(venue_id=venue_id, artists=["Unknown"])
+    other = _FakeEvent(artists=["Unknown"])
+    patched_engine["fetch"].return_value = [matched, other]
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+
+    assert result == 1
+    call = patched_engine["create"].call_args_list[0]
+    assert call.kwargs["event_id"] == matched.id
+    assert call.kwargs["score"] == pytest.approx(0.45)
+    reasons = call.kwargs["score_breakdown"]["_match_reasons"]
+    assert reasons == [
+        {
+            "scorer": "followed_venue",
+            "kind": "followed_venue",
+            "label": "You follow 9:30 Club",
+            "venue_name": "9:30 Club",
+        }
+    ]
+
+
+def test_followed_venue_chip_dedupes_against_saved_venue_chip(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """Following AND saving the same venue produces one chip, not two.
+
+    Both scorers fire (and both contribute score), but the reason list
+    shows the stronger "You follow X" label and suppresses the weaker
+    "You've saved shows at X" duplicate.
+    """
+    session = MagicMock()
+    user = _FakeUser()
+    venue_id = uuid.uuid4()
+    patched_engine["followed_venues"].return_value = {venue_id: "Black Cat"}
+    patched_engine["affinity"].return_value = {
+        venue_id: {"count": 2, "name": "Black Cat"}
+    }
+    matched = _FakeEvent(venue_id=venue_id, artists=["Unknown"])
+    patched_engine["fetch"].return_value = [matched]
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+
+    assert result == 1
+    breakdown = patched_engine["create"].call_args_list[0].kwargs["score_breakdown"]
+    # Both scorer blocks present.
+    assert "followed_venue" in breakdown
+    assert "venue_affinity" in breakdown
+    # But only one venue chip surfaces in reasons.
+    venue_reasons = [
+        r
+        for r in breakdown["_match_reasons"]
+        if r["scorer"] in {"followed_venue", "venue_affinity"}
+    ]
+    assert venue_reasons == [
+        {
+            "scorer": "followed_venue",
+            "kind": "followed_venue",
+            "label": "You follow Black Cat",
+            "venue_name": "Black Cat",
+        }
+    ]
+
+
+def test_followed_artist_chip_dedupes_against_artist_match_chip(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """A user who both follows and streams an artist gets one chip."""
+    session = MagicMock()
+    user = _FakeUser(spotify_top_artists=[{"id": "spot-a", "name": "Phoebe Bridgers"}])
+    patched_engine["followed_artists"].return_value = {
+        "spotify_ids": {"spot-a": "Phoebe Bridgers"},
+        "names": {"phoebe bridgers": "Phoebe Bridgers"},
+        "labels": {},
+    }
+    matched = _FakeEvent(spotify_artist_ids=["spot-a"], artists=["Phoebe Bridgers"])
+    patched_engine["fetch"].return_value = [matched]
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+
+    assert result == 1
+    breakdown = patched_engine["create"].call_args_list[0].kwargs["score_breakdown"]
+    artist_reasons = [
+        r
+        for r in breakdown["_match_reasons"]
+        if r["scorer"] in {"artist_match", "followed_artist"}
+    ]
+    # The artist_match chip wins; followed_artist is deduped out.
+    assert artist_reasons == [
+        {
+            "scorer": "artist_match",
+            "kind": "spotify_id",
+            "label": "You listen to Phoebe Bridgers",
+            "artist_name": "Phoebe Bridgers",
         }
     ]
 

@@ -1,13 +1,14 @@
 <div class="gr-show">
   {% if show.image_url %}
   <a href="{{ show.url }}" style="text-decoration: none;">
-    <img src="{{ show.image_url }}" alt="{{ show.headliner }}">
+    <img src="{{ show.image_url }}" alt="{{ show.headliner }}" class="gr-show-image">
   </a>
   {% endif %}
-  <p class="gr-show-title">
-    <a href="{{ show.url }}" style="color: #1A2820; text-decoration: none;">
-      {{ show.headliner }}
-    </a>
-  </p>
-  <p class="gr-show-meta">{{ show.venue }} · {{ show.date_label }}</p>
+  <div class="gr-show-body">
+    <p class="gr-show-date">{{ show.date_short }} · {{ show.time_short }}</p>
+    <p class="gr-show-title">
+      <a href="{{ show.url }}">{{ show.headliner }}</a>
+    </p>
+    <p class="gr-show-meta">{{ show.venue }}</p>
+  </div>
 </div>

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from backend.data.models.cities import City
 from backend.data.models.events import Event, EventStatus, EventType
+from backend.data.models.users import User
 from backend.data.models.venues import Venue
 from backend.data.repositories import events as events_repo
 
@@ -783,3 +784,192 @@ def test_list_all_event_artist_names_skips_blank_and_non_string(
 
     names = events_repo.list_all_event_artist_names(session)
     assert names == ["Phoebe"]
+
+
+# ---------------------------------------------------------------------------
+# for_you sort
+# ---------------------------------------------------------------------------
+
+
+def _add_recommendation(
+    session: Session,
+    *,
+    user_id: uuid.UUID,
+    event_id: uuid.UUID,
+    score: float,
+) -> None:
+    """Insert a Recommendation row for the for_you sort tests.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user_id: Greenroom user UUID.
+        event_id: Event UUID being scored.
+        score: Persisted score; higher sorts first.
+    """
+    from backend.data.models.recommendations import Recommendation
+
+    session.add(
+        Recommendation(
+            user_id=user_id,
+            event_id=event_id,
+            score=score,
+            score_breakdown={},
+        )
+    )
+    session.flush()
+
+
+def test_list_events_for_you_sort_orders_by_recommendation_score(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+    make_user: Callable[..., User],
+) -> None:
+    """``sort='for_you'`` ranks scored events ahead of date order."""
+    city = make_city()
+    venue = make_venue(city=city)
+    user = make_user()
+    now = datetime.now(UTC)
+    sooner_unscored = make_event(
+        venue=venue, title="Sooner", starts_at=now + timedelta(days=1)
+    )
+    later_strong = make_event(
+        venue=venue, title="Strong", starts_at=now + timedelta(days=10)
+    )
+    middle_weak = make_event(
+        venue=venue, title="Weak", starts_at=now + timedelta(days=5)
+    )
+    _add_recommendation(session, user_id=user.id, event_id=later_strong.id, score=0.95)
+    _add_recommendation(session, user_id=user.id, event_id=middle_weak.id, score=0.30)
+
+    rows, total = events_repo.list_events(session, sort="for_you", user_id=user.id)
+    assert total == 3
+    assert [e.title for e in rows] == ["Strong", "Weak", "Sooner"]
+    # Sanity: the unscored event still sorts last by date among unscored.
+    assert rows[-1].id == sooner_unscored.id
+
+
+def test_list_events_for_you_sort_uses_only_callers_recommendations(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+    make_user: Callable[..., User],
+) -> None:
+    """A different user's recs must not influence the caller's ranking."""
+    city = make_city()
+    venue = make_venue(city=city)
+    me = make_user()
+    other = make_user()
+    now = datetime.now(UTC)
+    make_event(venue=venue, title="A", starts_at=now + timedelta(days=2))
+    b = make_event(venue=venue, title="B", starts_at=now + timedelta(days=4))
+    # Other user loves B; I have no recs at all.
+    _add_recommendation(session, user_id=other.id, event_id=b.id, score=0.99)
+
+    rows, _ = events_repo.list_events(session, sort="for_you", user_id=me.id)
+    assert [e.title for e in rows] == ["A", "B"]
+
+
+def test_list_events_filters_by_day_of_week(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """``day_of_week`` filters by ET-local weekday (Postgres dow)."""
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    city = make_city()
+    venue = make_venue(city=city)
+    # Saturday (dow=6) at 21:00 ET → 02:00 UTC Sunday in winter offset
+    saturday = datetime(2026, 5, 2, 21, 0, tzinfo=et).astimezone(UTC)
+    monday = datetime(2026, 5, 4, 20, 0, tzinfo=et).astimezone(UTC)
+    sat_event = make_event(venue=venue, title="Saturday show", starts_at=saturday)
+    mon_event = make_event(venue=venue, title="Monday show", starts_at=monday)
+
+    rows, _ = events_repo.list_events(session, day_of_week=[6])
+    assert {e.id for e in rows} == {sat_event.id}
+
+    rows, _ = events_repo.list_events(session, day_of_week=[1])
+    assert {e.id for e in rows} == {mon_event.id}
+
+
+def test_list_events_filters_by_time_of_day(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """``time_of_day`` buckets fire on ET-local hour, not UTC."""
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    city = make_city()
+    venue = make_venue(city=city)
+    early = make_event(
+        venue=venue,
+        title="Brunch set",
+        starts_at=datetime(2026, 5, 5, 12, 0, tzinfo=et).astimezone(UTC),
+    )
+    evening = make_event(
+        venue=venue,
+        title="Dinner show",
+        starts_at=datetime(2026, 5, 5, 20, 0, tzinfo=et).astimezone(UTC),
+    )
+    late = make_event(
+        venue=venue,
+        title="Late set",
+        starts_at=datetime(2026, 5, 5, 23, 30, tzinfo=et).astimezone(UTC),
+    )
+
+    rows, _ = events_repo.list_events(session, time_of_day=["evening"])
+    assert {e.id for e in rows} == {evening.id}
+
+    rows, _ = events_repo.list_events(session, time_of_day=["early", "late"])
+    assert {e.id for e in rows} == {early.id, late.id}
+
+
+def test_list_events_has_image_and_has_price(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """``has_image`` and ``has_price`` drop unset rows independently."""
+    city = make_city()
+    venue = make_venue(city=city)
+    with_image = make_event(venue=venue, title="With image")
+    with_image.image_url = "https://example.test/img.jpg"
+    with_price = make_event(venue=venue, title="With price", min_price=25.0)
+    bare = make_event(venue=venue, title="Bare")
+    session.flush()
+
+    rows, _ = events_repo.list_events(session, has_image=True)
+    assert {e.id for e in rows} == {with_image.id}
+
+    rows, _ = events_repo.list_events(session, has_price=True)
+    assert {e.id for e in rows} == {with_price.id}
+
+    # Neither filter → all three.
+    rows, _ = events_repo.list_events(session)
+    assert {e.id for e in rows} == {with_image.id, with_price.id, bare.id}
+
+
+def test_list_events_for_you_without_user_id_falls_back_to_date(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    """``sort='for_you'`` without ``user_id`` ignores the join."""
+    city = make_city()
+    venue = make_venue(city=city)
+    now = datetime.now(UTC)
+    sooner = make_event(venue=venue, title="Sooner", starts_at=now + timedelta(days=1))
+    later = make_event(venue=venue, title="Later", starts_at=now + timedelta(days=5))
+
+    rows, _ = events_repo.list_events(session, sort="for_you")
+    assert [e.id for e in rows] == [sooner.id, later.id]

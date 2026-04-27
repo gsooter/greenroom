@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.data.models.events import (
@@ -116,6 +116,15 @@ _UNAVAILABLE_STATUSES: tuple[EventStatus, ...] = (
     EventStatus.PAST,
 )
 
+# Time-of-day buckets are defined in venue-local time (America/New_York).
+# Boundaries are half-open at the start and exclusive at the end so a show
+# at exactly 18:00 ET counts as evening, not early.
+_TIME_OF_DAY_BUCKETS: dict[str, tuple[int, int]] = {
+    "early": (0, 18),
+    "evening": (18, 22),
+    "late": (22, 24),
+}
+
 
 def list_events(
     session: Session,
@@ -133,6 +142,12 @@ def list_events(
     available_only: bool = False,
     event_type: EventType | None = None,
     status: EventStatus | None = None,
+    sort: str | None = None,
+    user_id: uuid.UUID | None = None,
+    day_of_week: list[int] | None = None,
+    time_of_day: list[str] | None = None,
+    has_image: bool = False,
+    has_price: bool = False,
     page: int = 1,
     per_page: int = 20,
 ) -> tuple[list[Event], int]:
@@ -166,6 +181,24 @@ def list_events(
         event_type: Filter to a specific event type.
         status: Filter to a specific event status. Takes precedence over
             ``available_only`` when both are passed.
+        sort: Sort key. ``"for_you"`` orders by the matching
+            recommendation score descending (NULL last) and tiebreaks on
+            ``starts_at`` ascending — requires ``user_id``. Anything else
+            (including ``None`` or ``"date"``) falls back to chronological
+            ``starts_at`` ascending.
+        user_id: Greenroom user UUID used to source recommendation rows
+            for the ``for_you`` sort. Ignored otherwise.
+        day_of_week: Filter to events whose ET-local weekday matches any
+            of these values. Postgres day-of-week convention: 0=Sunday
+            through 6=Saturday. ``None`` skips the filter.
+        time_of_day: Filter to events whose ET-local start hour falls in
+            one of the named buckets — ``"early"`` (before 18:00),
+            ``"evening"`` (18:00-22:00), ``"late"`` (22:00 and later).
+            Multiple buckets are OR'd. Unknown bucket names are ignored.
+        has_image: Restrict to events with a non-null ``image_url`` so
+            grid-style listings render cleanly.
+        has_price: Restrict to events whose ``min_price`` is set, so
+            "From $X" cards never render with no price.
         page: Page number, 1-indexed. Defaults to 1.
         per_page: Results per page. Maximum 100. Defaults to 20.
 
@@ -173,6 +206,7 @@ def list_events(
         Tuple of (events list, total count for pagination).
     """
     from backend.data.models.cities import City
+    from backend.data.models.recommendations import Recommendation
     from backend.data.models.venues import Venue
 
     per_page = min(per_page, 100)
@@ -207,7 +241,7 @@ def list_events(
     if spotify_artist_ids is not None:
         if not spotify_artist_ids:
             # Empty list = "match nothing" rather than "no filter".
-            base = base.where(False)
+            base = base.where(false())
         else:
             base = base.where(Event.spotify_artist_ids.overlap(spotify_artist_ids))
 
@@ -226,6 +260,36 @@ def list_events(
             Event.min_price <= price_max
         )
 
+    if has_image:
+        base = base.where(Event.image_url.is_not(None))
+
+    if has_price:
+        base = base.where(Event.min_price.is_not(None))
+
+    if day_of_week:
+        # Convert UTC `starts_at` to ET before extracting the weekday so
+        # a Friday-night show that crosses into Saturday UTC still counts
+        # as Friday for the user. Postgres `dow` returns 0..6 with 0=Sun.
+        et_starts = func.timezone("America/New_York", Event.starts_at)
+        base = base.where(func.extract("dow", et_starts).in_(day_of_week))
+
+    if time_of_day:
+        ranges: list[tuple[int, int]] = []
+        for bucket in time_of_day:
+            window = _TIME_OF_DAY_BUCKETS.get(bucket)
+            if window is not None:
+                ranges.append(window)
+        if ranges:
+            et_starts = func.timezone("America/New_York", Event.starts_at)
+            hour = func.extract("hour", et_starts)
+            clauses = [hour.between(start, end - 1) for start, end in ranges]
+            base = base.where(or_(*clauses))
+        else:
+            # Caller asked for time_of_day but every bucket was unknown;
+            # treat that as "match nothing" so the bug surfaces in the UI
+            # rather than silently returning the unfiltered list.
+            base = base.where(false())
+
     if event_type is not None:
         base = base.where(Event.event_type == event_type)
 
@@ -237,7 +301,29 @@ def list_events(
     count_stmt = select(func.count()).select_from(base.subquery())
     total = session.execute(count_stmt).scalar_one()
 
-    stmt = base.order_by(Event.starts_at).offset((page - 1) * per_page).limit(per_page)
+    use_for_you = sort == "for_you" and user_id is not None
+    if use_for_you:
+        # LEFT JOIN keeps unscored events in the listing — they sort
+        # behind every recommended one because of NULLS LAST, which
+        # matches the digest's ranking semantics.
+        stmt = (
+            base.outerjoin(
+                Recommendation,
+                (Recommendation.event_id == Event.id)
+                & (Recommendation.user_id == user_id),
+            )
+            .order_by(
+                Recommendation.score.desc().nulls_last(),
+                Event.starts_at.asc(),
+            )
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )
+    else:
+        stmt = (
+            base.order_by(Event.starts_at).offset((page - 1) * per_page).limit(per_page)
+        )
+
     events = list(session.execute(stmt).scalars().all())
     return events, total
 

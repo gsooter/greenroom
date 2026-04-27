@@ -16,6 +16,7 @@ from backend.core.exceptions import EVENT_NOT_FOUND, NotFoundError, ValidationEr
 from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.repositories import artists as artists_repo
 from backend.data.repositories import events as events_repo
+from backend.data.repositories import follows as follows_repo
 
 _ET_ZONE = ZoneInfo("America/New_York")
 
@@ -68,6 +69,10 @@ def get_event_by_slug(session: Session, slug: str) -> Event:
     return event
 
 
+_VALID_SORTS: frozenset[str] = frozenset({"date", "for_you"})
+_VALID_TIME_OF_DAY: frozenset[str] = frozenset({"early", "evening", "late"})
+
+
 def list_events(
     session: Session,
     *,
@@ -84,6 +89,14 @@ def list_events(
     available_only: bool = False,
     event_type: str | None = None,
     status: str | None = None,
+    sort: str | None = None,
+    user_id: uuid.UUID | None = None,
+    day_of_week: list[int] | None = None,
+    time_of_day: list[str] | None = None,
+    has_image: bool = False,
+    has_price: bool = False,
+    followed_venues_only: bool = False,
+    followed_artists_only: bool = False,
     page: int = 1,
     per_page: int = 20,
 ) -> tuple[list[Event], int]:
@@ -113,6 +126,27 @@ def list_events(
         event_type: Filter by event type string.
         status: Filter by event status string. Takes precedence over
             ``available_only`` when both are passed.
+        sort: Sort key. ``"for_you"`` orders by the user's persisted
+            recommendation scores descending — requires ``user_id`` and
+            silently degrades to ``"date"`` for anonymous callers so the
+            public path stays usable. Default and ``"date"`` order by
+            ``starts_at`` ascending.
+        user_id: Greenroom user UUID. Required for ``followed_venues_only``,
+            ``followed_artists_only``, and ``sort='for_you'``.
+        day_of_week: Filter to specific weekdays (0=Sun..6=Sat). Each
+            value must be in 0..6 or a ValidationError is raised. ``None``
+            and ``[]`` skip the filter.
+        time_of_day: Subset of ``{"early", "evening", "late"}``. Unknown
+            values raise a ValidationError so the caller surfaces the bug.
+        has_image: When True, only return events with an image_url set.
+        has_price: When True, only return events with min_price set.
+        followed_venues_only: When True, restrict to events at venues the
+            caller follows. Silently degrades to "no filter" for anonymous
+            callers — pairs with the public listing's anonymous fallback.
+        followed_artists_only: When True, restrict to events whose
+            ``spotify_artist_ids`` overlap one of the caller's followed
+            (and Spotify-enriched) artists. Anonymous callers get no
+            filter; users with no enriched follows get an empty result.
         page: Page number, 1-indexed.
         per_page: Results per page. Maximum 100.
 
@@ -121,13 +155,35 @@ def list_events(
 
     Raises:
         ValidationError: If ``per_page`` exceeds 100, ``price_max`` is
-            negative, or an enum string is unrecognized.
+            negative, an enum string is unrecognized, ``sort`` is not a
+            supported value, ``day_of_week`` contains an out-of-range
+            integer, or ``time_of_day`` contains an unknown bucket.
     """
     if per_page > 100:
         raise ValidationError("per_page cannot exceed 100.")
 
     if price_max is not None and price_max < 0:
         raise ValidationError("price_max cannot be negative.")
+
+    if sort is not None and sort not in _VALID_SORTS:
+        raise ValidationError(
+            f"Invalid sort: '{sort}'. Valid values: {sorted(_VALID_SORTS)}"
+        )
+
+    if day_of_week is not None:
+        for d in day_of_week:
+            if d < 0 or d > 6:
+                raise ValidationError(
+                    f"Invalid day_of_week: {d}. Must be 0..6 (0=Sunday)."
+                )
+
+    if time_of_day is not None:
+        invalid = [b for b in time_of_day if b not in _VALID_TIME_OF_DAY]
+        if invalid:
+            raise ValidationError(
+                f"Invalid time_of_day buckets: {invalid}. "
+                f"Valid values: {sorted(_VALID_TIME_OF_DAY)}"
+            )
 
     parsed_type: EventType | None = None
     if event_type is not None:
@@ -154,21 +210,64 @@ def list_events(
         artists = artists_repo.list_artists_by_ids(session, artist_ids)
         spotify_ids = [a.spotify_id for a in artists if a.spotify_id]
 
+    # Compose follow-based restrictions on top of the explicit filters.
+    # An anonymous caller (user_id=None) silently drops the toggle so the
+    # public listing isn't taken hostage by a stale URL.
+    effective_venue_ids = venue_ids
+    if followed_venues_only and user_id is not None:
+        followed = follows_repo.list_followed_venue_ids(session, user_id)
+        followed_list = sorted(followed)
+        if effective_venue_ids is not None:
+            effective_venue_ids = [v for v in effective_venue_ids if v in followed]
+        else:
+            effective_venue_ids = followed_list
+        # Empty list means "user follows nothing" — short-circuit to no
+        # rows by passing an empty list through to the repo's venue_ids
+        # filter, which `.in_([])` will reduce to no matches.
+        if not effective_venue_ids:
+            effective_venue_ids = []
+
+    effective_spotify_ids = spotify_ids
+    if followed_artists_only and user_id is not None:
+        signals = follows_repo.list_followed_artist_signals(session, user_id)
+        followed_spotify = sorted(signals.get("spotify_ids", {}).keys())
+        if effective_spotify_ids is not None:
+            keep = set(followed_spotify)
+            effective_spotify_ids = [s for s in effective_spotify_ids if s in keep]
+        else:
+            effective_spotify_ids = followed_spotify
+        # Empty list semantics already handled by the repo: it short-
+        # circuits to zero results, which is correct here too — "shows
+        # by my followed artists" with no enriched follows = nothing.
+
+    # Anonymous "for_you" requests degrade to date order — silently, so
+    # the public listing keeps working when an unauthenticated client
+    # sends `?sort=for_you` from a cached link.
+    effective_sort = sort
+    if effective_sort == "for_you" and user_id is None:
+        effective_sort = "date"
+
     return events_repo.list_events(
         session,
         city_id=city_id,
         region=region,
-        venue_ids=venue_ids,
+        venue_ids=effective_venue_ids,
         date_from=date_from,
         date_to=date_to,
         genres=genres,
-        spotify_artist_ids=spotify_ids,
+        spotify_artist_ids=effective_spotify_ids,
         artist_search=artist_search,
         price_max=price_max,
         free_only=free_only,
         available_only=available_only,
         event_type=parsed_type,
         status=parsed_status,
+        sort=effective_sort,
+        user_id=user_id if effective_sort == "for_you" else None,
+        day_of_week=day_of_week,
+        time_of_day=time_of_day,
+        has_image=has_image,
+        has_price=has_price,
         page=page,
         per_page=per_page,
     )

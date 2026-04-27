@@ -33,6 +33,7 @@ from backend.data.repositories import email_digest_log as digest_log_repo
 from backend.data.repositories import events as events_repo
 from backend.data.repositories import notification_preferences as prefs_repo
 from backend.data.repositories import users as users_repo
+from backend.recommendations import engine as rec_engine
 from backend.services import email as email_service
 
 logger = get_logger(__name__)
@@ -224,11 +225,11 @@ def assemble_weekly_digest(
 ) -> WeeklyDigest | None:
     """Build the per-user content for a weekly digest email.
 
-    Pulls upcoming events in the user's city for the next 7 days,
-    ranks Spotify-matched events ahead of unmatched ones, and caps
-    the result at :data:`_MAX_DIGEST_SHOWS`. Returns ``None`` when
-    there are no events worth emailing about — the dispatcher uses
-    that signal to skip the user without writing a log row.
+    Calls the recommendation engine to refresh the user's persisted
+    recs, then intersects the top scored events with the next 7 days
+    of upcoming shows in the user's city. Falls back to chronological
+    order when the user has no recommendation rows (cold-start: no
+    follows, no music cache, no genre picks).
 
     Args:
         session: Active SQLAlchemy session.
@@ -254,11 +255,16 @@ def assemble_weekly_digest(
     if not events:
         return None
 
-    tracked_ids = _user_tracked_artist_ids(user)
+    rec_engine.generate_for_user(session, user)
+    rec_rows, _ = users_repo.list_recommendations(
+        session, user.id, page=1, per_page=200
+    )
+    score_by_event_id = {rec.event_id: rec.score for rec in rec_rows}
+
     ranked = sorted(
         events,
         key=lambda e: (
-            0 if _event_matches_user(e, tracked_ids) else 1,
+            -score_by_event_id.get(e.id, 0.0),
             e.starts_at,
         ),
     )
@@ -266,50 +272,22 @@ def assemble_weekly_digest(
     cards = [_show_card(event, prefs) for event in top]
 
     show_word = "show" if len(cards) == 1 else "shows"
+    has_recs = any(score_by_event_id.get(e.id, 0.0) > 0 for e in top)
+    intro = (
+        f"Here are the shows we think are worth your time, {_first_name(user)}."
+        if has_recs
+        else (
+            f"Here's what's coming up this week, {_first_name(user)}. "
+            "Connect Spotify or follow a few artists to get personalized picks."
+        )
+    )
     return WeeklyDigest(
         heading="Your week ahead",
-        intro=f"Here are the shows we think are worth your time, {_first_name(user)}.",
+        intro=intro,
         preheader=f"{len(cards)} upcoming {show_word} we picked for you",
         cta_url=f"{_public_base()}/events",
         shows=cards,
     )
-
-
-def _user_tracked_artist_ids(user: User) -> set[str]:
-    """Build the set of Spotify artist IDs the user has signal on.
-
-    Combines ``spotify_top_artist_ids`` and ``spotify_recent_artist_ids``
-    so an event matches if it appears in *either* list.
-
-    Args:
-        user: The recipient :class:`User` row.
-
-    Returns:
-        A possibly empty set of Spotify artist IDs.
-    """
-    out: set[str] = set()
-    for attr in ("spotify_top_artist_ids", "spotify_recent_artist_ids"):
-        ids = getattr(user, attr, None) or []
-        out.update(ids)
-    return out
-
-
-def _event_matches_user(event: Any, tracked_ids: set[str]) -> bool:
-    """Return True if ``event.spotify_artist_ids`` overlaps with ``tracked_ids``.
-
-    Args:
-        event: An :class:`Event` row (or test stand-in).
-        tracked_ids: Spotify artist IDs we have signal on for the user.
-
-    Returns:
-        True when the event's artist IDs share at least one ID with
-        the user's tracked set; False otherwise (including when
-        either side is empty).
-    """
-    if not tracked_ids:
-        return False
-    ids = event.spotify_artist_ids or []
-    return any(i in tracked_ids for i in ids)
 
 
 def _show_card(event: Any, prefs: NotificationPreferences) -> dict[str, Any]:
@@ -330,10 +308,14 @@ def _show_card(event: Any, prefs: NotificationPreferences) -> dict[str, Any]:
         starts = starts.replace(tzinfo=UTC)
     local = starts.astimezone(ZoneInfo(prefs.timezone))
     date_label = local.strftime("%A, %b %-d · %-I:%M %p").lstrip()
+    date_short = local.strftime("%a %b %-d").upper()
+    time_short = local.strftime("%-I:%M %p")
     return {
         "headliner": event.title,
         "venue": event.venue.name,
         "date_label": date_label,
+        "date_short": date_short,
+        "time_short": time_short,
         "image_url": event.image_url,
         "url": f"{_public_base()}/events/{event.slug}",
     }

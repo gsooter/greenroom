@@ -143,7 +143,8 @@ def test_render_show_card_partial_renders_inside_email() -> None:
                 _show(
                     headliner="Phoebe Bridgers",
                     venue="9:30 Club",
-                    date_label="Friday · Apr 26 · 8 PM",
+                    date_short="FRI APR 26",
+                    time_short="8:00 PM",
                 )
             ],
             "cta_label": "View show",
@@ -155,7 +156,8 @@ def test_render_show_card_partial_renders_inside_email() -> None:
     )
     assert "9:30 Club" in rendered.html
     assert "9:30 Club" in rendered.text
-    assert "Friday · Apr 26 · 8 PM" in rendered.html
+    assert "FRI APR 26" in rendered.html
+    assert "8:00 PM" in rendered.html
 
 
 def test_plain_text_strips_html() -> None:
@@ -185,12 +187,16 @@ def _show(
     headliner: str = "Phoebe Bridgers",
     venue: str = "9:30 Club",
     date_label: str = "Friday · Apr 26 · 8 PM",
+    date_short: str = "FRI APR 26",
+    time_short: str = "8:00 PM",
 ) -> dict[str, str]:
     """Build a show-card context dict with sensible defaults."""
     return {
         "headliner": headliner,
         "venue": venue,
         "date_label": date_label,
+        "date_short": date_short,
+        "time_short": time_short,
         "image_url": "https://example.com/img.jpg",
         "url": "https://greenroom.test/events/abc",
         "starts_at": datetime(2026, 4, 26, 20, 0, tzinfo=UTC).isoformat(),

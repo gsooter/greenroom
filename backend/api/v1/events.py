@@ -11,6 +11,7 @@ from typing import Any
 from flask import Response, request
 
 from backend.api.v1 import api_v1
+from backend.core.auth import try_get_current_user
 from backend.core.database import get_db
 from backend.data.repositories import events as events_repo
 from backend.services import events as events_service
@@ -41,6 +42,20 @@ def list_events() -> tuple[dict[str, Any], int]:
             events.
         event_type: string — filter by event type.
         status: string — filter by event status.
+        sort: ``"date"`` (default) or ``"for_you"``. ``for_you`` reads
+            the optional bearer token and orders by the caller's
+            persisted recommendation scores; anonymous callers fall
+            back to date order.
+        day_of_week: int (repeatable) — filter to weekdays 0..6 (Sun..Sat).
+        time_of_day: string (repeatable) — bucket name from
+            ``early`` / ``evening`` / ``late``.
+        has_image: ``"true"`` to drop events without ``image_url``.
+        has_price: ``"true"`` to drop events without ``min_price``.
+        followed_venues_only: ``"true"`` to restrict to followed venues
+            (requires bearer token).
+        followed_artists_only: ``"true"`` to restrict to events whose
+            Spotify artists overlap the caller's enriched follows
+            (requires bearer token).
         page: int — page number (default 1).
         per_page: int — results per page (default 20, max 100).
 
@@ -65,8 +80,18 @@ def list_events() -> tuple[dict[str, Any], int]:
     genres = request.args.getlist("genre") or None
     event_type = request.args.get("event_type")
     status = request.args.get("status")
+    sort = request.args.get("sort")
+    day_of_week = _parse_int_list(request.args.getlist("day_of_week"))
+    time_of_day = request.args.getlist("time_of_day") or None
+    has_image = _parse_bool(request.args.get("has_image"))
+    has_price = _parse_bool(request.args.get("has_price"))
+    followed_venues_only = _parse_bool(request.args.get("followed_venues_only"))
+    followed_artists_only = _parse_bool(request.args.get("followed_artists_only"))
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
+
+    needs_user = sort == "for_you" or followed_venues_only or followed_artists_only
+    user = try_get_current_user() if needs_user else None
 
     events, total = events_service.list_events(
         session,
@@ -83,6 +108,14 @@ def list_events() -> tuple[dict[str, Any], int]:
         available_only=available_only,
         event_type=event_type,
         status=status,
+        sort=sort,
+        user_id=user.id if user is not None else None,
+        day_of_week=day_of_week,
+        time_of_day=time_of_day,
+        has_image=has_image,
+        has_price=has_price,
+        followed_venues_only=followed_venues_only,
+        followed_artists_only=followed_artists_only,
         page=page,
         per_page=per_page,
     )
@@ -284,6 +317,28 @@ def _parse_uuid_list(values: list[str]) -> list[uuid.UUID] | None:
     for v in values:
         try:
             parsed.append(uuid.UUID(v))
+        except ValueError:
+            continue
+    return parsed or None
+
+
+def _parse_int_list(values: list[str]) -> list[int] | None:
+    """Parse a list of strings as ints, dropping unparseable entries.
+
+    Args:
+        values: Raw repeated query-string values
+            (e.g., ``?day_of_week=0&day_of_week=5``).
+
+    Returns:
+        List of parsed ints, or ``None`` when the input is empty so the
+        downstream filter is skipped.
+    """
+    if not values:
+        return None
+    parsed: list[int] = []
+    for v in values:
+        try:
+            parsed.append(int(v))
         except ValueError:
             continue
     return parsed or None

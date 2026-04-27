@@ -2370,6 +2370,74 @@ visibility timeout keeps a half-finished bucket from being replayed.
   `skipped_send_returned_false`, `errors`) so a stuck pipeline shows
   up as a counter that flat-lines, not silence.
 
+### 052 — Recommendation Engine Powers Both Digest Ranking And `?sort=for_you`
+
+**Date:** 2026-04-27
+**Status:** Decided
+
+**Decision:** The same `RecommendationEngine` that produces the
+For-You feed also ranks the weekly digest, and the ranking is now
+exposed through a new `?sort=for_you` query param on
+`/api/v1/events`. The digest no longer ranks in-process — it triggers
+`generate_for_user` and reads the persisted `recommendations` rows.
+The `/events` endpoint reads the same rows when the caller passes
+`?sort=for_you` and is authenticated. Two new scorers
+(`FollowedArtistScorer`, `FollowedVenueScorer`) join
+`ArtistMatchScorer` and `VenueAffinityScorer` so explicit follows
+have first-class weight alongside Spotify-derived signals.
+
+**Rationale:** Before this change, the digest implemented its own
+ranking heuristic ("does the event match a tracked artist? sort it
+first") and the public `/events` listing had no personalization. Two
+divergent ranking paths meant adding a new signal had to be
+implemented twice and could drift. Routing both surfaces through the
+engine + persisted rows means a new scorer touches one file and
+ships everywhere recommendations are surfaced.
+
+**Alternatives considered:**
+- *Keep the digest's local ranking and add a separate per-request
+  scorer for `/events`.* Rejected — same drift problem, plus a per-
+  request scorer makes pagination painful (you have to score every
+  page candidate, not just the page you serve).
+- *Make `/events` always return personalized ordering when a token is
+  present.* Rejected — the public listing's anonymous-by-default
+  contract powers SEO. An opt-in query param keeps the SSR cache key
+  stable and lets logged-in users toggle.
+- *Filter event rows to the user's followed artists/venues only and
+  drop the score join.* Rejected — that collapses the listing for
+  users with few follows. The score-based sort degrades gracefully
+  (unscored events sort last by date) and pairs naturally with the
+  existing `available_only` and date filters.
+
+**Consequences:**
+- The digest assembler is now an orchestrator: it triggers
+  `generate_for_user`, reads persisted recs, and ranks events by
+  score with a date tiebreak. The cold-start path (no recs) falls
+  back to chronological order with a "connect Spotify or follow
+  artists" intro.
+- `events_repo.list_events` accepts `sort` and `user_id` kwargs. When
+  `sort="for_you"` and `user_id` is supplied, it LEFT JOINs
+  `recommendations` on `(user_id, event_id)` and orders
+  `Recommendation.score DESC NULLS LAST, Event.starts_at ASC`.
+  Anonymous callers requesting `for_you` silently degrade to date
+  order so cached/shared URLs keep working.
+- A new helper `try_get_current_user()` does best-effort token
+  validation for routes that work signed-in or anonymous. Failure
+  modes (missing header, bad signature, deactivated row) all degrade
+  to `None` rather than 401.
+- An "Advanced filters" set landed alongside the new sort:
+  `day_of_week`, `time_of_day` (early/evening/late buckets in ET),
+  `has_image`, `has_price`, `followed_venues_only`,
+  `followed_artists_only`. The follow-based toggles intersect with
+  any explicitly-passed venues/artists so the AND semantics are
+  obvious.
+- Match-reason dedupe in the digest is non-trivial: when both
+  `ArtistMatchScorer` and `FollowedArtistScorer` fire on the same
+  artist, only the artist-match chip surfaces ("You listen to X"
+  beats "You follow X"). When `FollowedVenueScorer` and
+  `VenueAffinityScorer` both match the same venue, the explicit-
+  follow chip wins ("You follow X" beats "You've saved shows at X").
+
 ---
 
 ## Deferred Decisions

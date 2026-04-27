@@ -157,6 +157,102 @@ def test_list_events_bool_flags_default_to_false(
     assert captured["artist_search"] is None
 
 
+def test_list_events_default_sort_is_none_and_user_id_unset(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without ``?sort`` or auth, the route forwards ``sort=None`` and no user_id."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = client.get("/api/v1/events")
+    assert resp.status_code == 200
+    assert captured["sort"] is None
+    assert captured["user_id"] is None
+
+
+def test_list_events_for_you_anonymous_passes_sort_without_user_id(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anonymous ``?sort=for_you`` reaches the service with user_id=None."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = client.get("/api/v1/events?sort=for_you")
+    assert resp.status_code == 200
+    assert captured["sort"] == "for_you"
+    assert captured["user_id"] is None
+
+
+def test_list_events_for_you_authed_resolves_user_id(
+    authed_client: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A valid bearer token + ``?sort=for_you`` forwards the caller's user_id."""
+    auth_client, user, headers = authed_client
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = auth_client.get("/api/v1/events?sort=for_you", headers=headers())
+    assert resp.status_code == 200
+    assert captured["sort"] == "for_you"
+    assert captured["user_id"] == user.id
+
+
+def test_list_events_advanced_query_params_round_trip(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """day_of_week, time_of_day, has_image, has_price reach the service typed."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = client.get(
+        "/api/v1/events"
+        "?day_of_week=0&day_of_week=6"
+        "&time_of_day=evening&time_of_day=late"
+        "&has_image=true&has_price=1"
+    )
+    assert resp.status_code == 200
+    assert captured["day_of_week"] == [0, 6]
+    assert captured["time_of_day"] == ["evening", "late"]
+    assert captured["has_image"] is True
+    assert captured["has_price"] is True
+
+
+def test_list_events_followed_only_resolves_user_when_authed(
+    authed_client: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``followed_venues_only`` triggers user lookup so the filter can apply."""
+    auth_client, user, headers = authed_client
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = auth_client.get(
+        "/api/v1/events?followed_venues_only=true", headers=headers()
+    )
+    assert resp.status_code == 200
+    assert captured["followed_venues_only"] is True
+    assert captured["user_id"] == user.id
+
+
 def test_list_events_surfaces_validation_error(
     client: FlaskClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

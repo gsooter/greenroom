@@ -242,6 +242,173 @@ def test_list_events_forwards_new_filters_through(
     assert captured["available_only"] is True
 
 
+def test_list_events_rejects_unknown_sort() -> None:
+    """A bogus ``sort`` value short-circuits with a ValidationError."""
+    with pytest.raises(ValidationError):
+        events_service.list_events(MagicMock(), sort="random")
+
+
+def test_list_events_for_you_with_user_id_forwards_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``sort='for_you'`` + ``user_id`` reaches the repo unchanged."""
+    captured: dict[str, Any] = {}
+    user_id = uuid.uuid4()
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), sort="for_you", user_id=user_id)
+    assert captured["sort"] == "for_you"
+    assert captured["user_id"] == user_id
+
+
+def test_list_events_rejects_invalid_day_of_week() -> None:
+    """An out-of-range day_of_week value short-circuits with ValidationError."""
+    with pytest.raises(ValidationError):
+        events_service.list_events(MagicMock(), day_of_week=[7])
+
+
+def test_list_events_rejects_invalid_time_of_day() -> None:
+    """An unknown time_of_day bucket raises ValidationError."""
+    with pytest.raises(ValidationError):
+        events_service.list_events(MagicMock(), time_of_day=["midnight"])
+
+
+def test_list_events_advanced_filters_round_trip_to_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """day_of_week, time_of_day, has_image, has_price reach the repo unchanged."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(
+        MagicMock(),
+        day_of_week=[5, 6],
+        time_of_day=["evening", "late"],
+        has_image=True,
+        has_price=True,
+    )
+    assert captured["day_of_week"] == [5, 6]
+    assert captured["time_of_day"] == ["evening", "late"]
+    assert captured["has_image"] is True
+    assert captured["has_price"] is True
+
+
+def test_list_events_followed_venues_only_uses_user_follows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """followed_venues_only swaps the venue_ids filter for the user's follows."""
+    captured: dict[str, Any] = {}
+    user_id = uuid.uuid4()
+    venue_a = uuid.uuid4()
+    venue_b = uuid.uuid4()
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    monkeypatch.setattr(
+        events_service.follows_repo,
+        "list_followed_venue_ids",
+        lambda _s, _uid: {venue_a, venue_b},
+    )
+    events_service.list_events(MagicMock(), followed_venues_only=True, user_id=user_id)
+    assert set(captured["venue_ids"]) == {venue_a, venue_b}
+
+
+def test_list_events_followed_venues_only_intersects_with_explicit_venues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``venue_ids`` is intersected with the user's follows."""
+    captured: dict[str, Any] = {}
+    user_id = uuid.uuid4()
+    followed = uuid.uuid4()
+    other = uuid.uuid4()
+    not_followed = uuid.uuid4()
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    monkeypatch.setattr(
+        events_service.follows_repo,
+        "list_followed_venue_ids",
+        lambda _s, _uid: {followed, other},
+    )
+    events_service.list_events(
+        MagicMock(),
+        followed_venues_only=True,
+        user_id=user_id,
+        venue_ids=[followed, not_followed],
+    )
+    assert captured["venue_ids"] == [followed]
+
+
+def test_list_events_followed_venues_only_anonymous_skips_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a user_id the followed_venues_only toggle drops silently."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), followed_venues_only=True, user_id=None)
+    assert captured["venue_ids"] is None
+
+
+def test_list_events_followed_artists_only_substitutes_spotify_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``followed_artists_only`` supplies the user's followed Spotify IDs."""
+    captured: dict[str, Any] = {}
+    user_id = uuid.uuid4()
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    monkeypatch.setattr(
+        events_service.follows_repo,
+        "list_followed_artist_signals",
+        lambda _s, _uid: {
+            "spotify_ids": {"spot-a": "Artist A", "spot-b": "Artist B"},
+            "names": {},
+            "labels": {},
+        },
+    )
+    events_service.list_events(MagicMock(), followed_artists_only=True, user_id=user_id)
+    assert sorted(captured["spotify_artist_ids"]) == ["spot-a", "spot-b"]
+
+
+def test_list_events_for_you_anonymous_degrades_to_date_sort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anonymous ``sort='for_you'`` is rewritten to ``date`` with no user_id."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), sort="for_you", user_id=None)
+    assert captured["sort"] == "date"
+    assert captured["user_id"] is None
+
+
 def test_serialize_event_includes_venue_and_city() -> None:
     """Full serializer emits nested venue + city blocks."""
     event = _FakeEvent()

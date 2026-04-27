@@ -3,15 +3,23 @@
 
 {% if intro %}{{ intro | striptags }}
 
-{% endif %}{% for show in shows %}* {{ show.headliner }}
-  {{ show.venue }} · {{ show.date_label }}
+{% endif %}{% if shows %}AT A GLANCE
+-----------
+{% for show in shows %}{{ show.date_short }}  {{ show.headliner }}
+            {{ show.venue }} · {{ show.time_short }}
+{% endfor %}
+{% endif %}{% if cta_url %}{{ cta_label or 'See all shows' }}: {{ cta_url }}
+
+{% endif %}{% if shows %}MORE ABOUT EACH SHOW
+--------------------
+{% for show in shows %}* {{ show.headliner }}
+  {{ show.date_short }} · {{ show.time_short }} — {{ show.venue }}
   {{ show.url }}
 
-{% endfor %}{% if cta_url and cta_label %}{{ cta_label }}: {{ cta_url }}
-
-{% endif %}--
-You're receiving this at {{ user_email }} because you signed up for
-Greenroom and turned this notification on.
+{% endfor %}{% endif %}--
+You're receiving this because you signed up for Greenroom and turned
+this notification on.
 
 Unsubscribe: {{ unsubscribe_url }}
-Manage email preferences: {{ manage_url }}
+{% if manage_url %}Manage email preferences: {{ manage_url }}
+{% endif %}

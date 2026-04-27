@@ -164,3 +164,44 @@ def get_current_user() -> User:
     if not isinstance(user, User):
         raise UnauthorizedError(message="No authenticated user on request.")
     return user
+
+
+def try_get_current_user() -> User | None:
+    """Best-effort token check for routes that work signed-in or anonymous.
+
+    Public listings (``/events``, ``/venues``) are anonymous-by-default
+    but read the authenticated user when present so personalized
+    features like ``?sort=for_you`` can opt in without forcing a 401 on
+    the public path. Any failure — missing header, invalid signature,
+    deactivated account — degrades silently to ``None``.
+
+    Returns:
+        The current request's :class:`User` when a valid Knuckles token
+        is attached, otherwise ``None``.
+    """
+    cached = getattr(g, "current_user", None)
+    if isinstance(cached, User):
+        return cached
+    header = request.headers.get("Authorization", "")
+    if not header.lower().startswith("bearer "):
+        return None
+    token = header[len("bearer ") :].strip()
+    if not token:
+        return None
+    try:
+        claims = verify_knuckles_token(token)
+    except Exception:
+        return None
+    sub = claims.get("sub")
+    if not isinstance(sub, str):
+        return None
+    try:
+        user_id = uuid.UUID(sub)
+    except ValueError:
+        return None
+    session = get_db()
+    user = users_repo.get_user_by_id(session, user_id)
+    if user is None or not user.is_active:
+        return None
+    g.current_user = user
+    return user

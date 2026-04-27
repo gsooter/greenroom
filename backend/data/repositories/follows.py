@@ -8,11 +8,13 @@ pre-check round-trip.
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from backend.core.text import normalize_artist_name
 from backend.data.models.artists import Artist
 from backend.data.models.onboarding import FollowedArtist, FollowedVenue
 from backend.data.models.venues import Venue
@@ -76,6 +78,87 @@ def list_followed_artist_ids(session: Session, user_id: uuid.UUID) -> set[uuid.U
     """
     stmt = select(FollowedArtist.artist_id).where(FollowedArtist.user_id == user_id)
     return set(session.execute(stmt).scalars().all())
+
+
+def list_followed_artist_signals(
+    session: Session,
+    user_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Build the signal payload the followed-artist scorer needs.
+
+    Joins :class:`FollowedArtist` to :class:`Artist` once so the scorer
+    can decide id and name matches against ``Event.spotify_artist_ids``
+    and ``Event.artists`` without further lookups.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user_id: UUID of the user.
+
+    Returns:
+        Mapping with three keys:
+
+            * ``spotify_ids`` — ``{spotify_id: display_name}`` for every
+              followed artist whose row carries a ``spotify_id``.
+            * ``names`` — ``{normalized_name: display_name}`` for every
+              followed artist (covers events scraped without Spotify
+              ids and is the only path for non-Spotify-enriched rows).
+            * ``labels`` — ``{artist_id: display_name}`` for the full
+              followed set; useful for downstream filter UI.
+
+        Empty dicts are returned when the user follows no artists.
+    """
+    stmt = (
+        select(Artist.id, Artist.name, Artist.normalized_name, Artist.spotify_id)
+        .join(FollowedArtist, FollowedArtist.artist_id == Artist.id)
+        .where(FollowedArtist.user_id == user_id)
+    )
+    spotify_ids: dict[str, str] = {}
+    names: dict[str, str] = {}
+    labels: dict[uuid.UUID, str] = {}
+    for artist_id, name, normalized, spotify_id in session.execute(stmt).all():
+        if not name:
+            continue
+        labels[artist_id] = name
+        if spotify_id:
+            spotify_ids.setdefault(spotify_id, name)
+        # Prefer the normalized_name column when present, but fall back
+        # to renormalizing on the fly so legacy rows without it still
+        # match. ``normalize_artist_name`` is idempotent.
+        key = normalized or normalize_artist_name(name)
+        if key:
+            names.setdefault(key, name)
+    return {"spotify_ids": spotify_ids, "names": names, "labels": labels}
+
+
+def list_followed_venue_labels(
+    session: Session,
+    user_id: uuid.UUID,
+) -> dict[uuid.UUID, str]:
+    """Return ``{venue_id: display_name}`` for every venue the user follows.
+
+    The followed-venue scorer reads this map directly. The venues
+    repository already exposes a paginated list helper; this is the
+    cheaper variant when the caller only needs the lookup table.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user_id: UUID of the user.
+
+    Returns:
+        Mapping of ``venue_id`` → display name. Empty when the user
+        follows no venues.
+    """
+    stmt = (
+        select(Venue.id, Venue.name)
+        .join(FollowedVenue, FollowedVenue.venue_id == Venue.id)
+        .where(FollowedVenue.user_id == user_id)
+    )
+    result: dict[uuid.UUID, str] = {}
+    for venue_id, venue_name in session.execute(stmt).all():
+        if not venue_name:
+            continue
+        result[venue_id] = venue_name
+    return result
 
 
 def list_followed_artists(

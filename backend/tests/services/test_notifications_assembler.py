@@ -4,18 +4,21 @@ The assembler turns a (user, prefs) pair into the body of a single
 weekly-digest email: a ranked list of show cards plus the heading,
 preheader, and CTA link the renderer interpolates into the template.
 
-Tests pin two pieces of behaviour that matter end-to-end:
+Tests pin three pieces of behaviour that matter end-to-end:
 
 * Shape — the returned :class:`WeeklyDigest` dataclass exposes the
   exact keys :func:`render_email` will look up in the template
   context. A renamed key here silently breaks the template.
-* Ranking — events whose ``spotify_artist_ids`` overlap with the
-  user's tracked artist IDs sort ahead of unmatched events.
-  Otherwise the digest just lists "next week in DC" by date and
-  the personalised value of the email collapses.
+* Ranking — events with a higher persisted recommendation score sort
+  ahead of lower-scoring (or unscored) events. Otherwise the digest
+  collapses to "next week in DC" by date and the personalised value of
+  the email goes away.
+* Cold-start — a user with no recs still gets a chronological digest
+  with a "connect Spotify or follow some artists" nudge intro.
 
-These tests use MagicMock-backed sessions and stub the events repo;
-real DB integration is covered by the repo-level tests.
+These tests use MagicMock-backed sessions and stub the events repo and
+recommendation engine; real DB integration is covered by repo-level
+tests.
 """
 
 from __future__ import annotations
@@ -38,12 +41,13 @@ def _event(
     venue_name: str = "9:30 Club",
     image_url: str | None = "https://example.com/img.jpg",
     slug: str | None = None,
+    event_id: uuid.UUID | None = None,
 ) -> MagicMock:
     """Build a MagicMock Event with the columns the assembler reads."""
     venue = MagicMock(name="Venue")
     venue.name = venue_name
     event = MagicMock(name="Event")
-    event.id = uuid.uuid4()
+    event.id = event_id or uuid.uuid4()
     event.title = title
     event.slug = slug or f"slug-{uuid.uuid4().hex[:6]}"
     event.starts_at = starts_at
@@ -58,8 +62,6 @@ def _event(
 def _user(
     *,
     city_id: uuid.UUID | None = None,
-    spotify_top: list[str] | None = None,
-    spotify_recent: list[str] | None = None,
     display_name: str = "Riley",
     email: str = "riley@example.test",
 ) -> MagicMock:
@@ -68,9 +70,38 @@ def _user(
     user.email = email
     user.display_name = display_name
     user.city_id = city_id or uuid.uuid4()
-    user.spotify_top_artist_ids = spotify_top
-    user.spotify_recent_artist_ids = spotify_recent
     return user
+
+
+def _stub_recs(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    score_by_event_id: dict[uuid.UUID, float] | None = None,
+) -> None:
+    """Stub the rec engine + users_repo.list_recommendations.
+
+    Args:
+        monkeypatch: pytest fixture.
+        score_by_event_id: Map from event_id to score for any
+            recommendation rows we want the assembler to see. Pass
+            ``None`` for the cold-start path (no rows returned).
+    """
+    monkeypatch.setattr(
+        notifications.rec_engine, "generate_for_user", lambda *_a, **_k: 0
+    )
+
+    rows = []
+    for event_id, score in (score_by_event_id or {}).items():
+        rec = MagicMock(name="Recommendation")
+        rec.event_id = event_id
+        rec.score = score
+        rows.append(rec)
+
+    monkeypatch.setattr(
+        notifications.users_repo,
+        "list_recommendations",
+        lambda *_a, **_k: (rows, len(rows)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +117,7 @@ def test_assembler_returns_none_when_no_upcoming_events(
     monkeypatch.setattr(
         notifications.events_repo, "list_events", lambda *_a, **_k: ([], 0)
     )
+    _stub_recs(monkeypatch)
 
     digest = notifications.assemble_weekly_digest(
         MagicMock(), user, prefs=MagicMock(timezone="America/New_York")
@@ -99,15 +131,11 @@ def test_assembler_returns_dataclass_with_template_keys(
     """The returned digest exposes shows, heading, intro, cta_url."""
     user = _user(display_name="Riley")
     now = datetime(2026, 4, 26, 12, 0, tzinfo=UTC)
-    events = [
-        _event(
-            title="Phoebe Bridgers",
-            starts_at=now + timedelta(days=2),
-        ),
-    ]
+    event = _event(title="Phoebe Bridgers", starts_at=now + timedelta(days=2))
     monkeypatch.setattr(
-        notifications.events_repo, "list_events", lambda *_a, **_k: (events, 1)
+        notifications.events_repo, "list_events", lambda *_a, **_k: ([event], 1)
     )
+    _stub_recs(monkeypatch, score_by_event_id={event.id: 0.9})
 
     digest = notifications.assemble_weekly_digest(
         MagicMock(),
@@ -129,16 +157,15 @@ def test_show_card_carries_url_built_from_slug(
 ) -> None:
     """Each show card resolves to the public /events/<slug> URL."""
     user = _user()
-    events = [
-        _event(
-            title="Show A",
-            starts_at=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
-            slug="show-a-slug",
-        ),
-    ]
-    monkeypatch.setattr(
-        notifications.events_repo, "list_events", lambda *_a, **_k: (events, 1)
+    event = _event(
+        title="Show A",
+        starts_at=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+        slug="show-a-slug",
     )
+    monkeypatch.setattr(
+        notifications.events_repo, "list_events", lambda *_a, **_k: ([event], 1)
+    )
+    _stub_recs(monkeypatch, score_by_event_id={event.id: 0.5})
 
     digest = notifications.assemble_weekly_digest(
         MagicMock(),
@@ -157,27 +184,20 @@ def test_show_card_carries_url_built_from_slug(
 # ---------------------------------------------------------------------------
 
 
-def test_spotify_matched_events_rank_above_unmatched(
+def test_recommended_events_rank_above_unscored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A matched event on Saturday beats an unmatched event on Tuesday."""
-    user = _user(spotify_top=["sp_artist_X"])
+    """A recommended event later in the week beats an unscored sooner one."""
+    user = _user()
     now = datetime(2026, 4, 26, 12, 0, tzinfo=UTC)
-    matched = _event(
-        title="Matched",
-        starts_at=now + timedelta(days=5),  # Saturday
-        spotify_artist_ids=["sp_artist_X"],
-    )
-    unmatched = _event(
-        title="Unmatched",
-        starts_at=now + timedelta(days=1),  # Tuesday
-        spotify_artist_ids=["sp_artist_Y"],
-    )
+    matched = _event(title="Matched", starts_at=now + timedelta(days=5))
+    unmatched = _event(title="Unmatched", starts_at=now + timedelta(days=1))
     monkeypatch.setattr(
         notifications.events_repo,
         "list_events",
         lambda *_a, **_k: ([unmatched, matched], 2),
     )
+    _stub_recs(monkeypatch, score_by_event_id={matched.id: 0.9})
 
     digest = notifications.assemble_weekly_digest(
         MagicMock(),
@@ -190,11 +210,37 @@ def test_spotify_matched_events_rank_above_unmatched(
     assert titles == ["Matched", "Unmatched"]
 
 
-def test_unmatched_events_sort_by_date_ascending(
+def test_higher_scoring_recs_rank_above_lower_scoring(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without Spotify matches, the assembler sorts by date."""
-    user = _user(spotify_top=None)
+    """Two recommended events sort by score descending."""
+    user = _user()
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=UTC)
+    strong = _event(title="Strong", starts_at=now + timedelta(days=5))
+    weak = _event(title="Weak", starts_at=now + timedelta(days=1))
+    monkeypatch.setattr(
+        notifications.events_repo,
+        "list_events",
+        lambda *_a, **_k: ([weak, strong], 2),
+    )
+    _stub_recs(monkeypatch, score_by_event_id={strong.id: 0.95, weak.id: 0.4})
+
+    digest = notifications.assemble_weekly_digest(
+        MagicMock(),
+        user,
+        prefs=MagicMock(timezone="America/New_York"),
+        now=now,
+    )
+    assert digest is not None
+    titles = [c["headliner"] for c in digest.template_context()["shows"]]
+    assert titles == ["Strong", "Weak"]
+
+
+def test_unscored_events_sort_by_date_ascending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cold-start: no recs → assembler falls back to chronological order."""
+    user = _user()
     now = datetime(2026, 4, 26, 12, 0, tzinfo=UTC)
     later = _event(title="Later", starts_at=now + timedelta(days=4))
     sooner = _event(title="Sooner", starts_at=now + timedelta(days=1))
@@ -203,6 +249,7 @@ def test_unmatched_events_sort_by_date_ascending(
         "list_events",
         lambda *_a, **_k: ([later, sooner], 2),
     )
+    _stub_recs(monkeypatch)
 
     digest = notifications.assemble_weekly_digest(
         MagicMock(),
@@ -213,6 +260,28 @@ def test_unmatched_events_sort_by_date_ascending(
     assert digest is not None
     titles = [c["headliner"] for c in digest.template_context()["shows"]]
     assert titles == ["Sooner", "Later"]
+
+
+def test_cold_start_intro_nudges_user_to_personalize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without recs, the intro guides the user toward Spotify / follows."""
+    user = _user(display_name="Riley")
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=UTC)
+    event = _event(title="Some Show", starts_at=now + timedelta(days=2))
+    monkeypatch.setattr(
+        notifications.events_repo, "list_events", lambda *_a, **_k: ([event], 1)
+    )
+    _stub_recs(monkeypatch)
+
+    digest = notifications.assemble_weekly_digest(
+        MagicMock(),
+        user,
+        prefs=MagicMock(timezone="America/New_York"),
+        now=now,
+    )
+    assert digest is not None
+    assert "Connect Spotify" in digest.intro or "follow" in digest.intro.lower()
 
 
 def test_assembler_caps_show_count(
@@ -228,6 +297,7 @@ def test_assembler_caps_show_count(
     monkeypatch.setattr(
         notifications.events_repo, "list_events", lambda *_a, **_k: (events, 20)
     )
+    _stub_recs(monkeypatch)
 
     digest = notifications.assemble_weekly_digest(
         MagicMock(),
@@ -252,6 +322,7 @@ def test_assembler_passes_users_city_and_week_window_to_repo(
         return ([], 0)
 
     monkeypatch.setattr(notifications.events_repo, "list_events", fake_list)
+    _stub_recs(monkeypatch)
     notifications.assemble_weekly_digest(
         MagicMock(),
         user,
