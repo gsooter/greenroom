@@ -612,6 +612,13 @@ KNUCKLES_CLIENT_SECRET
 SPOTIFY_CLIENT_ID
 SPOTIFY_CLIENT_SECRET
 SPOTIFY_REDIRECT_URI
+SPOTIFY_BETA_EMAILS           # Comma-separated allowlist of email addresses
+                              # approved for Spotify's dev-mode beta. The
+                              # Spotify app is capped at 25 OAuth users; only
+                              # listed addresses see a working Connect button
+                              # on /settings — everyone else sees a disabled
+                              # "Limited access" card. Whitespace and case
+                              # are ignored.
 
 # Tidal (music-service connect — Phase 5)
 TIDAL_CLIENT_ID
@@ -624,6 +631,13 @@ APPLE_MUSIC_KEY_ID
 APPLE_MUSIC_PRIVATE_KEY           # PEM-encoded .p8 contents (preferred)
 APPLE_MUSIC_PRIVATE_KEY_PATH      # dev convenience, loads from disk
 APPLE_MUSIC_BUNDLE_ID
+
+# Apple Maps (MapKit JS + Snapshot + Maps Server API)
+# Prefix is APPLE_MAPKIT_ — not APPLE_MAPS_. Do not create aliases.
+APPLE_MAPKIT_TEAM_ID
+APPLE_MAPKIT_KEY_ID
+APPLE_MAPKIT_PRIVATE_KEY          # PEM-encoded .p8 contents (preferred)
+APPLE_MAPKIT_PRIVATE_KEY_PATH     # dev convenience, loads from disk
 
 # Database
 DATABASE_URL
@@ -648,18 +662,36 @@ SEATGEEK_CLIENT_SECRET
 # Admin
 ADMIN_SECRET_KEY              # For /api/v1/admin/* routes
 
-# Alerting
-SLACK_WEBHOOK_URL             # Scraper failure alerts
+# Alerting — three Slack channels, one webhook each.
+# Categories without their own webhook fall back to the ops URL,
+# so a single-webhook deployment still receives every alert.
+SLACK_WEBHOOK_OPS_URL         # Ops channel: scraper failures, validator alerts,
+                              # watchdogs, sustained outages, fleet failures, and
+                              # the admin "test alert" button. Universal fallback.
+SLACK_WEBHOOK_DIGEST_URL      # Daily scraper-fleet digest channel.
+SLACK_WEBHOOK_FEEDBACK_URL    # User feedback submissions channel.
 ALERT_EMAIL                   # Scraper failure fallback email
 
 # PostHog
 POSTHOG_API_KEY
 POSTHOG_HOST
 
+# Sentry — error reporting for the Flask app and Celery workers.
+# Empty in dev: when SENTRY_DSN is unset the SDK is never initialized
+# and reporting is a no-op, so contributors don't need a Sentry account
+# to run the app.
+SENTRY_DSN
+SENTRY_ENVIRONMENT            # production | staging | development (default)
+SENTRY_TRACES_SAMPLE_RATE     # 0.0–1.0; default 0.0 (errors only)
+
 # Frontend
 NEXT_PUBLIC_API_URL
 NEXT_PUBLIC_BASE_URL
 NEXT_PUBLIC_POSTHOG_KEY
+NEXT_PUBLIC_SENTRY_DSN              # Empty in dev disables the SDK entirely
+NEXT_PUBLIC_SENTRY_ENVIRONMENT      # production | staging | development
+SENTRY_ORG                          # Used by withSentryConfig at build time
+SENTRY_PROJECT                      # Used by withSentryConfig at build time
 ```
 
 ---

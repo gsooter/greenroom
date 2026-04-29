@@ -257,3 +257,46 @@ export function useRequireAuth(): AuthState {
 
   return auth;
 }
+
+/**
+ * Client hook: gate a page on both auth and completed onboarding.
+ *
+ * Behaves like ``useRequireAuth`` for unauthenticated visitors. Once
+ * the session is in hand, fetches /me/onboarding once and redirects
+ * to /welcome when the user hasn't finished — and hasn't explicitly
+ * skipped — the four-step flow. Existing users who finished before
+ * the flow shipped get their state seeded as ``completed`` server-side,
+ * so this only catches accounts that genuinely never went through.
+ *
+ * The fetch is fire-and-forget: if the call fails (e.g. transient
+ * network), we leave the visitor on the page rather than bouncing
+ * them to /welcome on a stale assumption.
+ */
+export function useRequireOnboarded(): AuthState {
+  const auth = useRequireAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (auth.isLoading || !auth.isAuthenticated || !auth.token) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { getOnboardingState } = await import("@/lib/api/onboarding");
+        const state = await getOnboardingState(auth.token!);
+        if (cancelled) return;
+        if (!state.completed && state.skipped_entirely_at === null) {
+          router.replace("/welcome");
+        }
+      } catch {
+        /* best-effort — leave the user on the page if the call fails */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.isAuthenticated, auth.isLoading, auth.token, router]);
+
+  return auth;
+}

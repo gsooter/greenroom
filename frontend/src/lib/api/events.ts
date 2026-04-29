@@ -14,6 +14,7 @@ import type {
   EventSummary,
   EventType,
   Paginated,
+  PricingState,
   Region,
 } from "@/types";
 
@@ -24,6 +25,11 @@ export interface ListEventsParams {
   dateFrom?: string;
   dateTo?: string;
   genres?: string[];
+  artistIds?: string[];
+  artistSearch?: string;
+  priceMax?: number;
+  freeOnly?: boolean;
+  availableOnly?: boolean;
   eventType?: EventType;
   status?: EventStatus;
   page?: number;
@@ -41,6 +47,11 @@ export async function listEvents(
     dateFrom,
     dateTo,
     genres,
+    artistIds,
+    artistSearch,
+    priceMax,
+    freeOnly,
+    availableOnly,
     eventType,
     status,
     page,
@@ -56,6 +67,11 @@ export async function listEvents(
       date_from: dateFrom,
       date_to: dateTo,
       genre: genres,
+      artist_id: artistIds,
+      artist_search: artistSearch,
+      price_max: priceMax,
+      free_only: freeOnly ? "true" : undefined,
+      available_only: availableOnly ? "true" : undefined,
       event_type: eventType,
       status,
       page,
@@ -74,4 +90,37 @@ export async function getEvent(
     { revalidateSeconds },
   );
   return res.data;
+}
+
+/**
+ * Fetch the latest persisted pricing state for an event without
+ * triggering an upstream sweep. Used by the client-side refresh
+ * panel to rehydrate after a manual refresh, and by anywhere that
+ * needs the panel without re-fetching the whole event payload.
+ */
+export async function getEventPricing(
+  idOrSlug: string,
+  revalidateSeconds?: number,
+): Promise<PricingState> {
+  const res = await fetchJson<Envelope<PricingState>>(
+    `/api/v1/events/${encodeURIComponent(idOrSlug)}/pricing`,
+    { revalidateSeconds },
+  );
+  return res.data;
+}
+
+/**
+ * Fetch the most recent pricing-sweep timestamp across all upcoming
+ * events. Used by the listing-page freshness banner so visitors see
+ * one global "Pricing updated X ago" line rather than per-event noise.
+ * Returns `null` when no event has been swept yet.
+ */
+export async function getPricingFreshness(
+  revalidateSeconds?: number,
+): Promise<string | null> {
+  const res = await fetchJson<Envelope<{ refreshed_at: string | null }>>(
+    "/api/v1/pricing/freshness",
+    { revalidateSeconds },
+  );
+  return res.data.refreshed_at;
 }

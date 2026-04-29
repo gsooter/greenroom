@@ -227,7 +227,7 @@ painful to retrofit if not built in from the start.
 ### 010 — SeatGeek API for Ticket Pricing (Phase 1)
 
 **Date:** 2026-04-16
-**Status:** Decided
+**Status:** Superseded by Decision 047
 
 **Decision:** SeatGeek API as primary ticket pricing source. StubHub as secondary.
 TicketsData aggregator deferred until user volume justifies the cost.
@@ -240,6 +240,13 @@ table so price history and trends are available from day one.
 **Upgrade path:** TicketsData provides a single API covering Ticketmaster,
 StubHub, SeatGeek, VividSeats, and more. Migrate when cross-platform price
 comparison becomes a meaningful feature.
+
+**Why superseded:** SeatGeek-only coverage left every Tier B venue
+(DICE, the venue-direct ticketers, Eventbrite) without any pricing at
+all, and a single-source price was misleading on shows where the
+secondary market diverged sharply from the primary. Decision 047
+replaces this with a provider-registry that fans out across SeatGeek,
+Ticketmaster, TickPick, and the existing scrapers.
 
 ---
 
@@ -1321,6 +1328,1319 @@ deploying image run its own migrations.
   so ``${PORT:-5001}`` expands as expected and the Alembic config path
   resolves against `/app/backend`. Keep it shell form if touching this
   line.
+
+---
+
+### 035 — Genre Overlap Is a Scoring Fallback, Not Its Own Scorer
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** The `ArtistMatchScorer` falls back to a genre-overlap
+sub-score when no exact artist match exists, instead of adding a
+separate `GenreMatchScorer` to the engine pipeline. Genre overlap
+contributes at most 0.4 of the scorer's output weight; an exact artist
+hit still dominates the signal.
+
+**Rationale:**
+Keeps every candidate event scoring on one consistent axis from the
+user's perspective ("did Greenroom find someone I listen to?"). A
+dedicated genre scorer would fire for every candidate and dilute the
+recommendations with "some band I've never heard of, but they're also
+indie" — the MVP goal is to surface shows the user would have heard
+about anyway, not to expand taste. Blending inside the existing scorer
+also means the engine's 0.0-1.0 normalization stays intact with no
+weight-tuning across scorers.
+
+**Alternatives considered:**
+- **Standalone `GenreMatchScorer`** — rejected; creates weighting
+  problems between scorers and makes the score breakdown harder to
+  explain to a user. ("We recommended this because genres match" is
+  a weaker reason than "we recommended this because you listen to
+  the opener.")
+- **No fallback at all** — rejected; users with small Spotify top-artist
+  sets (freshly-linked accounts or casual listeners) saw empty For You
+  pages every week.
+
+**Consequences:**
+- The score breakdown stored in `recommendations.score_breakdown` now
+  has an optional `genre_overlap_contribution` field; existing
+  breakdowns without it are still valid.
+- Future scorers that want to use genre data should read
+  `ArtistMatchScorer.genre_cache` rather than re-fetching.
+
+---
+
+### 036 — Venue Comments Use a Ranked Merge of Hot + Recent
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** Venue comment threads render a single chronological list
+ordered by a hot-merge score that blends net votes and recency, rather
+than separate "Top" and "New" tabs. The top slot is reserved for a
+pinned staff comment if one exists.
+
+**Rationale:**
+Reddit-style "Top vs New" tabs don't carry weight on venue pages —
+traffic per venue per day is low enough that "New" is almost always
+empty and "Top" is almost always one comment from 2023. A ranked merge
+surfaces a useful thread immediately without making the user choose a
+sort. The formula is `log(1 + max(0, net_votes)) + recency_decay(age)`,
+which reduces to strict recency when a thread is young and to net-vote
+order once the page has been live for a while.
+
+**Alternatives considered:**
+- **Top / New tabs** — rejected; low per-venue traffic means both tabs
+  look wrong most of the time.
+- **Strict recency only** — rejected; incentivizes spam and buries
+  high-signal comments behind one-liners.
+- **Strict net-vote ranking** — rejected; fresh comments on established
+  venues would never surface.
+
+**Consequences:**
+- Backend repository returns already-ranked rows; the frontend does no
+  client-side re-sort. Vote mutations re-query the server.
+- Hiding a comment (via moderation) drops it from the ranked list but
+  leaves the row in place for audit — callers filter on `hidden_at`.
+- A later "controversial" or "contested" sort would require a second
+  ranking function; none is planned.
+
+---
+
+### 037 — Apple Maps Over Google Maps for Venue Cartography
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** Venue pages render static map snapshots, mint MapKit JS
+tokens, and pull nearby-POI results from Apple's Maps Web APIs. Google
+Maps is used only as a fallback destination for the "Get Directions"
+deep link on non-Apple devices.
+
+**Rationale:**
+Apple's MapKit APIs (MapKit JS + Snapshot + Maps Server API) are free
+for the usage pattern Greenroom has — a few thousand venue-page
+snapshots per day, one MapKit JS instance per active tab. Google Maps
+Platform bills per static-image and per Places-Search request, and the
+venue page's "grab a bite before the show" list would turn into the
+single biggest cost center in the backend within the first month.
+Apple's `searchNearby` results are comparable in quality to Google's
+Places for the DC bar/restaurant density Greenroom cares about.
+
+**Alternatives considered:**
+- **Google Maps Platform** — rejected on cost; a rough model put the
+  POI-search line alone at $200-$400/month at launch traffic, with no
+  caching ceiling.
+- **Mapbox + Overture / Foursquare POI feeds** — rejected; the stack
+  would be cheaper than Google but not Apple, and it introduces three
+  vendor relationships where one suffices.
+- **No map at all, just an address link** — rejected; the venue page
+  is a conversion surface for "which show tonight," and the map
+  snapshot measurably lifts click-through to Get Directions in
+  competitor products.
+
+**Consequences:**
+- The backend signs ES256 JWTs for MapKit JS tokens *and* raw ECDSA
+  P-256 signatures (r||s) for Snapshot URLs — they share a key but
+  the signing primitives differ.
+- `fetch_nearby_poi` requires an access-token exchange via
+  `maps-api.apple.com/v1/token`; the access token is cached in Redis
+  for its natural lifetime minus a 60s safety margin.
+- `APPLE_MUSIC_PRIVATE_KEY` and `APPLE_MAPKIT_PRIVATE_KEY` overlap in
+  ownership (the Apple Developer account) but are distinct keys in
+  config. Don't collapse them.
+- The "Get Directions" button uses a UA sniff to route Apple devices
+  to `maps.apple.com` and everyone else to Google. The button is a
+  client component that hydrates into its final href to avoid an SSR
+  hydration mismatch.
+
+---
+
+### 038 — Onboarding "Skip" Marks a Step Complete Without Writing Any Data
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** Every step of the /welcome flow has a "Skip for now"
+affordance. Skipping stamps the step's `*_completed_at` timestamp on
+`user_onboarding_state` but writes none of the step's data. A separate
+`skipped_entirely_at` timestamp is set only when the user skips *every*
+step in one go — that is the sole trigger for the browse-page
+"Finish setup" nudge banner.
+
+**Rationale:**
+The onboarding funnel has to serve two populations simultaneously: new
+signups walking the wizard end-to-end, and users who bailed on a
+previous /welcome attempt. If "skip" left the per-step `completed_at`
+null, the gate in the auth callback (`resolvePostAuthDestination`)
+would re-trap returning users on the same step they skipped earlier,
+which is the opposite of the intent — the skip button is a promise
+that the user will not be re-prompted until they go dig up the nudge
+themselves. Marking each step complete on skip also keeps the progress
+chips meaningful: a completed row with no preferences set is still a
+completed row, and the dashboard can distinguish "genuinely empty"
+from "never onboarded" via `skipped_entirely_at`.
+
+**Alternatives considered:**
+- **Leave completed_at null on skip; track a separate skipped_at
+  column per step.** Rejected — doubles the schema surface and still
+  needs identical "has the user seen this step" logic in two places.
+  The gate only cares whether the user has seen the step, not *how*
+  they got past it.
+- **Treat skip as a write of `{}` (empty genres, zero venues).**
+  Rejected — cannot distinguish "I dislike everything" from "I haven't
+  told you yet," which matters for the recommendation engine's cold-
+  start behavior. Scorers need to know whether to fall back on popular
+  shows or trust the user's explicit negative signal.
+- **Hard-block the user from browsing until they finish.** Rejected —
+  hostile to the "tourist checking what's on tonight in DC" use case,
+  which is a first-class browse experience per the SSR-for-SEO rule.
+
+**Consequences:**
+- The banner cannot be driven off per-step timestamps; it's derived
+  from `skipped_entirely_at` plus `browse_sessions_since_skipped`
+  plus `banner_dismissed_at`. Any one of those being non-null / >=7
+  hides it.
+- Auto-hide fires at 7 browse sessions (`_BANNER_AUTO_HIDE_AFTER_SESSIONS`
+  in `backend/services/onboarding.py`). Sessions are bumped client-side
+  at most once per `sessionStorage` window via the
+  `greenroom.browse_session_bumped` key — route transitions inside the
+  same tab should not count as new sessions.
+- The Spotify/Tidal OAuth round-trip breaks the in-page wizard state,
+  so `MusicServicesStep` stashes `greenroom.welcome_return=music_services`
+  before redirect and the shared callback helper reads it through
+  `consumeWelcomeReturnFlag` (one-shot — read-and-delete). Without that
+  marker, a user who connected Spotify from /welcome would land on
+  /for-you with an un-acknowledged passkey step.
+- Passkey auto-completes when the user signed in via passkey — holding
+  the key is proof the step is already done, so `/login` stamps
+  `passkey_completed_at` on successful passkey auth.
+
+---
+
+### 039 — Genre Catalog Is Canonical on the Backend, Fetched Over HTTP
+
+**Date:** 2026-04-20
+**Status:** Decided
+
+**Decision:** The 12-entry genre catalog lives in `backend/core/genres.py`
+as a `GENRE_SLUGS: frozenset[str]` plus a TypedDict list of labels and
+emojis. The /welcome UI reads it from the public `GET /api/v1/genres`
+endpoint rather than hardcoding the list in the Next.js bundle. The
+`_coerce_genre_list` validator on PATCH /me rejects any slug not in
+the frozenset.
+
+**Rationale:**
+Genres are reference data that shows up in three places: the
+onboarding TasteStep tiles, the event-card filter chips, and the
+recommendation engine's genre-overlap fallback (Decision 035). If the
+list diverges across those three, the engine silently drops matches,
+and the UI displays chips that the API would reject. Single source of
+truth on the backend keeps `PATCH /me` validation, the scorer's genre
+universe, and the wizard tiles in lockstep — adding a genre is a
+single-file change.
+
+**Alternatives considered:**
+- **Hardcode the list in TypeScript.** Rejected — the frontend is a
+  client-side recommendation consumer, not the authority on what
+  counts as a genre. Backend changes would silently desync the UI.
+- **Store genres as a table, seed via migration.** Overkill for 12
+  rows that change maybe once a year, and it introduces a DB
+  round-trip on a page that's already fetching three other state
+  slices. Revisit if the catalog exceeds ~50 entries or becomes
+  user-curatable.
+
+**Consequences:**
+- `listGenres()` does not require auth and is cacheable at the CDN.
+- The scorer in `recommendations/scorers/` imports `GENRE_SLUGS`
+  directly; never hardcode a genre string in a scorer.
+- Renaming a slug is a breaking change — existing `genre_preferences`
+  arrays would point to a now-invalid slug. If the catalog ever needs
+  to rename, write a migration that rewrites stored preferences in
+  the same commit.
+
+---
+
+### 040 — Community Place Recommendations Must Clear Apple Maps Verification
+
+**Date:** 2026-04-22
+**Status:** Decided
+
+**Decision:** Every community recommendation submitted through the map
+form must round-trip through Apple Maps' geocoder via
+`GET /api/v1/maps/places/verify` before it can be saved. The backend
+accepts the recommendation only when Apple returns a candidate whose
+name (or address) clears a 0.80 Jaro-Winkler similarity floor against
+the user-typed query. Recommendations that fail verification are
+rejected with `PLACE_NOT_VERIFIED` (404); nothing is stored.
+
+**Rationale:**
+Community pins are free-text, user-generated content that will be
+shown on a map alongside curated shows. Without a verification gate,
+the path of least resistance for a spammer is typing a business name
+that doesn't exist and getting a blush dot on the map forever. Running
+every submission through Apple's real-world geocoder forces each
+recommendation to correspond to a place that actually exists, at
+coordinates Apple will confirm. The 0.80 similarity floor is what
+filters out cases where Apple cheerfully returns the nearest
+something-similar even when the query is noise. Using Apple as the
+verifier is free for our usage pattern (Decision 037) and means the
+pin's lat/lng is authoritative rather than whatever the client sent.
+
+**Alternatives considered:**
+- **No verification, trust the client's lat/lng.** Rejected — fake
+  pins are the obvious attack and no amount of rate-limiting fixes a
+  drive-by submission of garbage coordinates.
+- **Verify only on display, not on submit.** Rejected — lets bad data
+  into the database and pushes filtering onto every read path instead
+  of the single write path.
+- **Require a venue-slug from our existing venue table.** Rejected —
+  the community pin surface is explicitly for non-venue places
+  ("grab a bite before the show"), so constraining to `venues` would
+  defeat the feature. The Apple Maps catalogue is the right universe.
+
+**Consequences:**
+- The submit-recommendation flow is two hops: frontend calls
+  `/maps/places/verify` first, then submits the verified payload to
+  `POST /api/v1/recommendations`. The service layer re-verifies on
+  the write path so a client can't forge a verified flag.
+- Apple Maps outages (`APPLE_MAPS_UNAVAILABLE`, 503/502) propagate as
+  submission failures rather than silent saves. Acceptable — writes
+  are rare, the alternative is unvetted pins.
+- The similarity floor lives in `backend/services/apple_maps.py` as
+  `_PLACE_VERIFY_SIMILARITY_FLOOR = 0.80`. Treat it as a tuning knob:
+  if false rejections dominate support traffic, loosen it before
+  changing the verification architecture.
+
+---
+
+### 041 — Tonight Map Pins Collapse 12 Genres Into 5 Color Buckets
+
+**Date:** 2026-04-22
+**Status:** Decided
+
+**Decision:** The Tonight map encodes an event's genre on the pin as
+one of 5 color buckets (plus a navy default when nothing matches):
+indie/rock → green, pop/folk → blush, electronic → amber, hip-hop →
+coral, jazz/soul → gold. The bucket table is a frontend-only resource
+in `frontend/src/lib/genre-colors.ts` and is referenced by both the
+filter bar and the pin render path. The canonical 12-slug genre
+catalogue (Decision 039) stays unchanged.
+
+**Rationale:**
+The catalogue optimizes for recommendation signal quality — fine
+slicing of electronic vs. techno vs. house is load-bearing for the
+scorer. The map optimizes for a single glance across the city. At
+12 distinct pin colors, the map becomes a pointillist blur that no
+legend can anchor; at 5 colors, a user can scan and say "the green
+pins are the indie shows tonight." Collapsing on the client keeps the
+decision reversible — if a future phase wants per-slug pins, the
+bucket table is deleted without touching the backend or the scorer.
+
+**Alternatives considered:**
+- **One pin color per canonical genre slug.** Rejected — the legend
+  would be longer than the map is wide, and most DMV nights have
+  fewer than 40 shows total, so the long tail of slugs contributes
+  nothing to the overview.
+- **Push the bucketing into the backend as a `pin_bucket` column.**
+  Rejected — the mapping is presentation-layer metadata, it would
+  bloat every tonight-map payload, and the frontend already imports
+  the bucket table to drive the filter bar's color swatches.
+- **Let the user pick their own color scheme.** Rejected — scope
+  creep for a discovery surface; the point is speed, not
+  customization.
+
+**Consequences:**
+- Adding a canonical genre slug (per Decision 039) should be followed
+  by a decision about which bucket it lands in. A slug without an
+  entry in the bucket table is safe — it falls through to navy — but
+  the filter bar's "Indie / Rock" pill will not catch it until the
+  table is updated.
+- The filter bar (`FilterBar.tsx`) is the UI surface that names the
+  buckets. Changing a bucket's display label is a one-file edit there;
+  changing the slug-to-bucket mapping is a one-file edit in
+  `genre-colors.ts`.
+- Pin color tokens (`--color-amber`, `--color-coral`, `--color-gold`)
+  are declared in `globals.css` alongside the existing palette. Do
+  not introduce new pin colors without a bucket or the legend drifts.
+
+---
+
+### 042 — Shows Near Me Filters Distance In-Process, Not in PostgreSQL
+
+**Date:** 2026-04-22
+**Status:** Decided
+
+**Decision:** `GET /api/v1/maps/near-me` fetches the day-windowed
+event list from `events_repo.list_events` with a generous `per_page`,
+then filters by great-circle distance in Python using a haversine
+helper (`_haversine_km` in `backend/services/events.py`). The
+repository does not know about coordinates; the database schema does
+not carry a geometry column.
+
+**Rationale:**
+PostGIS would be the textbook answer, but the DMV venue set is
+under 100 rows, the query is already bounded by a day/week window
+filter, and the post-fetch Python loop finishes in well under a
+millisecond. Standing up PostGIS — or even adding a raw lat/lng
+index and a `ST_DWithin` bypass — would add a migration, a build-time
+system dependency, and a cross-cutting repository concern for a
+problem the CPU solves instantly. Keeping the filter at the service
+layer also leaves every other event query path untouched.
+
+**Alternatives considered:**
+- **Add PostGIS and a `ST_DWithin` clause on `venues.geom`.**
+  Rejected now, revisit at the scale threshold below. The migration
+  is non-reversible without data loss once other callers start
+  relying on geometry columns.
+- **Bounding-box prefilter in SQL, haversine in Python.** Rejected —
+  at DMV volume the SQL prefilter saves zero wall-clock time and
+  doubles the number of places the distance calculation logic lives.
+- **Cache the haversine-filtered results per (lat, lng, radius, window).**
+  Rejected — too many free variables for the hit rate to be
+  meaningful; the raw query is already fast enough.
+
+**Consequences:**
+- Revisit this decision when any of the following are true: the
+  venue set grows past ~1,000 rows, a second distance-filtered route
+  ships, or the `per_page=200` ceiling on `list_events` starts
+  truncating day-windowed results. At that point, PostGIS with a
+  gist index on `venues.geom` is the migration.
+- The service caps `limit` to 100 and the route clamps `radius_km`
+  to `[0.5, 100]` so a pathological request can't force the repo to
+  materialize the full events table. These are the load-bearing
+  bounds; don't remove them without a PostGIS backing.
+- The returned envelope carries `distance_km` on every row. This is
+  computed in the same loop that filters, so the sort is free. Do
+  not reintroduce a separate distance fetch on the frontend.
+
+---
+
+### 043 — Dice.fm Scraper Uses JSON-LD, Not CSS Selectors
+
+**Date:** 2026-04-24
+**Status:** Decided
+
+**Decision:** `DiceScraper` (`backend/scraper/platforms/dice.py`)
+parses the `schema.org` JSON-LD `Place.event` array that dice.fm
+embeds in every venue page's `<script type="application/ld+json">`.
+The scraper falls back to the page's `__NEXT_DATA__` bootstrap JSON
+when JSON-LD carries no events, and raises `DiceScraperError` only
+when both sources are absent or empty. One scraper class serves
+every Dice-ticketed DMV venue (DC9, BERHTA, Songbyrd, Byrdland);
+each is registered in `scraper/config/venues.py` with its
+`dice_venue_url` in `platform_config`.
+
+**Rationale:**
+Dice's venue pages are a Next.js SPA. CSS selectors over the
+rendered DOM are both brittle (class names are hash-suffixed and
+change on every deploy) and require a headless browser to execute,
+which triples infra cost and adds flake. JSON-LD, by contrast, is
+contractual output Dice maintains for Google rich-results parity:
+stable field names (`startDate`, `offers`, `performer`, `url`),
+machine-readable timestamps with timezone offsets, and a single
+`Place.event` array covering every upcoming show at the venue.
+`__NEXT_DATA__` exists as a defensive fallback — occasionally
+Dice's server renders the page before hydration populates the
+JSON-LD event list, in which case the bootstrap payload at
+`props.pageProps.profile.sections[*].events` still carries the
+full lineup (with prices in cents under `price.amount`).
+
+**Alternatives considered:**
+- **Playwright/Selenium headless browser.** Rejected — adds a
+  Chromium dependency and a multi-second render budget per venue
+  for data we can pull out of the initial HTML response.
+- **Official Dice partner API.** No such public API exists.
+  Reaching out for partnership would delay launch by weeks for a
+  worse contract than the public JSON-LD Dice already maintains.
+- **Scrape `__NEXT_DATA__` as primary source.** Rejected — it is
+  a private implementation detail and its shape has shifted in the
+  past (nested under different section keys). JSON-LD's schema.org
+  contract is more stable.
+- **CSS selectors over server-rendered HTML.** Rejected — Dice's
+  event list hydrates client-side; there is no pre-hydration DOM
+  to select against without a headless browser.
+
+**Consequences:**
+- Adding a new Dice-ticketed venue is one config entry plus a
+  `llms.txt` line — no new scraper code.
+- If Dice ever removes the JSON-LD block, `_parse_next_data()`
+  keeps the fleet alive for at least one deploy cycle while we
+  rewrite. The validator's zero-result alert (`backend/scraper/
+  validator.py`) will fire if both sources disappear.
+- The scraper enforces a 2 s inter-request delay and retries once
+  on `requests.ConnectionError` with a 5 s backoff. These are
+  tuned against dice.fm's observed rate-limit behaviour; do not
+  lower them without testing against production traffic.
+- Dice event URLs are the `source_url`, and (when offers carry no
+  explicit URL) the `ticket_url` as well. The event URL is also
+  stamped into `RawEvent.raw_data["id"]` so the runner's idempotent
+  upsert key is stable across scrapes.
+- Tests (`backend/tests/scraper/test_dice.py`) mock every HTTP call
+  via the `responses` library and monkeypatch `time.sleep`/
+  `time.monotonic`, so the suite never touches dice.fm and the
+  rate-limit guard can be exercised in microseconds.
+
+---
+
+### 044 — Apple Music Listening Signals: Library + Recently Played + Heavy Rotation
+
+**Date:** 2026-04-24
+**Status:** Decided
+
+**Decision:** `backend/services/apple_music.py::sync_top_artists` pulls
+three Apple Music endpoints on every sync and merges them into
+`users.apple_top_artists`:
+
+1. `GET /v1/me/library/artists` — the breadth signal (library).
+2. `GET /v1/me/recent/played/tracks` — the recency signal, flattened
+   to unique artists by `artistName`.
+3. `GET /v1/me/history/heavy-rotation` — the dominant-taste signal,
+   albums flattened to unique artists by `artistName` (playlists are
+   skipped — a curator is not a listening signal about a specific
+   artist).
+
+Each merged entry carries a `source` ∈ `{heavy_rotation,
+recently_played, library}` and an `affinity_score` ∈ `{0.9, 0.6, 0.4}`.
+Duplicates across sources collapse by normalized artist name; the
+highest-affinity source wins, genres are unioned, and a real Apple
+library id (`l.*`) is preserved over any synthetic `am:name:*` id from
+the recently-played / heavy-rotation flatteners. The persisted list
+is ordered affinity-descending.
+
+A new Celery task `backend.services.apple_music_tasks
+.sync_user_apple_music_data` mirrors the Spotify task so the sync can
+be re-triggered off-request. It is not wired into the beat schedule —
+Apple Music re-syncs happen on connect today, same as Spotify; the
+task exists so a future nightly or reconnect-triggered refresh is a
+one-line addition.
+
+**Rationale:**
+Before this change the scorer saw only a user's Apple Music *library*,
+which is a breadth signal with no recency. A user who has 400 saved
+artists but actively listens to four of them would get the same
+treatment as someone who saves only the things they play — the scorer
+couldn't tell a dead entry from a heavy rotation. Adding recently-played
+and heavy-rotation brings the Apple Music signal to parity with
+Spotify's `top + recently-played` pair. Heavy rotation in particular
+is Apple's *own* "most played" bucket — a stronger signal than anything
+Spotify surfaces without a top-artists pull.
+
+**Alternatives considered:**
+
+- **Create a `user_artist_affinity` table keyed by
+  `(user_id, artist_name, source)` and retire the per-provider JSONB
+  columns.** This is cleaner long-term and what the sprint prompt
+  originally described. Rejected for this change because (1) it
+  forces a cross-cutting refactor of `ArtistMatchScorer`, `Spotify
+  sync_top_artists`, `Tidal sync_top_artists`, and every repository
+  that reads the existing caches; (2) asymmetric introduction — only
+  Apple Music on the new table, Spotify/Tidal on the old columns —
+  would be worse than either endpoint. Per-entry `source` /
+  `affinity_score` fields inside the existing JSONB are
+  forward-compatible: the future affinity table is a migration that
+  reads these fields out of every provider's JSONB in one shot. When
+  that migration ships, this decision updates to Superseded.
+- **Hydrate the library-artist list with catalog genres via
+  `/v1/catalog/{storefront}/artists/{ids}`.** Deferred. Heavy-rotation
+  and recently-played payloads already carry `genreNames`, which
+  backfills most library entries via the merge-and-union step. A
+  dedicated genre-enrichment pass can land later if gaps show up in
+  the genre-overlap tier of the scorer.
+- **Skip heavy rotation and rely on recently-played alone.** Rejected.
+  Heavy rotation is specifically the signal a listener would label
+  "this is what I listen to"; recently-played is noisier (background
+  plays, throwaway listens). Dropping heavy rotation loses the best
+  signal Apple exposes.
+
+**Consequences:**
+
+- `users.apple_top_artists` now contains entries shaped
+  `{id, name, genres, image_url, source, affinity_score}`. Existing
+  rows written by the pre-change sync are still valid — the scorer
+  ignores the new fields and library-only data remains
+  meaningful. A reconnect refreshes any account in-place.
+- A stale Music User Token surfaces a 401/502 from Apple on any of
+  the three endpoints. The library fetch remains load-bearing (its
+  failure still propagates); recently-played and heavy-rotation
+  failures are swallowed and logged so a flaky endpoint does not
+  prevent the other signals from persisting.
+- `PROVIDER_SIGNAL_NOTE.apple_music` in
+  `frontend/src/app/settings/page.tsx` is updated to advertise the
+  expanded signal set.
+- No MusicKit scope changes are needed. Apple Music does not use
+  OAuth scopes — a Music User Token granted at authorize time gates
+  all three endpoints uniformly.
+- No new environment variables. The existing Apple Developer
+  credentials cover every endpoint.
+
+---
+
+### 045 — Venue Coverage Audit Uses Discovery API Event Counts as Ground Truth
+
+**Date:** 2026-04-25
+**Status:** Decided
+
+**Decision:** When auditing `scraper/config/venues.py` for missing or
+broken entries, the only ground truth we trust is the live
+Ticketmaster Discovery API event count for a candidate `venue_id`.
+A scraper-config entry is added or kept only when
+`/discovery/v2/events.json?venueId=<id>&classificationName=Music`
+returns a non-zero `totalElements`, and the address / lat-long
+copied into `seed_dmv.VENUE_METADATA` is the value the Discovery
+API returns for that same id.
+
+**Rationale:** The previous expansion (commit 534b64e) already used
+this approach for the 19 venues it added. The 2026-04-25 audit
+revealed two failure modes the public Ticketmaster website papers
+over:
+
+1. **Wrong umbrella id.** Wolf Trap registered with id
+   `KovZpZAtvJeA` (Wolf Trap, the property) returned 4 upcoming
+   music events. The Filene Center's own id `KovZpZAEetJA` returned
+   52. The website routes both to the same listing page, so a human
+   spot-check would look correct, but the API silos them.
+2. **Silently zero.** Rams Head Live! Baltimore returned 0 upcoming
+   music events (`KovZpZAFk6tA`). Without an API check the scraper
+   would have continued to run nightly against a dead id, and the
+   validator only flags scrapers whose count drops below 40 % of
+   their *historical* mean — a venue that has *always* been zero
+   never trips it.
+
+Pinning the audit to the API also lets us mechanically reject
+look-alike ids (e.g. "City Winery - DC" and "City Winery
+Washington D.C." both exist in the venue table; both return 0
+events because the venue ticketed off-platform). We don't add
+either.
+
+**Alternatives considered:**
+
+- **Trust the public Ticketmaster website.** Rejected: routes
+  multiple venue ids to a single canonical listing page so the
+  silos stay invisible.
+- **Pre-emptively add every plausible DC-area venue and let the
+  validator alert on zero counts.** Rejected: adds noise to the
+  alert channel and wastes nightly fetch budget on dead ids.
+- **Crawl the Discovery API once per audit and auto-generate the
+  config.** Deferred: doing this by hand once per quarter is fine
+  while the venue list is in the low hundreds. Worth revisiting
+  when expanding to a new metro.
+
+**Consequences:**
+
+- Eight venues added in this audit:
+  Wolf Trap Filene Center (52 ev), Tally Ho Theater (43 ev),
+  The Theater at MGM National Harbor (27 ev), Music Center at
+  Strathmore (18 ev), The Innsbrook Pavilion (14 ev), The
+  Kennedy Center Concert Hall (7 ev), Ember Music Hall (7 ev),
+  State Theatre Falls Church (1 ev). Five new cities seeded:
+  `falls-church-va`, `leesburg-va`, `north-bethesda-md`,
+  `national-harbor-md`, `glen-allen-va`.
+- Rams Head Live! parked with `enabled=False` and an inline
+  comment explaining the zero-count audit result. The slug stays
+  registered so re-enabling is a one-line change once a working
+  source is identified.
+- A new test module `backend/tests/scraper/test_venues_config.py`
+  locks in the structural invariants of the config (no duplicate
+  slugs, every city referenced has a seed, every venue has
+  metadata, every scraper class is importable, TM and Dice configs
+  carry their required platform_config keys) and pins the eight
+  audit-added venues by id. A future refactor can't silently drop
+  them.
+- Venues whose actual ticketing is off-platform — The Hamilton,
+  Pearl Street Warehouse, Sixth & I, City Winery DC, Jammin Java,
+  Bethesda Blues & Jazz, The Camel — are *not* added with a TM
+  scraper (each shows 0 events). They are tracked in this entry
+  as candidates for a later GenericHtmlScraper pass.
+
+---
+
+### 046 — Scraper Alert Pipeline Layers Six Independent Signals With Per-Severity Cooldowns
+
+**Date:** 2026-04-25
+**Status:** Decided
+
+**Decision:** The scraper alerting layer is composed of six independent
+signals — `zero_results`, `event_drop`, `scraper_failed`, `escalation`,
+`stale_data`, and `fleet_failure` — each with its own stable
+`alert_key` and a severity-specific cooldown window. A daily digest
+(`07:30 ET`) and an admin "send test alert" button complete the
+pipeline. Cooldown state is persisted in `scraper_alerts`; lookups
+fail open (a broken dedup table never silences alerts).
+
+Cooldown windows:
+
+| alert_key prefix | severity | cooldown |
+|---|---|---|
+| `zero_results:<slug>` | error | 12 h |
+| `event_drop:<slug>` | warning | 12 h |
+| `scraper_failed:<slug>` | error | 6 h |
+| `escalation:<slug>` | error | 24 h |
+| `stale_data:<slug>` | warning | 48 h |
+| `fleet_failure` | error | 2 h |
+
+**Rationale:** A single broken venue would otherwise post on every
+nightly run *and* every manual `/admin` re-trigger, drowning the
+on-call channel inside a day. Per-severity cooldowns reflect how often
+the operator actually wants to be reminded — a 6 h window for a fresh
+failure (so a same-day fix gets a fresh ping) but 48 h for stale data
+(silent-failure mode that doesn't get worse when ignored). Layering
+six independent signals catches the failure modes that one signal
+would miss: `zero_results` and `event_drop` need a current run,
+`stale_data` needs no run at all, `escalation` distinguishes a flake
+from a sustained outage, and `fleet_failure` distinguishes
+infrastructure problems from venue problems.
+
+The daily digest is not redundant with the alerts — it covers the
+*absence* of signal. A silent on-call channel could mean "all is
+well" or "the scheduler stopped firing"; the digest distinguishes the
+two.
+
+The notifier records its dedup row *after* the delivery attempt
+regardless of outcome — so a Slack outage still consumes a slot,
+preventing a runaway loop of failed sends.
+
+**Alternatives considered:**
+
+- **Single alert table with one global cooldown.** Rejected: a
+  6 h window appropriate for fresh failures would blast 4× a day
+  on long-running stale-data signals.
+- **No dedup, rely on Slack's "rate-limit me" UX.** Rejected: Slack
+  does not coalesce alerts and the user's channel would be unreadable
+  on a multi-venue outage.
+- **Digest only, no per-event alerts.** Rejected: a 24 h delay on
+  fresh failures is too long when the user wants to fix things during
+  the same evening.
+- **Per-event alerts only, no digest.** Rejected: a silent week
+  cannot be distinguished from a healthy week.
+
+**Consequences:**
+
+- New `scraper_alerts` table with unique `alert_key` and per-row
+  `last_sent_at`, `severity`, `sent_count`. Migration
+  `20260425_add_scraper_alerts.py`.
+- New module `backend.services.scraper_digest` plus a beat schedule
+  entry in `celery_app.py` for `07:30 America/New_York`.
+- New `POST /api/v1/admin/alerts/test` route fronted by a "Send test
+  alert" button on the admin dashboard. Bypasses cooldown; surfaces
+  which channels are configured so a missing webhook is obvious.
+- Failures and successes both train the system: `_check_stale_data`
+  inspects `metadata_json["created"]` over the last 7 successful
+  runs, and `count_consecutive_failed_runs` walks the head of the
+  history newest-first to detect sustained outages.
+- Alerting infrastructure is fail-open by design — every dedup
+  read/write is wrapped in try/except so a corrupt
+  `scraper_alerts` row never gags real signal.
+
+---
+
+### 047 — Multi-Source Ticket Pricing With Provider Registry, Append-Only History, And A Shared Cooldown
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Pricing is fetched from many providers per event via a
+small registry of `BasePricingProvider` implementations: live APIs
+(SeatGeek, Ticketmaster, TickPick search-link) and the existing
+scrapers, which now also yield prices when the source page exposes
+them. Quotes are persisted append-only to `ticket_pricing_snapshots`
+keyed by `(event_id, source)`; the latest buy URL per source lives in
+`event_pricing_links`. A nightly Celery sweep at 05:00 America/New_York
+re-prices every upcoming event, and a manual `POST
+/api/v1/events/<id>/refresh-pricing` endpoint lets users trigger a
+sweep on demand, gated by a 5-minute cooldown stamped on
+`events.prices_refreshed_at` and shared across every visitor.
+
+**Rationale:**
+The user needs as much current pricing data as possible from as many
+sources as possible. A single-source price was misleading on shows
+where the secondary market and the venue's primary diverged sharply,
+and Tier B venues (DICE, venue-direct ticketers, Eventbrite) had no
+SeatGeek presence at all so the panel was simply blank for them. The
+provider abstraction lets each platform return whatever subset of the
+schema it can supply (TickPick has only the URL, scraper-origin
+providers have only prices, SeatGeek has the full set). Append-only
+snapshots are the "data is gold" lever — historical buy/sell-side
+divergence is the training set for a future buy-now prediction model;
+overwriting the old row would throw that signal away.
+
+The 5-minute cooldown is DB-backed (not Redis or in-memory) so the
+"refresh just happened" state is visible to every visitor in every
+tab without any cross-process coordination — the next request reads
+`prices_refreshed_at` and short-circuits if it's inside the window.
+The cron forces past the cooldown so it never fights the manual UI.
+
+**Alternatives considered:**
+
+- **Stay with SeatGeek-only (Decision 010).** Rejected: leaves Tier B
+  venues blank, and a single-side quote is misleading on shows where
+  primary and secondary diverge.
+- **TicketsData aggregator.** Deferred per Decision 010 — pricing
+  becomes a cost center long before it pays for itself; the
+  per-provider registry gets us the same multi-source view for free.
+- **In-memory or Redis cooldown.** Rejected: Knuckles-style multi-
+  process deployments would each have their own counter, so a refresh
+  in one tab wouldn't gate the others. The DB column is one read, no
+  extra infrastructure.
+- **Overwrite the latest pricing row instead of appending.** Rejected
+  outright: kills the historical signal that motivates the whole
+  feature.
+- **Single Buy URL per event (the existing `events.ticket_url`).**
+  Rejected: forces a one-true-link choice the user shouldn't have to
+  make. The link panel renders the affiliate URL when present and
+  falls back to the raw URL, per source.
+
+**Consequences:**
+
+- New `event_pricing_links` table and `events.prices_refreshed_at`
+  column (migration `20260426_add_pricing_links_and_refresh_stamp.py`).
+- New `backend.services.tickets` orchestrator owning the cooldown gate
+  and the per-provider fan-out, plus `backend.services.pricing_tasks`
+  for the Celery beat entry at 05:00 ET.
+- `BasePricingProvider` registry in `backend.services.pricing` with
+  Tier A providers (SeatGeek, Ticketmaster, TickPick) and Tier B
+  scraper-origin providers fed by the existing scrapers writing
+  `RawEvent.price_min/price_max` alongside their event payload.
+- Frontend: `EventPricingPanel` (client) on the detail page with a
+  Refresh button + cooldown banner; `PricingFreshnessBanner` (server)
+  on `/events` driven by `GET /api/v1/pricing/freshness` (an indexed
+  MAX over upcoming `prices_refreshed_at`).
+- `affiliate_url` is preferred over `buy_url` on every Buy CTA so
+  monetization can be flipped on per-source without touching the UI.
+- Past events are excluded from the daily sweep, the freshness
+  banner, and the per-event refresh — once a show has happened the
+  price is dead inventory.
+
+**Note:** The manual-refresh-button consequence in this entry was
+reversed by Decision 048 once the free-tier upstream APIs proved
+unable to return prices for most events. The architecture (provider
+registry, append-only snapshots, shared cooldown) is unchanged; only
+the user-facing button was withdrawn.
+
+---
+
+### 048 — Hide The Manual Refresh Button Until Upstream Pricing Coverage Improves
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Remove the per-event "Refresh prices" button and its
+"Price unavailable" copy from `EventPricingPanel`. The panel now
+renders as a pure server component, shows a price line only when one
+exists, and hides itself entirely when no source has a buy-link.
+The backend refresh endpoint (`POST /api/v1/events/<id>/refresh-pricing`),
+its cooldown gate, and the nightly Celery sweep are all retained
+intact — only the user-facing affordance is gone.
+
+**Rationale:**
+After the first full multi-source sweep across 1,303 upcoming events
+the actual price-coverage rate was 22 events (1.7%). The cause is
+upstream and structural, not implementation: Ticketmaster's free
+Discovery API returns `priceRanges: null` for almost every arena
+listing (probed 10/10 DC music events live — all null), and SeatGeek's
+developer-tier API returns `stats: {}` empty for every event (the
+lowest_price/highest_price fields require a higher Partner-Program or
+paid tier). TickPick is search-link-only by design. The result: a
+visible refresh button next to "Price unavailable" on 98% of pages
+made the product feel broken — pressing it could never change
+anything because the data simply isn't there to fetch. Removing the
+affordance until upstream coverage improves is honest. The infra
+behind it is fine; the UI promise wasn't.
+
+**Alternatives considered:**
+
+- **Build per-show detail-page scrapers for the four DC indie venues
+  (Pie Shop, Black Cat, Comet Ping Pong, generic_html).** Probed the
+  listing pages of all eight venue scrapers — none surface ticket
+  prices on the listing HTML (the only `$` matches on the Comet site
+  are food menu prices). Extracting prices would require fetching
+  each show's detail page individually, ~280+ extra HTTP requests
+  per nightly run, plus brittle per-venue parsing. The yield ceiling
+  is small (these venues already have buy-links), so the
+  cost-to-benefit ratio doesn't justify it.
+- **Keep the button but show a tooltip explaining tier limits.**
+  Rejected: the explanation is the kind of detail users shouldn't
+  have to read — better to remove the affordance than to add copy
+  apologizing for it.
+- **Wait until SeatGeek paid tier and StubHub Marketplace are wired
+  up, then re-enable the button.** This is the actual plan; the
+  button can come back when coverage justifies it. Tracked under
+  the Deferred Decisions table below.
+
+**Consequences:**
+
+- `EventPricingPanel` becomes a server component (it had been
+  client-only for the refresh interaction). One fewer client bundle
+  on every event detail page.
+- `refreshEventPricing()` and the `RefreshPricingResponse` /
+  `RefreshPricingResult` types are removed from the frontend client.
+  The backend endpoint and its tests are kept intact for admin
+  triggers and a future re-introduction of the button.
+- The "Updated X ago" line on the panel header still renders — the
+  nightly sweep populates it, and surfacing freshness is still
+  useful even when prices come from a single source.
+- Re-introducing the button is a small change (recreate the client
+  wrapper + types and flip the panel back to client-mode) once the
+  upstream coverage rate makes a manual refresh meaningful.
+
+---
+
+### 049 — Notification Preferences Live In A Dedicated Relational Table With JSONB Pause Snapshot
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Email notification preferences live in a new
+`notification_preferences` table (one row per user, FK to `users`
+with CASCADE) rather than expanding the existing
+`users.notification_settings` JSONB blob. Sixteen typed columns cover
+every per-type toggle, the digest schedule, the weekly cap, quiet
+hours, and the IANA timezone. CHECK constraints lock down the integer
+ranges (`digest_hour`, quiet hours) and whitelisted enums
+(`digest_day_of_week`, `show_reminder_days_before`,
+`max_emails_per_week`). The "pause all" affordance is implemented as
+a `paused_at` timestamp plus a `paused_snapshot` JSONB column that
+captures the per-type flags at pause-time so resume restores the
+user's prior choices instead of forcing them to re-toggle.
+
+**Rationale:**
+Triggered email paths (artist announcements, selling-fast alerts,
+show reminders) read these preferences on every fan-out. With
+sixteen fields, several of them constrained to small whitelists, the
+relational shape gives us indexed reads, CHECK-constraint validation
+at the DB layer, and ordinary column-level migrations when fields
+need to evolve. JSONB-on-`users` would have pushed all of that into
+Python coercion and lost the safety net for the data layer. The
+pause-snapshot keeps the schema flat (one row per user, no shadow
+table) while preserving "I had selling-fast on, and I want it on
+again when I un-pause."
+
+**Alternatives considered:**
+
+- **Expand `users.notification_settings` JSONB.** Rejected: every read
+  path would have to re-validate the dict shape in Python, and the
+  fields most prone to abuse (hour-of-day, weekday name) are exactly
+  the ones a CHECK constraint enforces cheaply.
+- **Per-type rows (one row per (user, type)).** Rejected: every email
+  path would need a join to assemble the full preference picture, and
+  the digest schedule + quiet hours + cap don't fit the per-type
+  shape — they would have lived as orphan rows or as separate columns
+  on `users` anyway.
+- **Encode pause as setting every per-type flag to false.** Rejected:
+  the user would lose their granular choices when un-pausing.
+  Snapshotting into a JSONB column preserves them with no extra
+  schema cost.
+
+**Consequences:**
+
+- A new Alembic migration backfills one row per existing user with
+  the column defaults (actionable alerts on, discovery off, digest
+  off, max 3/week, 21:00–08:00 quiet hours, America/New_York tz).
+- Service layer `_validated_updates` re-validates everything in
+  Python so 422s come back from the API before any DB write — the
+  CHECK constraints are the second line of defense, not the first.
+- The `users.notification_settings` JSONB column is left in place for
+  Phase 5 (frequency-cap counters and any per-event metadata that
+  shouldn't bloat the preferences table).
+- Phases 2–5 of the email sprint can read preferences with a single
+  indexed lookup; the digest scheduler can filter "weekly_digest=true
+  AND paused_at IS NULL AND digest_day_of_week='monday'" without
+  shape gymnastics.
+
+---
+
+### 050 — Unsubscribe Tokens Are Custom HMAC, Not JWT, And The Endpoint Is Unauthenticated
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Outbound emails carry a one-click unsubscribe link
+signed with a custom `header.payload.signature` HMAC-SHA256 token
+(URL-safe base64, padding stripped) rather than a JWT. The
+`/api/v1/unsubscribe` endpoint is intentionally unauthenticated — the
+signed token in the query string IS the credential — and accepts both
+GET (preview without writing) and POST (commit, including form-encoded
+`List-Unsubscribe=One-Click` per RFC 8058). The signing secret comes
+from `EMAIL_TOKEN_SECRET` with a fallback to `JWT_SECRET_KEY` so dev
+environments don't need new secrets material. Tokens have a 90-day TTL.
+
+**Rationale:**
+The unsubscribe endpoint must work from a stale Inbox search a month
+later, must accept Gmail/Apple Mail's auto-clicks (no Authorization
+header is sent on those), and must never require the user to log in.
+A signed self-contained token meets all three constraints and keeps
+the endpoint stateless. We chose a hand-rolled HMAC over JWT to avoid
+pulling PyJWT in for a one-purpose use case where we control both
+sides — the wire format is ~30 lines of code and doesn't bring along
+JWT's asymmetric-key footguns. RFC 8058 one-click is non-negotiable
+for Gmail bulk-sender compliance starting in 2024+; the POST handler
+ignores the form body and reads the token from the query string, so
+the same URL works for both manual clicks and gateway auto-clicks.
+
+**Alternatives considered:**
+
+- **PyJWT + HS256.** Rejected: extra dependency for a single-purpose
+  token format we fully control. Plain HMAC is auditable in 30 lines.
+- **Server-side token table with a random opaque ID.** Rejected:
+  unbounded growth (one row per outbound email × 90 days), and no
+  benefit over a signed token since we only ever verify, not enumerate.
+- **Require login at the unsubscribe URL.** Rejected: violates RFC 8058
+  one-click, and the recipient expects the Inbox unsubscribe pill to
+  "just work" without a login round-trip. Login-gating is the wrong
+  user model for this affordance.
+- **Bearer-auth on the endpoint.** Rejected: Gmail/Apple Mail
+  auto-clickers don't send Authorization headers, and we're not
+  going to ask mailbox providers to support a custom auth scheme.
+
+**Consequences:**
+
+- Malformed/expired tokens surface as `VALIDATION_ERROR` (HTTP 422)
+  rather than 401 — the endpoint never expected an auth header.
+- `compose_email()` is the canonical way to send a templated email:
+  it mints the token, builds the public unsubscribe URL, injects
+  `unsubscribe_url` into the template context (so the footer renders
+  a clickable link), renders the HTML+text pair, and forwards to
+  `send_email()` with the `List-Unsubscribe` and
+  `List-Unsubscribe-Post` headers attached.
+- The frontend can render a "Confirm unsubscribe" preview screen by
+  GETting the same URL — the GET handler verifies the token and
+  returns the user_id and scope without writing.
+- Rolling the signing secret invalidates only the universe of
+  in-flight links; no DB migration needed. We accept that recipients
+  with very old emails (>90 days) get a "link expired" error and
+  must re-request a manage-subscriptions email.
+
+---
+
+### 051 — Weekly Digest Dispatcher Fires Hourly And Filters In Python By User Timezone
+
+**Date:** 2026-04-26
+**Status:** Decided
+
+**Decision:** Celery beat fires
+`backend.services.notification_tasks.dispatch_weekly_digests` once per
+hour at `minute=0`. The task selects every active weekly subscriber
+(`weekly_digest=True AND paused_at IS NULL`) in one query, then loops
+in Python and calls `is_due_for_weekly_digest(prefs, now)` and
+`is_in_quiet_hours(prefs, now)` to decide whether each user is due
+in the current local hour. Per-user send happens inline inside the
+same task (not a fanned-out subtask).
+
+**Rationale:** The dispatcher's filter requires comparing the user's
+*local* weekday/hour to their stored `digest_day_of_week` /
+`digest_hour`, but Postgres has no built-in `AT TIME ZONE` predicate
+that takes a per-row IANA tz name without contortions. Doing the
+filter in Python keeps the SQL trivially indexable
+(`weekly_digest=true`, `paused_at IS NULL`) and lets us reuse the
+same predicate functions the per-user send pipeline calls.
+Inline send (instead of `chain`/`group` of subtasks) is fine at the
+project's expected user count: a single worker can drain an hour's
+bucket inside the 25-minute soft time limit, and Celery's broker-level
+visibility timeout keeps a half-finished bucket from being replayed.
+
+**Alternatives considered:**
+
+- **SQL-level filter using `digest_day_of_week`/`digest_hour` as a
+  composite predicate against `now() AT TIME ZONE prefs.timezone`.**
+  Rejected: requires a `LATERAL` join or a generated column to handle
+  per-row tz naming, and produces a query plan that is harder to
+  reason about than the Python loop. The Python loop is O(N) over a
+  set we're going to send to anyway.
+- **Per-user fanned-out subtasks (`group(send_weekly_digest_task.s(uid)
+  for uid in due)`).** Rejected for now: adds broker round-trips and
+  retry surface area without buying anything at our user count. The
+  per-user task still exists (`send_weekly_digest_task`) for ad-hoc
+  resends, just not as the dispatcher's primary path.
+- **Daily cron at 08:00 ET that sends to everyone "due that day."**
+  Rejected: a Pacific user with `digest_hour=8` would get their digest
+  at 05:00 PT, not 08:00 PT. The hourly cadence is what makes
+  per-user `digest_hour` configurable.
+
+**Consequences:**
+
+- A user changing their `digest_day_of_week` or `digest_hour` takes
+  effect at the next top-of-hour fire — no ad-hoc rescheduling needed.
+- Cap and idempotency guards (`is_at_weekly_cap`,
+  `_has_recent_weekly_log`) live inside the per-user send function and
+  are re-checked on every fire, so a duplicate beat run inside the
+  same hour cannot produce two emails to the same recipient.
+- The dispatcher's structured log line carries six counters
+  (`candidates`, `sent`, `skipped_not_due`, `skipped_quiet_hours`,
+  `skipped_send_returned_false`, `errors`) so a stuck pipeline shows
+  up as a counter that flat-lines, not silence.
+
+### 052 — Recommendation Engine Powers Both Digest Ranking And `?sort=for_you`
+
+**Date:** 2026-04-27
+**Status:** Decided
+
+**Decision:** The same `RecommendationEngine` that produces the
+For-You feed also ranks the weekly digest, and the ranking is now
+exposed through a new `?sort=for_you` query param on
+`/api/v1/events`. The digest no longer ranks in-process — it triggers
+`generate_for_user` and reads the persisted `recommendations` rows.
+The `/events` endpoint reads the same rows when the caller passes
+`?sort=for_you` and is authenticated. Two new scorers
+(`FollowedArtistScorer`, `FollowedVenueScorer`) join
+`ArtistMatchScorer` and `VenueAffinityScorer` so explicit follows
+have first-class weight alongside Spotify-derived signals.
+
+**Rationale:** Before this change, the digest implemented its own
+ranking heuristic ("does the event match a tracked artist? sort it
+first") and the public `/events` listing had no personalization. Two
+divergent ranking paths meant adding a new signal had to be
+implemented twice and could drift. Routing both surfaces through the
+engine + persisted rows means a new scorer touches one file and
+ships everywhere recommendations are surfaced.
+
+**Alternatives considered:**
+- *Keep the digest's local ranking and add a separate per-request
+  scorer for `/events`.* Rejected — same drift problem, plus a per-
+  request scorer makes pagination painful (you have to score every
+  page candidate, not just the page you serve).
+- *Make `/events` always return personalized ordering when a token is
+  present.* Rejected — the public listing's anonymous-by-default
+  contract powers SEO. An opt-in query param keeps the SSR cache key
+  stable and lets logged-in users toggle.
+- *Filter event rows to the user's followed artists/venues only and
+  drop the score join.* Rejected — that collapses the listing for
+  users with few follows. The score-based sort degrades gracefully
+  (unscored events sort last by date) and pairs naturally with the
+  existing `available_only` and date filters.
+
+**Consequences:**
+- The digest assembler is now an orchestrator: it triggers
+  `generate_for_user`, reads persisted recs, and ranks events by
+  score with a date tiebreak. The cold-start path (no recs) falls
+  back to chronological order with a "connect Spotify or follow
+  artists" intro.
+- `events_repo.list_events` accepts `sort` and `user_id` kwargs. When
+  `sort="for_you"` and `user_id` is supplied, it LEFT JOINs
+  `recommendations` on `(user_id, event_id)` and orders
+  `Recommendation.score DESC NULLS LAST, Event.starts_at ASC`.
+  Anonymous callers requesting `for_you` silently degrade to date
+  order so cached/shared URLs keep working.
+- A new helper `try_get_current_user()` does best-effort token
+  validation for routes that work signed-in or anonymous. Failure
+  modes (missing header, bad signature, deactivated row) all degrade
+  to `None` rather than 401.
+- An "Advanced filters" set landed alongside the new sort:
+  `day_of_week`, `time_of_day` (early/evening/late buckets in ET),
+  `has_image`, `has_price`, `followed_venues_only`,
+  `followed_artists_only`. The follow-based toggles intersect with
+  any explicitly-passed venues/artists so the AND semantics are
+  obvious.
+- Match-reason dedupe in the digest is non-trivial: when both
+  `ArtistMatchScorer` and `FollowedArtistScorer` fire on the same
+  artist, only the artist-match chip surfaces ("You listen to X"
+  beats "You follow X"). When `FollowedVenueScorer` and
+  `VenueAffinityScorer` both match the same venue, the explicit-
+  follow chip wins ("You follow X" beats "You've saved shows at X").
+
+---
+
+### 053 — In-App Feedback Stores To DB, Reuses The Existing Slack Notifier, And Routes Optional Auth Through `try_get_current_user`
+
+**Date:** 2026-04-27
+**Status:** Decided
+
+**Decision:** Ship the beta feedback widget as a single endpoint
+(`POST /api/v1/feedback`) that persists to a new `feedback` table and
+fires a Slack message via the existing `backend.scraper.notifier.send_alert`
+helper. The route is auth-optional via `try_get_current_user()`. When a
+user is signed in, the service overrides whatever email arrives in the
+form with `user.email`; the form email field is hidden in the UI for
+signed-in users. Admin triage uses the existing `@require_admin` /
+`X-Admin-Key` pattern with a list/resolve pair of routes plus a new
+`/admin/feedback` dashboard.
+
+**Rationale:**
+- The widget needs to work for logged-out browsers (the homepage is
+  fully public and SSR'd), so requiring auth would silently lose 80% of
+  the signal we actually want during beta.
+- We already have a Slack alerting pipeline used by the scraper failure
+  path. Adding a second notifier just for feedback would duplicate the
+  webhook env var, the message-formatting code, and the email-fallback
+  branch. Passing `alert_key=None` to `send_alert` bypasses the
+  per-key cooldown so every submission posts, which is what we want
+  for a low-volume beta channel.
+- Auto-filling the email from the account (and hiding the field) means
+  signed-in users don't have to retype something we already know — and
+  prevents them from typo-ing it. The override is server-side so a
+  malicious client can't strip the user_id and submit on someone else's
+  behalf.
+- A dedicated `feedback` table (not a generic `events` log) gives us a
+  CHECK-constrained `kind` enum and an `is_resolved` boolean we can
+  actually filter on in the admin UI without hauling a JSONB column.
+
+**Alternatives considered:**
+- **Slack only, no DB row.** Rejected — we want to triage and mark
+  resolved without scrolling Slack history, and we want analytics on
+  feedback volume per kind over time.
+- **Linear/GitHub Issues integration.** Rejected for now — too heavy
+  for unstructured beta feedback. Most messages will be one-line
+  reactions, not actionable tickets. Promotion to Linear can be a
+  manual triage step from the admin dashboard later.
+- **Require auth.** Rejected — anonymous browsers are exactly the
+  cohort whose first impression matters most for a public concert
+  calendar.
+- **A new SLACK_FEEDBACK_WEBHOOK_URL env var.** Rejected — one Slack
+  channel for ops alerts is fine during beta. If the noise becomes a
+  problem we can split later by passing a `channel` arg.
+
+**Consequences:**
+- The `feedback` table is the canonical record; Slack is fire-and-forget
+  best-effort. A Slack outage cannot lose a submission and cannot fail
+  the request (the helper is wrapped in `try/except` and only logs).
+- Anyone adding new fields to feedback must update the model, the
+  migration, the repo signature, the service (validation + truncation),
+  the route's JSON parsing, the serializer, and the admin dashboard's
+  row rendering — the layered architecture means there's no single
+  shortcut. This is intentional.
+- The admin dashboard is gated behind the same `AdminKeyGate` used by
+  the user/scraper dashboards, so there's no new auth surface to
+  audit.
+- Per-session pill dismissal lives in `sessionStorage` under
+  `greenroom.feedback.dismissed`. It's intentionally not persistent —
+  re-opening a tab gives the user another nudge. If that becomes
+  annoying we can promote it to `localStorage` later, but the cost of
+  a missed nudge is higher than the cost of a slightly noisy one
+  during beta.
+
+---
+
+### 054 — Slack Alerts Are Routed To Three Category Channels (Ops / Digest / Feedback) With Ops As The Universal Fallback
+
+**Date:** 2026-04-27
+**Status:** Decided
+
+**Decision:** `notifier.send_alert` takes a
+`category: Literal["ops", "digest", "feedback"]` parameter (default
+`"ops"`) that selects which Slack webhook URL is used. There are three
+env vars — `SLACK_WEBHOOK_OPS_URL`, `SLACK_WEBHOOK_DIGEST_URL`,
+`SLACK_WEBHOOK_FEEDBACK_URL`. When a category-specific URL is empty,
+the ops URL is used. Routing by call site:
+- `scraper/runner.py`, `scraper/validator.py`,
+  `scraper/watchdogs/*` → `ops` (default).
+- `services/scraper_digest.py` → `digest`.
+- `services/feedback.py` → `feedback`.
+- `services/admin.py::send_test_alert` fires once per category so an
+  operator can confirm all three channels are wired up in one click.
+
+**Rationale:**
+- The original single-webhook design mixed three different audiences
+  in one channel: ops on-call signal (every scraper failure), product
+  signal (the daily digest summary), and user feedback. Each has a
+  different read pattern. Ops needs to be silent when healthy so a
+  red signal stands out; the digest is a steady info-level heartbeat;
+  feedback is something a PM scans, not someone debugging at 3am.
+- `category` as an enum on `send_alert` (not a `webhook_url` arg)
+  keeps the channel decision policy-level — call sites declare *what
+  kind of signal* they're sending, not *where to send it*. The
+  routing table can change without touching every call site.
+- Ops as universal fallback means you can ship with one webhook
+  configured and everything still lands somewhere — no silent drops.
+  Adding the digest and feedback channels later is a config change,
+  not a code change.
+
+**Alternatives considered:**
+- **Pass `webhook_url` directly to `send_alert`.** Rejected — leaks
+  the routing decision to every call site and makes a global
+  re-routing impossible without grep.
+- **Keep one channel, separate by Slack message prefix.** Rejected —
+  notification settings, mute rules, and on-call rotations are
+  per-channel in Slack. Prefix-based filtering is fragile and
+  doesn't scale to multiple humans.
+- **Make ops required (no empty default).** Rejected — local dev
+  and tests run with all three blank, and the existing
+  `if not webhook_url` guard already handles the "nothing configured"
+  case gracefully. Failing config validation just to enforce one
+  webhook would be a regression for anyone who doesn't run Slack
+  locally.
+
+**Consequences:**
+- The old `SLACK_WEBHOOK_URL` env var is gone. Production deployments
+  must rename it to `SLACK_WEBHOOK_OPS_URL` before the next release.
+  The `.env.example` and Railway config need to be updated.
+- The admin "test alert" button now sends three Slack messages
+  instead of one. The response payload gained a `categories` dict so
+  the admin dashboard can show per-channel delivery status.
+- Adding a fourth category (e.g. `recommendations` for ML pipeline
+  alerts) is a one-line change to the `Literal` plus a settings
+  field plus an entry in `_resolve_webhook_url`. Existing call sites
+  are unaffected.
+- The fallback semantics (`category_url or ops_url`) mean
+  `_resolve_webhook_url` can return an empty string when *nothing* is
+  configured. The Slack helper guards against that with the existing
+  `if not webhook_url` check, so an unconfigured deployment quietly
+  no-ops the Slack send and falls through to email — same as before.
+
+---
+
+### 055 — Adopt The `knuckles-client` Python SDK Instead Of A Hand-Rolled HTTP Client
+
+**Date:** 2026-04-29
+**Status:** Decided
+
+**Decision:** All Knuckles calls (magic-link, Google, Apple, passkey,
+refresh, logout, JWKS-backed access-token verification) now go through
+the published `knuckles-client>=0.1.0` SDK via a single
+`backend.core.knuckles.get_client()` singleton. The previous custom
+module (`backend.core.knuckles_client` — hand-rolled `requests`
+transport, file-backed JWKS cache, bespoke exception envelope) is
+deleted along with its test file.
+
+**Rationale:**
+- The SDK already encodes Decision 030's contract: `X-Client-Id` /
+  `X-Client-Secret` headers, `KnucklesAuthError` with `.code`
+  attributes for the refresh-token error family
+  (`REFRESH_TOKEN_REUSED`, `REFRESH_TOKEN_EXPIRED`, etc.), and a
+  `verify_access_token` shim built on `jwt.PyJWKClient` for in-memory
+  JWKS caching. Owning a parallel implementation in Greenroom was pure
+  duplication and a drift risk every time Knuckles added a code or
+  changed a payload shape.
+- Catching `KnucklesAuthError` and pulling `.code` off the SDK
+  exception is dramatically clearer than the old `if "REUSED" in
+  err.message` string-pattern checks. Frontends already consume the
+  same codes, so passthrough via `auth_error_to_app_error` keeps the
+  UX identical.
+- `KnucklesTokenError` distinguishes expired from other failures via
+  `__cause__` (the SDK preserves the underlying `jwt.PyJWTError` with
+  `from exc`). That gives `verify_knuckles_token` enough fidelity to
+  surface `TOKEN_EXPIRED` for silent-refresh flows without re-decoding
+  the token.
+
+**Alternatives considered:**
+- **Keep the custom client and pull in the SDK only for new endpoints.**
+  Rejected — every endpoint we'd skip is one we'd need to maintain a
+  bespoke error-translation path for. The whole-cloth swap is the only
+  way to delete `backend/core/knuckles_client.py` outright.
+- **Build a thin wrapper that exposes a Greenroom-shaped facade over
+  the SDK.** Rejected as premature abstraction. The SDK's shape (sub-
+  clients per ceremony, dataclass returns) reads cleanly at the route
+  layer; an extra facade buys nothing and forces a re-rewrite if the
+  SDK adds methods.
+
+**Consequences:**
+- The `KNUCKLES_JWKS_CACHE_TTL_SECONDS` env var is gone. The SDK uses
+  `jwt.PyJWKClient`'s built-in cache, which is read-mostly and bounded
+  by process lifetime — there's no TTL knob to expose. Removing the
+  setting is safe because no code referenced it after the swap.
+- Test fixtures stub the JWKS endpoint by patching
+  `jwt.PyJWKClient.fetch_data` (the SDK's underlying fetcher) instead
+  of the legacy `requests.get` interception. The autouse
+  `_reset_knuckles_client` fixture drops the singleton between tests so
+  each case rebuilds the SDK against a clean state.
+- Route-level tests now mock the SDK by patching
+  `route.get_client` to return a `MagicMock`; assertions inspect
+  `sdk.<sub_client>.<method>.call_args.kwargs` instead of HTTP-shaped
+  bodies. This is a strictly better test surface — it exercises the
+  same contract the production code calls, and breaks loudly if a
+  call-site argument name drifts.
+- Adding new Knuckles endpoints in the future is a one-liner per route
+  (`get_client().<sub>.<method>(...)`); no new transport, exception
+  type, or test scaffolding required.
 
 ---
 

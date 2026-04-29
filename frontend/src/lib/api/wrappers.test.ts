@@ -32,8 +32,53 @@ import {
   startTidalOAuth,
 } from "@/lib/api/auth";
 import { getCityBySlug, listCities } from "@/lib/api/cities";
-import { getEvent, listEvents } from "@/lib/api/events";
+import {
+  getEvent,
+  getEventPricing,
+  getPricingFreshness,
+  listEvents,
+} from "@/lib/api/events";
+import { submitFeedback } from "@/lib/api/feedback";
+import {
+  followArtist,
+  followVenuesBulk,
+  listFollowedArtists,
+  listFollowedVenues,
+  searchArtists,
+  unfollowArtist,
+  unfollowVenue,
+} from "@/lib/api/follows";
+import {
+  dismissOnboardingBanner,
+  getOnboardingState,
+  incrementBrowseSessions,
+  listGenres,
+  markStepComplete,
+  skipOnboardingEntirely,
+} from "@/lib/api/onboarding";
+import {
+  deleteVenueComment,
+  listVenueComments,
+  submitVenueComment,
+  voteOnVenueComment,
+} from "@/lib/api/venue-comments";
 import { deleteMe, getMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
+import {
+  getNotificationPreferences,
+  pauseAllEmails,
+  resumeAllEmails,
+  updateNotificationPreferences,
+} from "@/lib/api/notification-preferences";
+import {
+  getMapKitToken,
+  getMapRecommendations,
+  getNearMeEvents,
+  getTonightMap,
+  listVenueTips,
+  searchNearbyPlaces,
+  submitMapRecommendation,
+  voteOnMapRecommendation,
+} from "@/lib/api/maps";
 import {
   getMyTopArtists,
   listRecommendations,
@@ -44,7 +89,13 @@ import {
   saveEvent,
   unsaveEvent,
 } from "@/lib/api/saved-events";
-import { getVenueBySlug, listVenues } from "@/lib/api/venues";
+import {
+  getVenueBySlug,
+  getVenueMapSnapshot,
+  getVenueNearbyPois,
+  listVenues,
+} from "@/lib/api/venues";
+import { ApiRequestError } from "@/lib/api/client";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -193,6 +244,54 @@ describe("api/me", () => {
     const { url, init } = lastCall();
     expect(url.pathname).toBe("/api/v1/me/music-connections");
     expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+});
+
+describe("api/notification-preferences", () => {
+  it("getNotificationPreferences GETs with bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { weekly_digest: false, paused: false } }),
+    );
+    const out = await getNotificationPreferences("tok");
+    expect(out).toEqual({ weekly_digest: false, paused: false });
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/notification-preferences");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("updateNotificationPreferences PATCHes with the payload as JSON body", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { weekly_digest: true } }),
+    );
+    await updateNotificationPreferences("tok", {
+      weekly_digest: true,
+      digest_hour: 18,
+    });
+    const { init } = lastCall();
+    expect(init.method).toBe("PATCH");
+    expect(init.body).toBe(
+      JSON.stringify({ weekly_digest: true, digest_hour: 18 }),
+    );
+  });
+
+  it("pauseAllEmails POSTs to the pause-all path", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { paused: true } }));
+    await pauseAllEmails("tok");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe(
+      "/api/v1/me/notification-preferences/pause-all",
+    );
+    expect(init.method).toBe("POST");
+  });
+
+  it("resumeAllEmails POSTs to the resume-all path", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { paused: false } }));
+    await resumeAllEmails("tok");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe(
+      "/api/v1/me/notification-preferences/resume-all",
+    );
+    expect(init.method).toBe("POST");
   });
 });
 
@@ -539,5 +638,591 @@ describe("api/saved-events", () => {
     const { url } = lastCall();
     expect(url.searchParams.get("page")).toBe("1");
     expect(url.searchParams.get("per_page")).toBe("20");
+  });
+});
+
+describe("api/maps", () => {
+  it("getTonightMap joins genres into a comma-separated query", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0, date: "2026-04-21" } }),
+    );
+    const out = await getTonightMap({ genres: ["indie", "folk"] });
+    expect(out.meta.date).toBe("2026-04-21");
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/tonight");
+    expect(url.searchParams.get("genres")).toBe("indie,folk");
+  });
+
+  it("getTonightMap omits the genres param when the list is empty", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0, date: "2026-04-21" } }),
+    );
+    await getTonightMap({ genres: [] });
+    const { url } = lastCall();
+    expect(url.searchParams.has("genres")).toBe(false);
+  });
+
+  it("getMapRecommendations forwards bbox + filters and unwraps data", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [{ id: "r-1" }], meta: { count: 1 } }),
+    );
+    const out = await getMapRecommendations({
+      swLat: 38.8,
+      swLng: -77.1,
+      neLat: 38.95,
+      neLng: -76.9,
+      category: "food_drink",
+      sort: "top",
+      limit: 50,
+      sessionId: "guest-abc",
+    });
+    expect(out).toEqual([{ id: "r-1" }]);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/recommendations");
+    expect(url.searchParams.get("sw_lat")).toBe("38.8");
+    expect(url.searchParams.get("ne_lng")).toBe("-76.9");
+    expect(url.searchParams.get("category")).toBe("food_drink");
+    expect(url.searchParams.get("sort")).toBe("top");
+    expect(url.searchParams.get("limit")).toBe("50");
+    expect(url.searchParams.get("session_id")).toBe("guest-abc");
+  });
+
+  it("getMapRecommendations forwards the bearer token when provided", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0 } }),
+    );
+    await getMapRecommendations({
+      swLat: 0,
+      swLng: 0,
+      neLat: 1,
+      neLng: 1,
+      token: "tok",
+    });
+    expect(lastCall().init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("getMapKitToken unwraps the envelope and encodes origin", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { token: "mk.tok", expires_at: 1_700_000_000 } }),
+    );
+    const out = await getMapKitToken({ origin: "https://greenroom.fm" });
+    expect(out.token).toBe("mk.tok");
+    expect(out.expires_at).toBe(1_700_000_000);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/token");
+    expect(url.searchParams.get("origin")).toBe("https://greenroom.fm");
+  });
+
+  it("getNearMeEvents forwards lat/lng/radius/window/limit and unwraps", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0, window: "tonight" } }),
+    );
+    const out = await getNearMeEvents({
+      latitude: 38.9,
+      longitude: -77.0,
+      radiusKm: 5,
+      window: "tonight",
+      limit: 10,
+    });
+    expect(out.meta.count).toBe(0);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/near-me");
+    expect(url.searchParams.get("lat")).toBe("38.9");
+    expect(url.searchParams.get("lng")).toBe("-77");
+    expect(url.searchParams.get("radius_km")).toBe("5");
+    expect(url.searchParams.get("window")).toBe("tonight");
+    expect(url.searchParams.get("limit")).toBe("10");
+  });
+
+  it("submitMapRecommendation posts venue_id when supplied and uses bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { id: "r-1" } }));
+    await submitMapRecommendation(
+      {
+        query: "Tip",
+        by: "name",
+        venueId: "v-1",
+        category: "food_drink",
+        body: "great spot",
+      },
+      "tok",
+    );
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/recommendations");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+    const body = JSON.parse(init.body as string);
+    expect(body.venue_id).toBe("v-1");
+    expect(body.honeypot).toBe("");
+    expect(body.session_id).toBeUndefined();
+  });
+
+  it("submitMapRecommendation forwards session_id when anonymous", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { id: "r-1" } }));
+    await submitMapRecommendation(
+      {
+        query: "Tip",
+        by: "address",
+        lat: 38.9,
+        lng: -77.0,
+        category: "transit",
+        body: "metro entrance",
+        sessionId: "guest-xyz",
+      },
+      null,
+    );
+    const { init } = lastCall();
+    expect(init.headers.Authorization).toBeUndefined();
+    expect(JSON.parse(init.body as string).session_id).toBe("guest-xyz");
+  });
+
+  it("voteOnMapRecommendation strips session_id when token is present", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          likes: 1,
+          dislikes: 0,
+          viewer_vote: 1,
+          suppressed: false,
+        },
+      }),
+    );
+    await voteOnMapRecommendation("r-1", "tok", 1, "guest-xyz");
+    const { init, url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/recommendations/r-1/vote");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      value: 1,
+      session_id: undefined,
+    });
+  });
+
+  it("voteOnMapRecommendation forwards session_id when anonymous", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          likes: 0,
+          dislikes: 1,
+          viewer_vote: -1,
+          suppressed: false,
+        },
+      }),
+    );
+    await voteOnMapRecommendation("r-1", null, -1, "guest-xyz");
+    expect(JSON.parse(lastCall().init.body as string).session_id).toBe(
+      "guest-xyz",
+    );
+  });
+
+  it("searchNearbyPlaces joins categories with commas and unwraps", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [{ name: "place" }], meta: { count: 1 } }),
+    );
+    const out = await searchNearbyPlaces(
+      {
+        latitude: 38.9,
+        longitude: -77.0,
+        q: "coffee",
+        categories: ["food", "drink"],
+        radiusM: 500,
+        limit: 5,
+      },
+      "tok",
+    );
+    expect(out).toEqual([{ name: "place" }]);
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/maps/places/search");
+    expect(url.searchParams.get("categories")).toBe("food,drink");
+    expect(url.searchParams.get("radius_m")).toBe("500");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("searchNearbyPlaces omits categories param when list is empty", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0 } }),
+    );
+    await searchNearbyPlaces(
+      { latitude: 0, longitude: 0, categories: [] },
+      "tok",
+    );
+    expect(lastCall().url.searchParams.has("categories")).toBe(false);
+  });
+
+  it("listVenueTips passes session_id when anonymous, drops it when signed in", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0 } }),
+    );
+    await listVenueTips("black-cat", null, {
+      category: "food_drink",
+      sessionId: "guest-xyz",
+    });
+    const anonCall = lastCall();
+    expect(anonCall.url.pathname).toBe("/api/v1/venues/black-cat/tips");
+    expect(anonCall.url.searchParams.get("session_id")).toBe("guest-xyz");
+    expect(anonCall.url.searchParams.get("category")).toBe("food_drink");
+
+    fetchMock.mockResolvedValueOnce(json({ data: [], meta: { count: 0 } }));
+    await listVenueTips("black-cat", "tok", { sessionId: "guest-xyz" });
+    expect(lastCall().url.searchParams.has("session_id")).toBe(false);
+  });
+});
+
+describe("api/feedback", () => {
+  it("submitFeedback POSTs the payload anonymously when no token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { id: "f-1", kind: "bug" } }),
+    );
+    const out = await submitFeedback({ message: "broken", kind: "bug" });
+    expect(out.id).toBe("f-1");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/feedback");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBeUndefined();
+    expect(init.body).toBe(
+      JSON.stringify({ message: "broken", kind: "bug" }),
+    );
+  });
+
+  it("submitFeedback forwards bearer token when supplied", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { id: "f-2", kind: "feature" } }),
+    );
+    await submitFeedback({ message: "idea", kind: "feature" }, "tok");
+    expect(lastCall().init.headers.Authorization).toBe("Bearer tok");
+  });
+});
+
+describe("api/follows", () => {
+  it("searchArtists encodes query + limit and unwraps the artists list", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { artists: [{ id: "a-1", name: "Band" }] } }),
+    );
+    const out = await searchArtists("tok", "wilco", 5);
+    expect(out).toEqual([{ id: "a-1", name: "Band" }]);
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/artists");
+    expect(url.searchParams.get("query")).toBe("wilco");
+    expect(url.searchParams.get("limit")).toBe("5");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("followArtist POSTs to the per-artist endpoint and URL-encodes the id", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { followed: true } }));
+    await followArtist("tok", "a/b");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/followed-artists/a%2Fb");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("unfollowArtist DELETEs the per-artist endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await unfollowArtist("tok", "a-1");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/followed-artists/a-1");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("listFollowedArtists paginates with defaults and forwards token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: [],
+        meta: { page: 1, per_page: 50, total: 0, has_next: false },
+      }),
+    );
+    await listFollowedArtists("tok");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/followed-artists");
+    expect(url.searchParams.get("page")).toBe("1");
+    expect(url.searchParams.get("per_page")).toBe("50");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("followVenuesBulk POSTs the venue_ids array and unwraps the count", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { written: 3 } }));
+    const out = await followVenuesBulk("tok", ["v-1", "v-2", "v-3"]);
+    expect(out).toBe(3);
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/followed-venues");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(
+      JSON.stringify({ venue_ids: ["v-1", "v-2", "v-3"] }),
+    );
+  });
+
+  it("unfollowVenue DELETEs and URL-encodes the id", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await unfollowVenue("tok", "v 1");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/followed-venues/v%201");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("listFollowedVenues paginates with defaults", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: [],
+        meta: { page: 1, per_page: 50, total: 0, has_next: false },
+      }),
+    );
+    await listFollowedVenues("tok", 2, 25);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/followed-venues");
+    expect(url.searchParams.get("page")).toBe("2");
+    expect(url.searchParams.get("per_page")).toBe("25");
+  });
+});
+
+describe("api/onboarding", () => {
+  it("getOnboardingState GETs the state with bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { completed: false, skipped_entirely_at: null } }),
+    );
+    const out = await getOnboardingState("tok");
+    expect(out.completed).toBe(false);
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/me/onboarding");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("markStepComplete POSTs the per-step endpoint and URL-encodes the step", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { completed: false, skipped_entirely_at: null } }),
+    );
+    await markStepComplete("tok", "music_services");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe(
+      "/api/v1/me/onboarding/steps/music_services/complete",
+    );
+    expect(init.method).toBe("POST");
+  });
+
+  it("skipOnboardingEntirely POSTs to the skip-all endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          completed: false,
+          skipped_entirely_at: "2026-04-29T00:00:00.000Z",
+        },
+      }),
+    );
+    await skipOnboardingEntirely("tok");
+    expect(lastCall().url.pathname).toBe("/api/v1/me/onboarding/skip-all");
+  });
+
+  it("dismissOnboardingBanner POSTs to the banner/dismiss endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { completed: false, skipped_entirely_at: null } }),
+    );
+    await dismissOnboardingBanner("tok");
+    expect(lastCall().url.pathname).toBe(
+      "/api/v1/me/onboarding/banner/dismiss",
+    );
+  });
+
+  it("incrementBrowseSessions POSTs to the sessions/increment endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { completed: false, skipped_entirely_at: null } }),
+    );
+    await incrementBrowseSessions("tok");
+    expect(lastCall().url.pathname).toBe(
+      "/api/v1/me/onboarding/sessions/increment",
+    );
+  });
+
+  it("listGenres GETs the public catalog and unwraps the genres list", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { genres: [{ slug: "indie", name: "Indie" }] } }),
+    );
+    const out = await listGenres();
+    expect(out).toEqual([{ slug: "indie", name: "Indie" }]);
+    expect(lastCall().url.pathname).toBe("/api/v1/genres");
+  });
+});
+
+describe("api/venue-comments", () => {
+  it("listVenueComments forwards filters + session_id when anonymous", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0 } }),
+    );
+    await listVenueComments("black-cat", null, {
+      category: "vibes",
+      sort: "top",
+      limit: 25,
+      sessionId: "guest-xyz",
+    });
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/venues/black-cat/comments");
+    expect(url.searchParams.get("category")).toBe("vibes");
+    expect(url.searchParams.get("sort")).toBe("top");
+    expect(url.searchParams.get("limit")).toBe("25");
+    expect(url.searchParams.get("session_id")).toBe("guest-xyz");
+  });
+
+  it("listVenueComments drops session_id when token is present", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: [], meta: { count: 0 } }),
+    );
+    await listVenueComments("black-cat", "tok", { sessionId: "guest-xyz" });
+    const { url, init } = lastCall();
+    expect(url.searchParams.has("session_id")).toBe(false);
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("submitVenueComment POSTs body + category + empty honeypot", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { id: "c-1", body: "hi" } }),
+    );
+    await submitVenueComment("black-cat", "tok", {
+      category: "vibes",
+      body: "hi",
+    });
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/venues/black-cat/comments");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ category: "vibes", body: "hi", honeypot: "" });
+  });
+
+  it("submitVenueComment forwards a non-empty honeypot when supplied", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { id: "c-2", body: "hi" } }),
+    );
+    await submitVenueComment("black-cat", "tok", {
+      category: "tickets",
+      body: "hi",
+      honeypot: "spam",
+    });
+    expect(JSON.parse(lastCall().init.body as string).honeypot).toBe("spam");
+  });
+
+  it("voteOnVenueComment forwards session_id only when signed out", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          likes: 1,
+          dislikes: 0,
+          viewer_vote: 1,
+          comment_id: "c-1",
+        },
+      }),
+    );
+    await voteOnVenueComment("black-cat", "c-1", null, 1, "guest-xyz");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe(
+      "/api/v1/venues/black-cat/comments/c-1/vote",
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string).session_id).toBe("guest-xyz");
+
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: {
+          likes: 1,
+          dislikes: 0,
+          viewer_vote: 1,
+          comment_id: "c-1",
+        },
+      }),
+    );
+    await voteOnVenueComment("black-cat", "c-1", "tok", 1, "guest-xyz");
+    expect(JSON.parse(lastCall().init.body as string).session_id).toBeUndefined();
+  });
+
+  it("deleteVenueComment DELETEs and forwards bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await deleteVenueComment("black-cat", "c-1", "tok");
+    const { url, init } = lastCall();
+    expect(url.pathname).toBe("/api/v1/venues/black-cat/comments/c-1");
+    expect(init.method).toBe("DELETE");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+});
+
+describe("api/events (pricing helpers)", () => {
+  it("getEventPricing unwraps the pricing envelope and URL-encodes the id", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { sources: [], refreshed_at: null } }),
+    );
+    const out = await getEventPricing("a/b");
+    expect(out).toEqual({ sources: [], refreshed_at: null });
+    expect(lastCall().url.pathname).toBe("/api/v1/events/a%2Fb/pricing");
+  });
+
+  it("getPricingFreshness returns the refreshed_at field, or null", async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { refreshed_at: null } }));
+    expect(await getPricingFreshness()).toBeNull();
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { refreshed_at: "2026-04-29T00:00:00Z" } }),
+    );
+    expect(await getPricingFreshness()).toBe("2026-04-29T00:00:00Z");
+  });
+});
+
+describe("api/venues (extras)", () => {
+  it("getVenueMapSnapshot unwraps and forwards width/height/scheme", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ data: { url: "https://snap", width: 800, height: 400 } }),
+    );
+    const out = await getVenueMapSnapshot({
+      slug: "black-cat",
+      width: 800,
+      height: 400,
+      scheme: "light",
+    });
+    expect(out?.url).toBe("https://snap");
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/venues/black-cat/map-snapshot");
+    expect(url.searchParams.get("width")).toBe("800");
+    expect(url.searchParams.get("height")).toBe("400");
+    expect(url.searchParams.get("scheme")).toBe("light");
+  });
+
+  it("getVenueMapSnapshot fails soft and returns null on ApiRequestError", async () => {
+    fetchMock.mockRejectedValueOnce(
+      new ApiRequestError(503, "MAP_UNAVAILABLE", "boom"),
+    );
+    expect(await getVenueMapSnapshot({ slug: "black-cat" })).toBeNull();
+  });
+
+  it("getVenueMapSnapshot rethrows non-ApiRequestError failures", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("network"));
+    await expect(
+      getVenueMapSnapshot({ slug: "black-cat" }),
+    ).rejects.toBeInstanceOf(TypeError);
+  });
+
+  it("getVenueNearbyPois joins categories and returns the data array", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: [{ name: "Cafe", category: "food" }],
+        meta: { count: 1 },
+      }),
+    );
+    const out = await getVenueNearbyPois({
+      slug: "black-cat",
+      limit: 5,
+      categories: ["food", "drink"],
+    });
+    expect(out).toEqual([{ name: "Cafe", category: "food" }]);
+    const { url } = lastCall();
+    expect(url.pathname).toBe("/api/v1/venues/black-cat/nearby");
+    expect(url.searchParams.get("categories")).toBe("food,drink");
+    expect(url.searchParams.get("limit")).toBe("5");
+  });
+
+  it("getVenueNearbyPois fails soft and returns [] on ApiRequestError", async () => {
+    fetchMock.mockRejectedValueOnce(
+      new ApiRequestError(503, "POIS_UNAVAILABLE", "boom"),
+    );
+    expect(
+      await getVenueNearbyPois({ slug: "black-cat" }),
+    ).toEqual([]);
+  });
+
+  it("getVenueNearbyPois rethrows non-ApiRequestError failures", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("network"));
+    await expect(
+      getVenueNearbyPois({ slug: "black-cat" }),
+    ).rejects.toBeInstanceOf(TypeError);
   });
 });

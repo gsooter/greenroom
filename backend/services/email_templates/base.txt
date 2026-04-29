@@ -1,0 +1,25 @@
+{{ heading }}
+{{ '=' * heading | length }}
+
+{% if intro %}{{ intro | striptags }}
+
+{% endif %}{% if shows %}AT A GLANCE
+-----------
+{% for show in shows %}{{ show.date_short }}  {{ show.headliner }}
+            {{ show.venue }} · {{ show.time_short }}
+{% endfor %}
+{% endif %}{% if cta_url %}{{ cta_label or 'See all shows' }}: {{ cta_url }}
+
+{% endif %}{% if shows %}MORE ABOUT EACH SHOW
+--------------------
+{% for show in shows %}* {{ show.headliner }}
+  {{ show.date_short }} · {{ show.time_short }} — {{ show.venue }}
+  {{ show.url }}
+
+{% endfor %}{% endif %}--
+You're receiving this because you signed up for Greenroom and turned
+this notification on.
+
+Unsubscribe: {{ unsubscribe_url }}
+{% if manage_url %}Manage email preferences: {{ manage_url }}
+{% endif %}

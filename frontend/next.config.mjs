@@ -33,10 +33,31 @@ function buildContentSecurityPolicy(env) {
   const appleMusicApi = "https://api.music.apple.com";
   const appleMusicFrames = "https://*.music.apple.com";
 
+  // MapKit JS loads its bootstrap script from cdn.apple-mapkit.com, then
+  // opens XHR/fetch connections to Apple's tile/config endpoints to render
+  // the map. Without these on connect-src the map loads a grey background
+  // and then the tile fetches fail silently.
+  const mapKitScript = "https://cdn.apple-mapkit.com";
+  const mapKitConnect = [
+    "https://cdn.apple-mapkit.com",
+    "https://cdn2.apple-mapkit.com",
+    "https://cdn3.apple-mapkit.com",
+    "https://cdn4.apple-mapkit.com",
+    "https://*.ls.apple.com",
+  ].join(" ");
+
+  // Sentry's browser SDK posts envelope payloads to the org-specific
+  // ingest subdomain (e.g. o12345.ingest.us.sentry.io). The wildcard
+  // covers every Sentry region without needing the DSN at config-build
+  // time.
+  const sentryIngest = "https://*.ingest.sentry.io https://*.ingest.us.sentry.io";
+
   const connectSources = [
     "'self'",
     apiOrigin,
     appleMusicApi,
+    mapKitConnect,
+    sentryIngest,
     isDev && "ws://127.0.0.1:3000",
     isDev && "ws://localhost:3000",
   ]
@@ -44,8 +65,8 @@ function buildContentSecurityPolicy(env) {
     .join(" ");
 
   const scriptSrc = isDev
-    ? `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${appleMusicScript}`
-    : `script-src 'self' 'unsafe-inline' ${appleMusicScript}`;
+    ? `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${appleMusicScript} ${mapKitScript}`
+    : `script-src 'self' 'unsafe-inline' ${appleMusicScript} ${mapKitScript}`;
 
   return csp([
     "default-src 'self'",
@@ -90,8 +111,11 @@ const securityHeaders = [
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "DENY" },
   {
+    // Geolocation is allowed for this origin so the /near-me surface can
+    // call navigator.geolocation.getCurrentPosition. An empty value would
+    // disable the API for first-party code as well as embeds.
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), payment=()",
+    value: "camera=(), microphone=(), geolocation=(self), payment=()",
   },
 ];
 
@@ -107,4 +131,19 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// Wrap with Sentry only when a DSN is configured. Avoids dragging the
+// Sentry build plugin into local dev where contributors don't need it.
+const sentryConfigured = Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN);
+let exportedConfig = nextConfig;
+if (sentryConfigured) {
+  const { withSentryConfig } = await import("@sentry/nextjs");
+  exportedConfig = withSentryConfig(nextConfig, {
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    silent: !process.env.CI,
+    widenClientFileUpload: true,
+    disableLogger: true,
+  });
+}
+
+export default exportedConfig;

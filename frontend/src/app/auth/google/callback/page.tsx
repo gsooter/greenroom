@@ -17,6 +17,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 
 import { completeGoogleOAuth } from "@/lib/api/auth-identity";
 import { useAuth } from "@/lib/auth";
+import { resolvePostAuthDestination } from "@/lib/welcome-redirect";
 
 type Status = "pending" | "error";
 
@@ -77,7 +78,7 @@ function GoogleCallbackInner(): JSX.Element {
       try {
         const { token, refresh_token } = await completeGoogleOAuth(code, state);
         await login(token, refresh_token);
-        router.replace("/for-you");
+        router.replace(await resolvePostAuthDestination(token));
       } catch (err) {
         setStatus("error");
         setMessage(

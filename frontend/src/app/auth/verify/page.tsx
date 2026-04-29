@@ -18,6 +18,8 @@ import { Suspense, useEffect, useRef, useState } from "react";
 
 import { verifyMagicLink } from "@/lib/api/auth-identity";
 import { useAuth } from "@/lib/auth";
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
+import { resolvePostAuthDestination } from "@/lib/welcome-redirect";
 
 type Status = "pending" | "error";
 
@@ -66,7 +68,7 @@ function MagicLinkVerifyInner(): JSX.Element {
       try {
         const { token: jwt, refresh_token } = await verifyMagicLink(token);
         await login(jwt, refresh_token);
-        router.replace("/for-you");
+        router.replace(await resolvePostAuthDestination(jwt));
       } catch (err) {
         setStatus("error");
         setMessage(
@@ -90,6 +92,16 @@ function MagicLinkVerifyInner(): JSX.Element {
         </h1>
         <p className="mt-2 text-sm text-blush-accent" role="alert">
           {message}
+        </p>
+        <p className="mt-3 text-xs text-text-secondary">
+          Still stuck? Email{" "}
+          <a
+            href={SUPPORT_MAILTO}
+            className="text-text-primary underline underline-offset-2"
+          >
+            {SUPPORT_EMAIL}
+          </a>{" "}
+          and we&apos;ll get you in.
         </p>
         <Link
           href="/login"

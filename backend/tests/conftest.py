@@ -44,6 +44,7 @@ def _generate_test_es256_pem() -> str:
 
 
 APPLE_MUSIC_TEST_PEM = _generate_test_es256_pem()
+APPLE_MAPKIT_TEST_PEM = _generate_test_es256_pem()
 
 # ---------------------------------------------------------------------------
 # Environment stubs for Pydantic Settings
@@ -71,14 +72,15 @@ _TEST_ENV = {
     "SEATGEEK_CLIENT_ID": "test-sg-id",
     "SEATGEEK_CLIENT_SECRET": "test-sg-secret",
     "ADMIN_SECRET_KEY": "test-admin-secret",
-    "SLACK_WEBHOOK_URL": "x",
+    "SLACK_WEBHOOK_OPS_URL": "x",
+    "SLACK_WEBHOOK_DIGEST_URL": "",
+    "SLACK_WEBHOOK_FEEDBACK_URL": "",
     "ALERT_EMAIL": "x@x.com",
     "POSTHOG_API_KEY": "x",
     "POSTHOG_HOST": "http://localhost:8000",
     "KNUCKLES_URL": KNUCKLES_TEST_URL,
     "KNUCKLES_CLIENT_ID": KNUCKLES_TEST_CLIENT_ID,
     "KNUCKLES_CLIENT_SECRET": "test-knuckles-secret",
-    "KNUCKLES_JWKS_CACHE_TTL_SECONDS": "3600",
     "TIDAL_CLIENT_ID": "test-tidal-id",
     "TIDAL_CLIENT_SECRET": "test-tidal-secret",
     "TIDAL_REDIRECT_URI": "http://localhost/callback/tidal",
@@ -86,6 +88,9 @@ _TEST_ENV = {
     "APPLE_MUSIC_KEY_ID": "TESTKEY001",
     "APPLE_MUSIC_PRIVATE_KEY": APPLE_MUSIC_TEST_PEM,
     "APPLE_MUSIC_BUNDLE_ID": "media.greenroom.test.web",
+    "APPLE_MAPKIT_TEAM_ID": "TESTTEAM01",
+    "APPLE_MAPKIT_KEY_ID": "TESTMAP001",
+    "APPLE_MAPKIT_PRIVATE_KEY": APPLE_MAPKIT_TEST_PEM,
 }
 
 for _key, _value in _TEST_ENV.items():
@@ -129,29 +134,22 @@ def _disable_rate_limiter(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_jwks_disk_cache(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[None]:
-    """Redirect the JWKS disk cache to a per-test tmp path.
+def _reset_knuckles_client() -> Iterator[None]:
+    """Drop the SDK singleton between tests.
 
-    The real cache lives in a shared tempdir so Gunicorn workers in
-    the same container can share it. In tests we want each case to
-    start with an empty disk and leave no trace behind.
+    Cases that override Knuckles env vars or stub the JWKS endpoint
+    need a fresh :class:`KnucklesClient` so the cached transport and
+    JWKS verifier rebuild against the new state.
 
     Yields:
-        None; teardown happens via ``monkeypatch`` scope + ``tmp_path``
-        cleanup.
+        None; teardown drops the cache again so the next test starts
+        clean.
     """
-    from pathlib import Path
+    from backend.core import knuckles as knuckles_module
 
-    from backend.core import knuckles_client
-
-    monkeypatch.setattr(
-        knuckles_client,
-        "_disk_cache_path",
-        lambda: Path(tmp_path) / "knuckles_jwks.json",
-    )
+    knuckles_module.reset_client()
     yield
+    knuckles_module.reset_client()
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +223,10 @@ def stub_knuckles_jwks(
 ) -> str:
     """Stub the Knuckles JWKS endpoint with the session test key.
 
-    Imported lazily because ``backend.core.knuckles_client`` reads
-    settings at import time and we want the autouse env stubs above
-    to be in place first.
+    Patches :meth:`jwt.PyJWKClient.fetch_data`, which the SDK's JWKS
+    verifier uses under the hood. Each test that takes this fixture
+    also benefits from the autouse client reset above so the SDK
+    singleton picks up the patched fetcher on first use.
 
     Args:
         monkeypatch: pytest's monkeypatch fixture.
@@ -237,24 +236,8 @@ def stub_knuckles_jwks(
         The ``kid`` the test key is published under, so callers can
         sign tokens with a matching header.
     """
-    from backend.core import knuckles_client
-
-    knuckles_client.reset_jwks_cache()
     document = _build_jwks(knuckles_test_key.public_key(), kid=KNUCKLES_TEST_KID)
-
-    class _StubJWKSResponse:
-        status_code = 200
-
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict[str, Any]:
-            return document
-
-    def fake_get(url: str, timeout: int) -> _StubJWKSResponse:
-        return _StubJWKSResponse()
-
-    monkeypatch.setattr(knuckles_client.requests, "get", fake_get)
+    monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", lambda _self: document)
     return KNUCKLES_TEST_KID
 
 

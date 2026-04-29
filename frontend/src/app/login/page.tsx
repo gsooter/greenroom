@@ -24,7 +24,9 @@ import {
   startGoogleOAuth,
   startPasskeyAuthentication,
 } from "@/lib/api/auth-identity";
+import { markStepComplete } from "@/lib/api/onboarding";
 import { useAuth } from "@/lib/auth";
+import { resolvePostAuthDestination } from "@/lib/welcome-redirect";
 import {
   decodeAuthenticationOptions,
   encodeAuthenticationCredential,
@@ -67,7 +69,14 @@ export default function LoginPage(): JSX.Element {
           <PasskeyButton
             onAuthenticated={async (nextToken, nextRefreshToken) => {
               await login(nextToken, nextRefreshToken);
-              router.replace("/for-you");
+              // Signing in via passkey proves the user already has
+              // one, so auto-complete that step of /welcome.
+              try {
+                await markStepComplete(nextToken, "passkey");
+              } catch {
+                /* non-fatal */
+              }
+              router.replace(await resolvePostAuthDestination(nextToken));
             }}
           />
         </div>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="x-apple-disable-message-reformatting">
+<title>{{ heading }}</title>
+{% if structured_data %}
+<script type="application/ld+json">
+{{ structured_data | tojson }}
+</script>
+{% endif %}
+<style>
+  /* Inlined critical styles. Most email clients strip <style>, but
+     Apple Mail and Gmail webview honor it for their own previews. */
+  body { margin: 0; padding: 0; background: #F7F0EE; }
+  .gr-wrap { width: 100%; background: #F7F0EE; padding: 24px 0; }
+  .gr-card { max-width: 560px; margin: 0 auto; background: #FFFFFF;
+             border: 1px solid #E0D4D0; border-radius: 12px;
+             overflow: hidden; }
+  .gr-header { background: #1E3D2A; color: #F7F0EE; padding: 16px 24px;
+               font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+               font-weight: 600; letter-spacing: 0.4px; }
+  .gr-body { padding: 24px; color: #1A2820;
+             font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+             font-size: 15px; line-height: 1.5; }
+  .gr-heading { font-size: 24px; font-weight: 600; margin: 0 0 6px 0;
+                letter-spacing: -0.2px; }
+  .gr-intro { color: #1A2820; margin: 0 0 20px 0; }
+  .gr-section-label { font-size: 11px; font-weight: 700;
+                      letter-spacing: 1.4px; text-transform: uppercase;
+                      color: #2D5A3D; margin: 0 0 10px 0; }
+  /* At-a-glance — one row per show, no images, scan-only */
+  .gr-glance { width: 100%; border-collapse: collapse;
+               margin: 0 0 22px 0; }
+  .gr-glance td { padding: 12px 0; border-bottom: 1px solid #E0D4D0;
+                  vertical-align: top; }
+  .gr-glance tr:last-child td { border-bottom: none; }
+  .gr-date-pill { display: inline-block;
+                  background: #EFE6E2; color: #1E3D2A;
+                  font-size: 11px; font-weight: 700;
+                  letter-spacing: 0.6px;
+                  padding: 6px 10px; border-radius: 6px;
+                  white-space: nowrap; min-width: 78px;
+                  text-align: center; }
+  .gr-glance-info { padding-left: 14px !important; }
+  .gr-glance-title { display: block; color: #1A2820;
+                     text-decoration: none;
+                     font-weight: 600; font-size: 15px;
+                     line-height: 1.3; margin-bottom: 2px; }
+  .gr-glance-meta { color: #7A6A65; font-size: 13px; }
+  /* CTA button between sections */
+  .gr-cta-wrap { text-align: center; margin: 0 0 28px 0; }
+  .gr-cta { display: inline-block; background: #2D5A3D; color: #F7F0EE;
+            text-decoration: none; padding: 12px 22px; border-radius: 8px;
+            font-weight: 600; font-size: 14px;
+            letter-spacing: 0.2px; }
+  /* Hero detail cards */
+  .gr-detail-rule { border: none; border-top: 1px solid #E0D4D0;
+                    margin: 0 0 22px 0; }
+  .gr-show { border: 1px solid #E0D4D0; border-radius: 10px;
+             margin: 0 0 14px 0; overflow: hidden; }
+  .gr-show-image { display: block; width: 100%; max-width: 100%;
+                   height: auto; border: 0; }
+  .gr-show-body { padding: 14px 16px; }
+  .gr-show-date { font-size: 11px; font-weight: 700;
+                  letter-spacing: 1px; color: #2D5A3D;
+                  text-transform: uppercase; margin: 0 0 4px 0; }
+  .gr-show-title { font-weight: 600; font-size: 17px;
+                   line-height: 1.25; margin: 0 0 4px 0; }
+  .gr-show-title a { color: #1A2820; text-decoration: none; }
+  .gr-show-meta { color: #7A6A65; font-size: 13px; margin: 0; }
+  /* Footer */
+  .gr-footer { padding: 16px 24px; color: #7A6A65; font-size: 12px;
+               font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+               border-top: 1px solid #E0D4D0; }
+  .gr-footer a { color: #1A2820; }
+  .gr-preheader { display: none !important; visibility: hidden;
+                  opacity: 0; height: 0; width: 0; overflow: hidden;
+                  mso-hide: all; }
+</style>
+</head>
+<body>
+<div class="gr-preheader">{{ preheader }}</div>
+<div class="gr-wrap">
+  <div class="gr-card">
+    <div class="gr-header">GREENROOM</div>
+    <div class="gr-body">
+      <h1 class="gr-heading">{{ heading }}</h1>
+      {% if intro %}<p class="gr-intro">{{ intro }}</p>{% endif %}
+
+      {% if shows %}
+      <p class="gr-section-label">At a glance</p>
+      <table class="gr-glance" role="presentation" cellpadding="0" cellspacing="0">
+        {% for show in shows %}
+        <tr>
+          <td style="width: 1%;">
+            <a href="{{ show.url }}" style="text-decoration: none;">
+              <span class="gr-date-pill">{{ show.date_short }}</span>
+            </a>
+          </td>
+          <td class="gr-glance-info">
+            <a href="{{ show.url }}" class="gr-glance-title">{{ show.headliner }}</a>
+            <div class="gr-glance-meta">{{ show.venue }} · {{ show.time_short }}</div>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+
+      {% if cta_url %}
+      <p class="gr-cta-wrap">
+        <a href="{{ cta_url }}" class="gr-cta">{{ cta_label or 'See all shows' }}</a>
+      </p>
+      {% endif %}
+
+      {% if shows %}
+      <hr class="gr-detail-rule">
+      <p class="gr-section-label">More about each show</p>
+      {% for show in shows %}
+        {% include "_show_card.html" %}
+      {% endfor %}
+      {% endif %}
+    </div>
+    <div class="gr-footer">
+      <p style="margin: 0 0 8px 0;">
+        You're receiving this because you signed up for Greenroom and
+        turned this notification on.
+      </p>
+      <p style="margin: 0;">
+        <a href="{{ unsubscribe_url }}">Unsubscribe</a>
+        {% if manage_url %}
+        &nbsp;·&nbsp;
+        <a href="{{ manage_url }}">Manage email preferences</a>
+        {% endif %}
+      </p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

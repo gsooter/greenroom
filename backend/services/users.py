@@ -11,12 +11,14 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from backend.core.config import get_settings
 from backend.core.exceptions import (
     CITY_NOT_FOUND,
     USER_NOT_FOUND,
     NotFoundError,
     ValidationError,
 )
+from backend.core.genres import GENRE_SLUGS
 from backend.data.models.users import DigestFrequency, OAuthProvider, User
 from backend.data.repositories import cities as cities_repo
 from backend.data.repositories import users as users_repo
@@ -103,11 +105,36 @@ def deactivate_user(session: Session, user: User) -> User:
     return users_repo.update_user(session, user, is_active=False)
 
 
+def reactivate_user(session: Session, user: User) -> User:
+    """Flip ``is_active`` back to True for a returning soft-deleted user.
+
+    Called from the Knuckles session-exchange path when a previously
+    deactivated account signs in again. A fresh successful identity
+    exchange is unambiguous intent to return, and since deactivation
+    is a soft delete — no rows are purged — the account is restored
+    exactly as the user left it (saved events, follows, preferences).
+
+    Args:
+        session: Active SQLAlchemy session.
+        user: The :class:`User` row whose ``is_active`` flag is False.
+
+    Returns:
+        The :class:`User` instance with ``is_active=True``.
+    """
+    return users_repo.update_user(session, user, is_active=True)
+
+
 def serialize_user(user: User) -> dict[str, Any]:
     """Serialize a user for the authenticated ``/me`` endpoint.
 
     Intentionally omits ``is_active`` and anything OAuth-token-related
     — those are internal state the client never needs.
+
+    Includes ``spotify_beta_access`` so the settings page can render
+    the Spotify card as either a working Connect or a disabled
+    "Limited access" card. The flag is recomputed on every call so an
+    admin can grant access by editing the env var without invalidating
+    sessions.
 
     Args:
         user: The user to serialize.
@@ -124,11 +151,33 @@ def serialize_user(user: User) -> dict[str, Any]:
         "digest_frequency": user.digest_frequency.value,
         "genre_preferences": user.genre_preferences or [],
         "notification_settings": user.notification_settings or {},
+        "spotify_beta_access": is_spotify_beta_user(user),
         "last_login_at": (
             user.last_login_at.isoformat() if user.last_login_at else None
         ),
         "created_at": user.created_at.isoformat(),
     }
+
+
+def is_spotify_beta_user(user: User) -> bool:
+    """Return whether ``user`` is allowlisted for the Spotify dev beta.
+
+    The Spotify app currently runs in development mode, which caps
+    real OAuth to 25 testers. Approved testers are listed in the
+    ``SPOTIFY_BETA_EMAILS`` env var. Everyone else sees the Spotify
+    card disabled with "Limited access" copy so the option doesn't
+    feel like a broken promise.
+
+    Args:
+        user: The authenticated user.
+
+    Returns:
+        True when the user's email (case-insensitive) is in the
+        allowlist, False otherwise.
+    """
+    if not user.email:
+        return False
+    return user.email.lower() in get_settings().spotify_beta_email_set()
 
 
 _ARTIST_PREVIEW_LIMIT = 24
@@ -208,9 +257,11 @@ def _slim_artist_preview(artist: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": artist.get("id"),
         "name": name if isinstance(name, str) else "",
-        "genres": [g for g in genres if isinstance(g, str)]
-        if isinstance(genres, list)
-        else [],
+        "genres": (
+            [g for g in genres if isinstance(g, str)]
+            if isinstance(genres, list)
+            else []
+        ),
         "image_url": image_url if isinstance(image_url, str) else None,
     }
 
@@ -317,24 +368,40 @@ def _coerce_digest_frequency(value: Any) -> DigestFrequency:
 def _coerce_genre_list(value: Any) -> list[str] | None:
     """Coerce a ``genre_preferences`` patch value to ``list[str] | None``.
 
+    Each submitted slug is validated against
+    :data:`backend.core.genres.GENRE_SLUGS` — unknown slugs are rejected
+    so a client bug or stale UI build cannot write values the backend
+    won't recognize later.
+
     Args:
         value: Raw value from the request body.
 
     Returns:
-        A cleaned list of genre strings, or None if the caller cleared it.
+        A deduped list of known genre slugs, or None if the caller
+        cleared the field.
 
     Raises:
-        ValidationError: If ``value`` is not a list of strings or null.
+        ValidationError: If ``value`` is not a list of strings or any
+            submitted slug is not in the canonical set.
     """
     if value is None:
         return None
     if not isinstance(value, list):
         raise ValidationError("genre_preferences must be an array of strings or null.")
+    seen: set[str] = set()
     cleaned: list[str] = []
     for genre in value:
         if not isinstance(genre, str):
             raise ValidationError("genre_preferences must be an array of strings.")
         trimmed = genre.strip()
-        if trimmed:
-            cleaned.append(trimmed)
+        if not trimmed:
+            continue
+        if trimmed not in GENRE_SLUGS:
+            raise ValidationError(
+                f"genre_preferences contains unknown slug '{trimmed}'."
+            )
+        if trimmed in seen:
+            continue
+        seen.add(trimmed)
+        cleaned.append(trimmed)
     return cleaned

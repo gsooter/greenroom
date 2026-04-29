@@ -34,6 +34,8 @@ class _FakeVenue:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     name: str = "9:30 Club"
     slug: str = "930-club"
+    latitude: float | None = 38.9187
+    longitude: float | None = -77.0311
     city: _FakeCity | None = field(default_factory=_FakeCity)
 
 
@@ -61,6 +63,7 @@ class _FakeEvent:
     ticket_url: str | None = "https://tickets.test/x"
     min_price: float | None = 35.0
     max_price: float | None = 65.0
+    prices_refreshed_at: datetime | None = None
     source_url: str | None = "https://source.test"
     created_at: datetime = field(
         default_factory=lambda: datetime(2026, 4, 1, tzinfo=UTC)
@@ -147,6 +150,266 @@ def test_list_events_normalizes_enum_strings_and_delegates(
     assert captured["status"] is EventStatus.CONFIRMED
 
 
+def test_list_events_rejects_negative_price_max() -> None:
+    """Negative price ceilings are user errors, not silently coerced."""
+    with pytest.raises(ValidationError):
+        events_service.list_events(MagicMock(), price_max=-1.0)
+
+
+def test_list_events_resolves_artist_ids_to_spotify_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``artist_ids`` UUIDs are translated to Spotify IDs for the repo."""
+
+    @dataclass
+    class _FakeArtist:
+        id: uuid.UUID
+        spotify_id: str | None
+
+    enriched_id = uuid.uuid4()
+    unenriched_id = uuid.uuid4()
+    fake_artists = [
+        _FakeArtist(id=enriched_id, spotify_id="sp123"),
+        _FakeArtist(id=unenriched_id, spotify_id=None),
+    ]
+    monkeypatch.setattr(
+        events_service.artists_repo,
+        "list_artists_by_ids",
+        lambda _s, _ids: fake_artists,
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), artist_ids=[enriched_id, unenriched_id])
+    # Unenriched artists are dropped — only the resolved Spotify ID is sent.
+    assert captured["spotify_artist_ids"] == ["sp123"]
+
+
+def test_list_events_artist_ids_with_no_enrichment_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If none of the supplied artists are enriched, the empty list signals
+    'match nothing' to the repo rather than silently dropping the filter."""
+
+    @dataclass
+    class _FakeArtist:
+        id: uuid.UUID
+        spotify_id: str | None
+
+    a_id = uuid.uuid4()
+    monkeypatch.setattr(
+        events_service.artists_repo,
+        "list_artists_by_ids",
+        lambda _s, _ids: [_FakeArtist(id=a_id, spotify_id=None)],
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), artist_ids=[a_id])
+    assert captured["spotify_artist_ids"] == []
+
+
+def test_list_events_forwards_new_filters_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """artist_search, price_max, free_only, available_only round-trip to the repo."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(
+        MagicMock(),
+        artist_search="phoebe",
+        price_max=50.0,
+        free_only=True,
+        available_only=True,
+    )
+    assert captured["artist_search"] == "phoebe"
+    assert captured["price_max"] == 50.0
+    assert captured["free_only"] is True
+    assert captured["available_only"] is True
+
+
+def test_list_events_rejects_unknown_sort() -> None:
+    """A bogus ``sort`` value short-circuits with a ValidationError."""
+    with pytest.raises(ValidationError):
+        events_service.list_events(MagicMock(), sort="random")
+
+
+def test_list_events_for_you_with_user_id_forwards_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``sort='for_you'`` + ``user_id`` reaches the repo unchanged."""
+    captured: dict[str, Any] = {}
+    user_id = uuid.uuid4()
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), sort="for_you", user_id=user_id)
+    assert captured["sort"] == "for_you"
+    assert captured["user_id"] == user_id
+
+
+def test_list_events_rejects_invalid_day_of_week() -> None:
+    """An out-of-range day_of_week value short-circuits with ValidationError."""
+    with pytest.raises(ValidationError):
+        events_service.list_events(MagicMock(), day_of_week=[7])
+
+
+def test_list_events_rejects_invalid_time_of_day() -> None:
+    """An unknown time_of_day bucket raises ValidationError."""
+    with pytest.raises(ValidationError):
+        events_service.list_events(MagicMock(), time_of_day=["midnight"])
+
+
+def test_list_events_advanced_filters_round_trip_to_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """day_of_week, time_of_day, has_image, has_price reach the repo unchanged."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(
+        MagicMock(),
+        day_of_week=[5, 6],
+        time_of_day=["evening", "late"],
+        has_image=True,
+        has_price=True,
+    )
+    assert captured["day_of_week"] == [5, 6]
+    assert captured["time_of_day"] == ["evening", "late"]
+    assert captured["has_image"] is True
+    assert captured["has_price"] is True
+
+
+def test_list_events_followed_venues_only_uses_user_follows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """followed_venues_only swaps the venue_ids filter for the user's follows."""
+    captured: dict[str, Any] = {}
+    user_id = uuid.uuid4()
+    venue_a = uuid.uuid4()
+    venue_b = uuid.uuid4()
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    monkeypatch.setattr(
+        events_service.follows_repo,
+        "list_followed_venue_ids",
+        lambda _s, _uid: {venue_a, venue_b},
+    )
+    events_service.list_events(MagicMock(), followed_venues_only=True, user_id=user_id)
+    assert set(captured["venue_ids"]) == {venue_a, venue_b}
+
+
+def test_list_events_followed_venues_only_intersects_with_explicit_venues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``venue_ids`` is intersected with the user's follows."""
+    captured: dict[str, Any] = {}
+    user_id = uuid.uuid4()
+    followed = uuid.uuid4()
+    other = uuid.uuid4()
+    not_followed = uuid.uuid4()
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    monkeypatch.setattr(
+        events_service.follows_repo,
+        "list_followed_venue_ids",
+        lambda _s, _uid: {followed, other},
+    )
+    events_service.list_events(
+        MagicMock(),
+        followed_venues_only=True,
+        user_id=user_id,
+        venue_ids=[followed, not_followed],
+    )
+    assert captured["venue_ids"] == [followed]
+
+
+def test_list_events_followed_venues_only_anonymous_skips_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a user_id the followed_venues_only toggle drops silently."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), followed_venues_only=True, user_id=None)
+    assert captured["venue_ids"] is None
+
+
+def test_list_events_followed_artists_only_substitutes_spotify_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``followed_artists_only`` supplies the user's followed Spotify IDs."""
+    captured: dict[str, Any] = {}
+    user_id = uuid.uuid4()
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    monkeypatch.setattr(
+        events_service.follows_repo,
+        "list_followed_artist_signals",
+        lambda _s, _uid: {
+            "spotify_ids": {"spot-a": "Artist A", "spot-b": "Artist B"},
+            "names": {},
+            "labels": {},
+        },
+    )
+    events_service.list_events(MagicMock(), followed_artists_only=True, user_id=user_id)
+    assert sorted(captured["spotify_artist_ids"]) == ["spot-a", "spot-b"]
+
+
+def test_list_events_for_you_anonymous_degrades_to_date_sort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anonymous ``sort='for_you'`` is rewritten to ``date`` with no user_id."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    events_service.list_events(MagicMock(), sort="for_you", user_id=None)
+    assert captured["sort"] == "date"
+    assert captured["user_id"] is None
+
+
 def test_serialize_event_includes_venue_and_city() -> None:
     """Full serializer emits nested venue + city blocks."""
     event = _FakeEvent()
@@ -229,3 +492,457 @@ def test_format_feed_line_handles_venue_unloaded() -> None:
     event = _FakeEvent(venue=None)
     line = events_service._format_feed_line(event)  # type: ignore[arg-type]
     assert "@ TBA" in line
+
+
+# ---------------------------------------------------------------------------
+# list_tonight_map_events
+# ---------------------------------------------------------------------------
+
+
+def _tonight_event(
+    *,
+    starts_at: datetime,
+    latitude: float | None = 38.9187,
+    longitude: float | None = -77.0311,
+    title: str = "Phoebe Bridgers",
+    genres: list[str] | None = None,
+) -> _FakeEvent:
+    """Build a tonight-map-shaped event with adjustable coordinates and time.
+
+    Args:
+        starts_at: Event start time.
+        latitude: Venue latitude; pass ``None`` to test the coord filter.
+        longitude: Venue longitude; pass ``None`` to test the coord filter.
+        title: Event title.
+        genres: Event genres; defaults to ``["indie"]``.
+
+    Returns:
+        A populated :class:`_FakeEvent` with a venue that carries coords.
+    """
+    venue = _FakeVenue(latitude=latitude, longitude=longitude)
+    return _FakeEvent(
+        title=title,
+        starts_at=starts_at,
+        venue=venue,
+        genres=genres if genres is not None else ["indie"],
+    )
+
+
+def test_list_tonight_map_events_computes_et_day_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The date window passed to the repo is `today` in ET, not UTC."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    # 2026-04-20 03:30 UTC == 2026-04-19 23:30 ET (still "tonight" in DC).
+    now_utc = datetime(2026, 4, 20, 3, 30, tzinfo=UTC)
+
+    events_service.list_tonight_map_events(MagicMock(), now_utc=now_utc)
+
+    from datetime import date
+
+    assert captured["date_from"] == date(2026, 4, 19)
+    assert captured["date_to"] == date(2026, 4, 19)
+    assert captured["region"] == "DMV"
+
+
+def test_list_tonight_map_events_drops_events_without_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Venues without lat/lng can't be pinned so they're filtered out."""
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+    pinned = _tonight_event(starts_at=today, title="Pinned")
+    no_lat = _tonight_event(starts_at=today, title="NoLat", latitude=None)
+    no_lng = _tonight_event(starts_at=today, title="NoLng", longitude=None)
+    no_venue = _FakeEvent(starts_at=today, title="NoVenue", venue=None)
+
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([pinned, no_lat, no_lng, no_venue], 4),
+    )
+    result = events_service.list_tonight_map_events(MagicMock(), now_utc=today)
+
+    assert result["meta"]["count"] == 1
+    assert [e["title"] for e in result["data"]] == ["Pinned"]
+
+
+def test_list_tonight_map_events_serializes_pin_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each row carries the fields the map UI needs — coords, genres, price."""
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+    event = _tonight_event(starts_at=today, genres=["indie", "rock"])
+
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([event], 1),
+    )
+    payload = events_service.list_tonight_map_events(MagicMock(), now_utc=today)
+    row = payload["data"][0]
+
+    assert row["id"] == str(event.id)
+    assert row["title"] == "Phoebe Bridgers"
+    assert row["slug"] == event.slug
+    assert row["starts_at"] == today.isoformat()
+    assert row["artists"] == ["Phoebe Bridgers"]
+    assert row["genres"] == ["indie", "rock"]
+    assert row["image_url"] == event.image_url
+    assert row["min_price"] == 35.0
+    assert row["venue"] == {
+        "id": str(event.venue.id),
+        "name": "9:30 Club",
+        "slug": "930-club",
+        "latitude": 38.9187,
+        "longitude": -77.0311,
+    }
+
+
+def test_list_tonight_map_events_forwards_genres_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+
+    events_service.list_tonight_map_events(
+        MagicMock(), now_utc=today, genres=["indie", "punk"]
+    )
+    assert captured["genres"] == ["indie", "punk"]
+
+
+def test_list_tonight_map_events_meta_includes_date_and_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+    event = _tonight_event(starts_at=today)
+
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([event], 1),
+    )
+    payload = events_service.list_tonight_map_events(MagicMock(), now_utc=today)
+
+    assert payload["meta"] == {"count": 1, "date": "2026-04-20"}
+
+
+def test_list_tonight_map_events_empty_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A day with no events returns an empty envelope, not None."""
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([], 0),
+    )
+    today = datetime(2026, 4, 20, 20, 0, tzinfo=UTC)
+    payload = events_service.list_tonight_map_events(MagicMock(), now_utc=today)
+
+    assert payload == {"data": [], "meta": {"count": 0, "date": "2026-04-20"}}
+
+
+def test_list_tonight_map_events_default_now_is_utc_now(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting now_utc uses the real clock; we just check it doesn't crash."""
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([], 0),
+    )
+    payload = events_service.list_tonight_map_events(MagicMock())
+    assert payload["meta"]["count"] == 0
+    assert isinstance(payload["meta"]["date"], str)
+
+
+# ---------------------------------------------------------------------------
+# list_events_near
+# ---------------------------------------------------------------------------
+
+
+# Handy landmark coords that sit ~1.5km apart inside DC, used across
+# the near-me suite.
+_DUPONT = (38.9090, -77.0430)
+_U_STREET = (38.9170, -77.0280)
+_BALTIMORE_INNER_HARBOR = (39.2850, -76.6100)
+
+
+def _near_me_event(
+    *,
+    starts_at: datetime,
+    latitude: float | None,
+    longitude: float | None,
+    title: str = "Show",
+    genres: list[str] | None = None,
+) -> _FakeEvent:
+    """Build a near-me-shaped event with configurable venue coords.
+
+    Args:
+        starts_at: Event start time.
+        latitude: Venue latitude, or None to simulate a non-geocoded venue.
+        longitude: Venue longitude, or None to simulate a non-geocoded venue.
+        title: Event title.
+        genres: Event genres.
+
+    Returns:
+        An :class:`_FakeEvent` whose venue carries the given coords.
+    """
+    venue = _FakeVenue(latitude=latitude, longitude=longitude)
+    return _FakeEvent(
+        title=title,
+        starts_at=starts_at,
+        venue=venue,
+        genres=genres if genres is not None else ["indie"],
+    )
+
+
+def test_list_events_near_filters_outside_radius(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Events outside radius_km are dropped even if they match the window."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    close = _near_me_event(
+        starts_at=today, latitude=_U_STREET[0], longitude=_U_STREET[1], title="Close"
+    )
+    far = _near_me_event(
+        starts_at=today,
+        latitude=_BALTIMORE_INNER_HARBOR[0],
+        longitude=_BALTIMORE_INNER_HARBOR[1],
+        title="Far",
+    )
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([close, far], 2),
+    )
+
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=10.0,
+        window="tonight",
+        now_utc=today,
+    )
+
+    assert [row["title"] for row in result["data"]] == ["Close"]
+    assert result["meta"]["count"] == 1
+
+
+def test_list_events_near_sorts_by_distance_ascending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Results come back nearest-first regardless of repo ordering."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    close = _near_me_event(
+        starts_at=today, latitude=_DUPONT[0], longitude=_DUPONT[1], title="Close"
+    )
+    medium = _near_me_event(
+        starts_at=today, latitude=_U_STREET[0], longitude=_U_STREET[1], title="Medium"
+    )
+    far_but_inside = _near_me_event(
+        starts_at=today, latitude=38.8816, longitude=-77.0910, title="Arlington"
+    )
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([medium, far_but_inside, close], 3),
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=20.0,
+        window="tonight",
+        now_utc=today,
+    )
+    titles = [row["title"] for row in result["data"]]
+    assert titles == ["Close", "Medium", "Arlington"]
+
+
+def test_list_events_near_includes_distance_km_on_each_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each row carries a numeric distance_km rounded for display."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    row = _near_me_event(starts_at=today, latitude=_U_STREET[0], longitude=_U_STREET[1])
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([row], 1),
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=5.0,
+        window="tonight",
+        now_utc=today,
+    )
+    distance = result["data"][0]["distance_km"]
+    assert isinstance(distance, float)
+    # Dupont ↔ U Street is ~1.6km — give ourselves 50% wiggle room.
+    assert 0.8 < distance < 2.4
+
+
+def test_list_events_near_drops_events_without_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Events with no venue coords cannot have a distance computed."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    pinned = _near_me_event(
+        starts_at=today, latitude=_U_STREET[0], longitude=_U_STREET[1], title="Pinned"
+    )
+    no_lat = _near_me_event(
+        starts_at=today, latitude=None, longitude=-77.0, title="NoLat"
+    )
+    no_venue = _FakeEvent(starts_at=today, venue=None, title="NoVenue")
+    monkeypatch.setattr(
+        events_service.events_repo,
+        "list_events",
+        lambda _s, **_k: ([pinned, no_lat, no_venue], 3),
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=10.0,
+        window="tonight",
+        now_utc=today,
+    )
+    assert [row["title"] for row in result["data"]] == ["Pinned"]
+
+
+def test_list_events_near_tonight_window_is_et_today(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `tonight` window uses ET-today even when UTC has crossed midnight."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    # 2026-04-23 03:00 UTC == 2026-04-22 23:00 ET.
+    now_utc = datetime(2026, 4, 23, 3, 0, tzinfo=UTC)
+
+    events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=10.0,
+        window="tonight",
+        now_utc=now_utc,
+    )
+
+    from datetime import date
+
+    assert captured["date_from"] == date(2026, 4, 22)
+    assert captured["date_to"] == date(2026, 4, 22)
+
+
+def test_list_events_near_week_window_covers_seven_days(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `week` window stretches the upper bound six days past today."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_service.events_repo, "list_events", fake_list)
+    now_utc = datetime(2026, 4, 22, 15, 0, tzinfo=UTC)
+
+    events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=10.0,
+        window="week",
+        now_utc=now_utc,
+    )
+
+    from datetime import date
+
+    assert captured["date_from"] == date(2026, 4, 22)
+    assert captured["date_to"] == date(2026, 4, 28)
+
+
+def test_list_events_near_clamps_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """More candidates than `limit` still return only `limit` rows."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    rows = [
+        _near_me_event(
+            starts_at=today,
+            latitude=_DUPONT[0] + 0.001 * i,
+            longitude=_DUPONT[1],
+            title=f"E{i}",
+        )
+        for i in range(10)
+    ]
+    monkeypatch.setattr(
+        events_service.events_repo, "list_events", lambda _s, **_k: (rows, len(rows))
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=50.0,
+        window="tonight",
+        limit=3,
+        now_utc=today,
+    )
+    assert len(result["data"]) == 3
+
+
+def test_list_events_near_rejects_invalid_window() -> None:
+    """An unknown window string surfaces as a ValidationError."""
+    with pytest.raises(ValidationError):
+        events_service.list_events_near(
+            MagicMock(),
+            latitude=_DUPONT[0],
+            longitude=_DUPONT[1],
+            radius_km=10.0,
+            window="forever",  # type: ignore[arg-type]
+        )
+
+
+def test_list_events_near_meta_echoes_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Meta echoes the caller's center, radius, window, and date bounds."""
+    today = datetime(2026, 4, 22, 20, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        events_service.events_repo, "list_events", lambda _s, **_k: ([], 0)
+    )
+    result = events_service.list_events_near(
+        MagicMock(),
+        latitude=_DUPONT[0],
+        longitude=_DUPONT[1],
+        radius_km=7.5,
+        window="tonight",
+        now_utc=today,
+    )
+    meta = result["meta"]
+    assert meta["count"] == 0
+    assert meta["center"] == {"latitude": _DUPONT[0], "longitude": _DUPONT[1]}
+    assert meta["radius_km"] == 7.5
+    assert meta["window"] == "tonight"
+    assert meta["date_from"] == "2026-04-22"
+    assert meta["date_to"] == "2026-04-22"

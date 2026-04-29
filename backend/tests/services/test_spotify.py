@@ -27,10 +27,12 @@ from backend.services.spotify import (
     _simplify_artist,
     build_authorize_url,
     exchange_code,
+    get_app_access_token,
     get_profile,
     get_recently_played_artists,
     get_top_artists,
     refresh_access_token,
+    search_artist,
     sync_top_artists,
 )
 
@@ -161,6 +163,113 @@ def test_parse_token_response_non_string_fields_raises() -> None:
     bad = _FakeResponse(json_data={"access_token": 42, "expires_in": 3600})
     with pytest.raises(AppError):
         _parse_token_response(bad)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# get_app_access_token / search_artist
+# ---------------------------------------------------------------------------
+
+
+def test_get_app_access_token_returns_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client-credentials flow does not return a refresh token."""
+    captured: dict[str, Any] = {}
+
+    def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+        captured["url"] = url
+        captured["data"] = kwargs.get("data")
+        captured["headers"] = kwargs.get("headers")
+        return _FakeResponse(json_data={"access_token": "app-tok", "expires_in": 3600})
+
+    monkeypatch.setattr(spotify_service.requests, "post", fake_post)
+
+    tokens = get_app_access_token()
+
+    assert tokens.access_token == "app-tok"
+    assert tokens.refresh_token is None
+    assert captured["data"] == {"grant_type": "client_credentials"}
+    assert captured["headers"]["Authorization"].startswith("Basic ")
+
+
+def test_get_app_access_token_raises_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        spotify_service.requests,
+        "post",
+        lambda *_a, **_k: _FakeResponse(status_code=401, text="nope"),
+    )
+    with pytest.raises(AppError):
+        get_app_access_token()
+
+
+def test_search_artist_returns_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        return _FakeResponse(
+            json_data={
+                "artists": {
+                    "items": [
+                        {"id": "sp-1", "name": "Phoebe Bridgers"},
+                        "junk",
+                        {"id": "sp-2", "name": "Phoebe"},
+                    ]
+                }
+            }
+        )
+
+    monkeypatch.setattr(spotify_service.requests, "get", fake_get)
+
+    results = search_artist("tok", "Phoebe Bridgers", limit=5)
+
+    assert [r["id"] for r in results] == ["sp-1", "sp-2"]
+    assert captured["params"]["q"] == "Phoebe Bridgers"
+    assert captured["params"]["type"] == "artist"
+    assert captured["params"]["limit"] == 5
+
+
+def test_search_artist_returns_empty_when_no_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        spotify_service.requests,
+        "get",
+        lambda *_a, **_k: _FakeResponse(json_data={"artists": {"items": []}}),
+    )
+    assert search_artist("tok", "Unheard Of") == []
+
+
+def test_search_artist_clamps_limit_to_valid_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Spotify's /search accepts 1-50; callers passing junk get clamped."""
+    captured: dict[str, Any] = {}
+
+    def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+        captured["params"] = kwargs.get("params")
+        return _FakeResponse(json_data={"artists": {"items": []}})
+
+    monkeypatch.setattr(spotify_service.requests, "get", fake_get)
+
+    search_artist("tok", "x", limit=0)
+    assert captured["params"]["limit"] == 1
+
+    search_artist("tok", "x", limit=1000)
+    assert captured["params"]["limit"] == 50
+
+
+def test_search_artist_raises_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        spotify_service.requests,
+        "get",
+        lambda *_a, **_k: _FakeResponse(status_code=500),
+    )
+    with pytest.raises(AppError):
+        search_artist("tok", "anyone")
 
 
 # ---------------------------------------------------------------------------

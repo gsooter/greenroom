@@ -29,9 +29,11 @@ function eventAt(starts_at: string | null, id = crypto.randomUUID()): EventSumma
     slug: `show-${id.slice(0, 4)}`,
     starts_at,
     artists: [],
+    genres: [],
     image_url: null,
     min_price: null,
     max_price: null,
+    prices_refreshed_at: null,
     status: "confirmed",
     venue: null,
   };

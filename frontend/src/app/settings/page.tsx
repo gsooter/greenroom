@@ -2,8 +2,9 @@
  * /settings — profile + notification preferences.
  *
  * CSR only. Editable fields mirror the PATCH /me allowlist:
- * display name, preferred city, digest frequency, genre preferences.
- * Deactivation is wired to DELETE /me.
+ * display name, preferred city, genre preferences. Email types and
+ * delivery cadence live in EmailPreferencesSection (separate
+ * notification_preferences row). Deactivation is wired to DELETE /me.
  */
 
 "use client";
@@ -11,6 +12,10 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { DeleteAccountModal } from "@/components/settings/DeleteAccountModal";
+import { EmailPreferencesSection } from "@/components/settings/EmailPreferencesSection";
+import { FollowingSections } from "@/components/settings/FollowingSections";
+import { GenreChipGrid } from "@/components/ui/GenreChipGrid";
 import {
   connectAppleMusic,
   getAppleMusicDeveloperToken,
@@ -24,8 +29,15 @@ import {
 import { ApiRequestError } from "@/lib/api/client";
 import { listCities } from "@/lib/api/cities";
 import { deleteMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
-import { useRequireAuth } from "@/lib/auth";
+import { listGenres } from "@/lib/api/onboarding";
+import { useRequireOnboarded } from "@/lib/auth";
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
 import { authorizeAppleMusic } from "@/lib/musickit";
+import {
+  TIMEZONE_OPTIONS,
+  useDistanceUnit,
+  useTimezonePreference,
+} from "@/lib/preferences";
 import {
   decodeRegistrationOptions,
   encodeRegistrationCredential,
@@ -33,28 +45,32 @@ import {
 } from "@/lib/webauthn";
 import type {
   City,
-  DigestFrequency,
+  Genre,
   MusicConnectionState,
   MusicProvider,
   UserPatch,
 } from "@/types";
 
-const DIGEST_OPTIONS: DigestFrequency[] = ["daily", "weekly", "never"];
-
 export default function SettingsPage(): JSX.Element {
   const router = useRouter();
   const { user, token, isLoading, isAuthenticated, refreshUser, logout } =
-    useRequireAuth();
+    useRequireOnboarded();
 
   const [cities, setCities] = useState<City[]>([]);
+  const [allGenres, setAllGenres] = useState<Genre[]>([]);
   const [displayName, setDisplayName] = useState<string>("");
   const [cityId, setCityId] = useState<string>("");
-  const [digest, setDigest] = useState<DigestFrequency>("weekly");
-  const [genres, setGenres] = useState<string>("");
+  const [selectedGenres, setSelectedGenres] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">(
     "idle",
   );
   const [error, setError] = useState<string | null>(null);
+
+  const [deleteOpen, setDeleteOpen] = useState<boolean>(false);
+  const [deleteBusy, setDeleteBusy] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [connections, setConnections] = useState<MusicConnectionState[]>([]);
 
@@ -73,6 +89,12 @@ export default function SettingsPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    void listGenres()
+      .then(setAllGenres)
+      .catch(() => setAllGenres([]));
+  }, []);
+
+  useEffect(() => {
     void loadConnections();
   }, [loadConnections]);
 
@@ -80,9 +102,17 @@ export default function SettingsPage(): JSX.Element {
     if (!user) return;
     setDisplayName(user.display_name ?? "");
     setCityId(user.city_id ?? "");
-    setDigest(user.digest_frequency);
-    setGenres((user.genre_preferences ?? []).join(", "));
+    setSelectedGenres(new Set(user.genre_preferences ?? []));
   }, [user]);
+
+  const toggleGenre = useCallback((slug: string): void => {
+    setSelectedGenres((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  }, []);
 
   const patch = useMemo<UserPatch>(() => {
     if (!user) return {};
@@ -95,19 +125,13 @@ export default function SettingsPage(): JSX.Element {
     if ((user.city_id ?? null) !== normalizedCity) {
       next.city_id = normalizedCity;
     }
-    if (user.digest_frequency !== digest) {
-      next.digest_frequency = digest;
-    }
-    const genreList = genres
-      .split(",")
-      .map((g) => g.trim())
-      .filter(Boolean);
-    const currentGenres = user.genre_preferences ?? [];
+    const genreList = Array.from(selectedGenres).sort();
+    const currentGenres = (user.genre_preferences ?? []).slice().sort();
     if (JSON.stringify(currentGenres) !== JSON.stringify(genreList)) {
       next.genre_preferences = genreList;
     }
     return next;
-  }, [user, displayName, cityId, digest, genres]);
+  }, [user, displayName, cityId, selectedGenres]);
 
   const hasChanges = Object.keys(patch).length > 0;
 
@@ -134,16 +158,15 @@ export default function SettingsPage(): JSX.Element {
 
   const handleDelete = useCallback(async (): Promise<void> => {
     if (!token) return;
-    const confirmed = window.confirm(
-      "Deactivate your account? You can contact support to reactivate later.",
-    );
-    if (!confirmed) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
     try {
       await deleteMe(token);
       logout();
       router.replace("/");
     } catch (err) {
-      setError(
+      setDeleteBusy(false);
+      setDeleteError(
         err instanceof ApiRequestError
           ? err.message
           : "Could not deactivate account.",
@@ -187,29 +210,25 @@ export default function SettingsPage(): JSX.Element {
           </select>
         </Field>
 
-        <Field label="Email digest">
-          <select
-            value={digest}
-            onChange={(e) => setDigest(e.target.value as DigestFrequency)}
-            className="w-full rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
-          >
-            {DIGEST_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        <Field label="Favorite genres (comma-separated)">
-          <input
-            type="text"
-            value={genres}
-            onChange={(e) => setGenres(e.target.value)}
-            placeholder="indie, electronic, post-punk"
-            className="w-full rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
-          />
-        </Field>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+            Favorite genres
+          </p>
+          <p className="mt-1 text-xs text-text-secondary/80">
+            Tap to toggle. Picks shape your For-You feed and weekly digest.
+          </p>
+          <div className="mt-3">
+            {allGenres.length > 0 ? (
+              <GenreChipGrid
+                genres={allGenres}
+                selected={selectedGenres}
+                onToggle={toggleGenre}
+              />
+            ) : (
+              <p className="text-xs text-text-secondary">Loading genres…</p>
+            )}
+          </div>
+        </div>
 
         <div className="flex items-center gap-3">
           <button
@@ -230,15 +249,46 @@ export default function SettingsPage(): JSX.Element {
 
       <hr className="my-10 border-border" />
 
+      <EmailPreferencesSection token={token} />
+
+      <hr className="my-10 border-border" />
+
+      <FollowingSections token={token} />
+
+      <hr className="my-10 border-border" />
+
       <ConnectedServicesSection
         token={token}
         connections={connections}
+        spotifyBetaAccess={user.spotify_beta_access}
         onConnectionChange={() => void loadConnections()}
       />
 
       <hr className="my-10 border-border" />
 
       <SecuritySection token={token} />
+
+      <hr className="my-10 border-border" />
+
+      <section>
+        <h2 className="text-base font-semibold text-text-primary">
+          Help &amp; support
+        </h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          Stuck on something, spotted a bug, or want to suggest a venue?{" "}
+          <a
+            href={SUPPORT_MAILTO}
+            className="text-text-primary underline underline-offset-2"
+          >
+            {SUPPORT_EMAIL}
+          </a>{" "}
+          reaches a real human.
+        </p>
+      </section>
+
+      <hr className="my-10 border-border" />
+
+      <DisplayPreferencesSection />
 
       <hr className="my-10 border-border" />
 
@@ -252,13 +302,128 @@ export default function SettingsPage(): JSX.Element {
         </p>
         <button
           type="button"
-          onClick={() => void handleDelete()}
+          onClick={() => {
+            setDeleteError(null);
+            setDeleteOpen(true);
+          }}
           className="mt-4 rounded-md border border-blush-accent px-4 py-2 text-sm font-medium text-blush-accent hover:bg-blush-soft"
         >
           Deactivate account
         </button>
       </section>
+
+      {deleteOpen ? (
+        <DeleteAccountModal
+          email={user.email}
+          busy={deleteBusy}
+          error={deleteError}
+          onCancel={() => {
+            if (deleteBusy) return;
+            setDeleteOpen(false);
+          }}
+          onConfirm={() => void handleDelete()}
+        />
+      ) : null}
     </PageShell>
+  );
+}
+
+function DisplayPreferencesSection(): JSX.Element {
+  const [unit, setUnit] = useDistanceUnit();
+  const [timezone, setTimezone] = useTimezonePreference();
+
+  const knownZone = TIMEZONE_OPTIONS.some((opt) => opt.value === timezone);
+  const zoneValue = knownZone ? timezone : "__custom__";
+
+  return (
+    <section>
+      <h2 className="text-base font-semibold text-text-primary">
+        Display preferences
+      </h2>
+      <p className="mt-1 text-sm text-text-secondary">
+        How values are shown on this device. Stored locally — not synced across
+        browsers.
+      </p>
+
+      <div className="mt-4 divide-y divide-border rounded-lg border border-border bg-bg-white">
+        <PreferenceRow
+          label="Distance"
+          description="Used for venue distance pills and the near-me sort."
+        >
+          <div
+            role="radiogroup"
+            aria-label="Distance units"
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-bg-surface p-1"
+          >
+            {(
+              [
+                { value: "mi" as const, label: "mi" },
+                { value: "km" as const, label: "km" },
+              ]
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={unit === opt.value}
+                onClick={() => setUnit(opt.value)}
+                className={
+                  "rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wide transition " +
+                  (unit === opt.value
+                    ? "bg-green-primary text-text-inverse"
+                    : "text-text-secondary hover:text-text-primary")
+                }
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </PreferenceRow>
+
+        <PreferenceRow
+          label="Event times"
+          description="Applied to every show date and door time on the site."
+        >
+          <select
+            aria-label="Event time zone"
+            value={zoneValue}
+            onChange={(e) => {
+              if (e.target.value !== "__custom__") setTimezone(e.target.value);
+            }}
+            className="rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
+          >
+            {TIMEZONE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+            {!knownZone ? (
+              <option value="__custom__">Custom: {timezone}</option>
+            ) : null}
+          </select>
+        </PreferenceRow>
+      </div>
+    </section>
+  );
+}
+
+function PreferenceRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-text-primary">{label}</p>
+        <p className="mt-0.5 text-xs text-text-secondary">{description}</p>
+      </div>
+      <div className="shrink-0 self-start sm:self-auto">{children}</div>
+    </div>
   );
 }
 
@@ -279,7 +444,7 @@ const PROVIDER_PITCH: Record<MusicProvider, string> = {
 // know what's feeding the recommender rather than assuming parity.
 const PROVIDER_SIGNAL_NOTE: Record<MusicProvider, string> = {
   spotify: "Uses your top and recently-played artists.",
-  apple_music: "Uses artists saved in your library.",
+  apple_music: "Uses heavy rotation, recently-played, and library artists.",
   tidal: "Uses artists in your favorites collection.",
 };
 
@@ -307,10 +472,12 @@ function providerStatusMessage(
 function ConnectedServicesSection({
   token,
   connections,
+  spotifyBetaAccess,
   onConnectionChange,
 }: {
   token: string | null;
   connections: MusicConnectionState[];
+  spotifyBetaAccess: boolean;
   onConnectionChange: () => void;
 }): JSX.Element {
   const [spotifyConnecting, setSpotifyConnecting] = useState<boolean>(false);
@@ -380,9 +547,7 @@ function ConnectedServicesSection({
       onConnectionChange();
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Could not connect Apple Music.",
+        err instanceof Error ? err.message : "Could not connect Apple Music.",
       );
     } finally {
       setAppleConnecting(false);
@@ -404,6 +569,9 @@ function ConnectedServicesSection({
         state={spotifyState}
         busy={spotifyConnecting}
         onConnect={() => void handleSpotifyConnect()}
+        gated={!spotifyBetaAccess && !spotifyState?.connected}
+        gateNote="Spotify is in limited beta while we wait on production
+                  approval. Email support if you'd like an invite."
       />
 
       <ServiceCard
@@ -411,6 +579,8 @@ function ConnectedServicesSection({
         state={tidalState}
         busy={tidalConnecting}
         onConnect={() => void handleTidalConnect()}
+        advisoryNote="Tidal recommendations are still being improved — only your
+                      favorites are currently used as signal."
       />
 
       <ServiceCard
@@ -429,52 +599,133 @@ function ConnectedServicesSection({
   );
 }
 
+const PROVIDER_GLYPH: Record<MusicProvider, string> = {
+  spotify: "S",
+  tidal: "T",
+  apple_music: "A",
+};
+
+function StatusPill({ connected }: { connected: boolean }): JSX.Element {
+  return connected ? (
+    <span className="inline-flex items-center gap-1 rounded-full bg-green-soft px-2 py-0.5 text-[11px] font-medium text-green-dark ring-1 ring-green-primary/40">
+      <span
+        aria-hidden
+        className="h-1.5 w-1.5 rounded-full bg-green-primary"
+      />
+      Connected
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 rounded-full bg-bg-surface px-2 py-0.5 text-[11px] font-medium text-text-secondary ring-1 ring-border">
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-border" />
+      Not connected
+    </span>
+  );
+}
+
 function ServiceCard({
   provider,
   state,
   busy,
   onConnect,
+  gated = false,
+  gateNote,
+  advisoryNote,
 }: {
   provider: MusicProvider;
   state: MusicConnectionState | undefined;
   busy: boolean;
   onConnect: () => void;
+  gated?: boolean;
+  gateNote?: string;
+  advisoryNote?: string;
 }): JSX.Element {
   const label = PROVIDER_LABEL[provider];
   const connected = Boolean(state?.connected);
-  const busyLabel = provider === "apple_music" ? "Authorizing…" : "Redirecting…";
+  const busyLabel =
+    provider === "apple_music" ? "Authorizing…" : "Redirecting…";
   const artists = state?.artists ?? [];
+  const syncedAt = state?.synced_at ? formatSyncedAt(state.synced_at) : null;
   return (
-    <div className="mt-3 rounded-lg border border-border bg-bg-white p-4">
+    <div
+      className={
+        "mt-3 rounded-lg border border-border bg-bg-white p-4 " +
+        (gated ? "opacity-60" : "")
+      }
+      aria-disabled={gated || undefined}
+    >
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-text-primary">{label}</p>
-          <p className="mt-1 text-xs text-text-secondary">
-            {providerStatusMessage(provider, state)}
-          </p>
-          <p className="mt-1 text-[11px] italic text-text-secondary/80">
-            {PROVIDER_SIGNAL_NOTE[provider]}
-          </p>
+        <div className="flex items-start gap-3">
+          <div
+            aria-hidden
+            className={
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-base font-semibold text-text-inverse " +
+              (gated ? "bg-text-secondary" : "bg-green-dark")
+            }
+          >
+            {PROVIDER_GLYPH[provider]}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-medium text-text-primary">{label}</p>
+              {gated ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-bg-surface px-2 py-0.5 text-[11px] font-medium text-text-secondary ring-1 ring-border">
+                  Limited access
+                </span>
+              ) : (
+                <StatusPill connected={connected} />
+              )}
+            </div>
+            <p className="mt-1 text-xs text-text-secondary">
+              {gated && gateNote
+                ? gateNote
+                : providerStatusMessage(provider, state)}
+            </p>
+            {!gated && connected && syncedAt ? (
+              <p className="mt-1 text-[11px] text-text-secondary/80">
+                Last synced {syncedAt}
+                {state?.artist_count
+                  ? ` · ${state.artist_count} artists`
+                  : ""}
+              </p>
+            ) : null}
+            {!gated ? (
+              <p className="mt-1 text-[11px] italic text-text-secondary/80">
+                {PROVIDER_SIGNAL_NOTE[provider]}
+              </p>
+            ) : null}
+            {!gated && advisoryNote ? (
+              <p className="mt-1 rounded-md bg-bg-surface px-2 py-1 text-[11px] text-text-secondary">
+                {advisoryNote}
+              </p>
+            ) : null}
+          </div>
         </div>
         <button
           type="button"
           onClick={onConnect}
-          disabled={busy}
-          className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={busy || gated}
+          aria-label={gated ? `Connect ${label} (limited access)` : undefined}
+          className="shrink-0 rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-green-primary"
         >
-          {busy ? busyLabel : connected ? "Reconnect" : `Connect ${label}`}
+          {gated
+            ? "Unavailable"
+            : busy
+              ? busyLabel
+              : connected
+                ? "Reconnect"
+                : `Connect ${label}`}
         </button>
       </div>
-      {artists.length > 0 ? (
-        <div className="mt-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+      {!gated && artists.length > 0 ? (
+        <div className="mt-4 border-t border-border/60 pt-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-text-secondary">
             Your rotation
           </p>
-          <ul className="mt-2 flex flex-wrap gap-2">
+          <ul className="mt-2 flex flex-wrap gap-1.5">
             {artists.map((artist) => (
               <li
                 key={`${provider}-${artist.id ?? artist.name}`}
-                className="rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent"
+                className="rounded-full bg-bg-surface px-2.5 py-1 text-xs font-medium text-text-secondary"
               >
                 {artist.name}
               </li>
@@ -532,9 +783,7 @@ function SecuritySection({ token }: { token: string | null }): JSX.Element {
 
   return (
     <section>
-      <h2 className="text-base font-semibold text-text-primary">
-        Security
-      </h2>
+      <h2 className="text-base font-semibold text-text-primary">Security</h2>
       <p className="mt-1 text-sm text-text-secondary">
         Add a passkey to sign in without email links. Passkeys are stored on
         your device (Touch ID, Face ID, Windows Hello, or a security key).
@@ -563,7 +812,9 @@ function SecuritySection({ token }: { token: string | null }): JSX.Element {
               disabled={status === "registering" || !token}
               className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {status === "registering" ? "Waiting for passkey…" : "Add a passkey"}
+              {status === "registering"
+                ? "Waiting for passkey…"
+                : "Add a passkey"}
             </button>
             {status === "done" ? (
               <p className="text-xs text-text-secondary" role="status">

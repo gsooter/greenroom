@@ -25,6 +25,7 @@ function event(overrides: Partial<EventDetail> = {}): EventDetail {
     image_url: "https://img.test/e.jpg",
     min_price: 25,
     max_price: 55,
+    prices_refreshed_at: null,
     status: "confirmed",
     venue: {
       id: "v-1",

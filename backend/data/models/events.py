@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -85,7 +87,11 @@ class Event(TimestampMixin, Base):
         external_id: External identifier from the source platform.
         source_platform: Name of the platform this was scraped from.
         venue: Relationship to the parent venue.
+        prices_refreshed_at: Last successful pricing-sweep timestamp;
+            powers the manual-refresh cooldown gate and the "Updated X
+            ago" UI label.
         ticket_snapshots: Relationship to ticket pricing snapshots.
+        pricing_links: Relationship to per-source buy-URL records.
     """
 
     __tablename__ = "events"
@@ -159,6 +165,9 @@ class Event(TimestampMixin, Base):
         String(200), nullable=True, index=True
     )
     source_platform: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    prices_refreshed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
     venue: Mapped["Venue"] = relationship(
@@ -167,6 +176,11 @@ class Event(TimestampMixin, Base):
     ticket_snapshots: Mapped[list["TicketPricingSnapshot"]] = relationship(
         back_populates="event",
         lazy="selectin",
+    )
+    pricing_links: Mapped[list["EventPricingLink"]] = relationship(
+        back_populates="event",
+        lazy="selectin",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:
@@ -232,3 +246,82 @@ class TicketPricingSnapshot(TimestampMixin, Base):
         return (
             f"<TicketPricingSnapshot {self.source} ${self.min_price}-${self.max_price}>"
         )
+
+
+class EventPricingLink(TimestampMixin, Base):
+    """A per-source buy URL for an event.
+
+    Decoupled from :class:`TicketPricingSnapshot` so a "no live listings
+    right now" state preserves the buy URL — the next refresh that finds
+    inventory just bumps ``last_active_at`` and flips ``is_active`` back
+    on, instead of having to re-derive the URL from scratch. Pricing
+    snapshots are append-only history; pricing links are the latest
+    known buy surface.
+
+    Attributes:
+        id: Unique identifier for the link.
+        event_id: Foreign key to the event this link points at.
+        source: Provider identifier (e.g., ``"seatgeek"``,
+            ``"ticketmaster"``, ``"tickpick"``). Matches the ``source``
+            on the corresponding pricing snapshot.
+        url: Canonical buy URL.
+        affiliate_url: Affiliate-tagged buy URL when the provider has an
+            affiliate program; rendered preferentially in the UI when
+            present.
+        last_active_at: Most recent refresh that found live listings at
+            this URL. ``None`` if no refresh has ever found listings —
+            the URL came from the scraper, not a live pricing pass.
+        last_seen_at: Most recent refresh that confirmed the URL still
+            resolves at all (even if zero listings). Used to retire
+            broken links after a long absence.
+        is_active: Convenience flag mirroring ``last_active_at`` — set
+            ``True`` when the most recent refresh found listings, set
+            ``False`` otherwise.
+        currency: Currency code the source quotes prices in.
+        event: Relationship to the parent event.
+    """
+
+    __tablename__ = "event_pricing_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "source", name="uq_event_pricing_links_event_id_source"
+        ),
+        Index("ix_event_pricing_links_event_id", "event_id"),
+        Index("ix_event_pricing_links_source", "source"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    affiliate_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    last_active_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now()
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+
+    # Relationships
+    event: Mapped["Event"] = relationship(
+        back_populates="pricing_links",
+    )
+
+    def __repr__(self) -> str:
+        """Return a string representation of the EventPricingLink.
+
+        Returns:
+            String including the source and the (possibly affiliate)
+            URL it points at.
+        """
+        return f"<EventPricingLink {self.source} -> {self.affiliate_url or self.url}>"

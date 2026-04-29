@@ -18,6 +18,7 @@ from celery import Celery
 from celery.schedules import crontab
 
 from backend.core.config import get_settings
+from backend.core.observability import init_sentry
 
 
 def _build_app() -> Celery:
@@ -28,6 +29,7 @@ def _build_app() -> Celery:
         broker and ready to register tasks against.
     """
     settings = get_settings()
+    init_sentry("worker")
 
     app = Celery(
         "greenroom",
@@ -36,6 +38,11 @@ def _build_app() -> Celery:
         include=[
             "backend.scraper.runner",
             "backend.scraper.watchdogs.dc9_dice_widget",
+            "backend.services.apple_music_tasks",
+            "backend.services.artist_enrichment_tasks",
+            "backend.services.notification_tasks",
+            "backend.services.pricing_tasks",
+            "backend.services.scraper_digest",
             "backend.services.spotify_tasks",
         ],
     )
@@ -80,6 +87,46 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "task": ("backend.scraper.watchdogs.dc9_dice_widget.check_dc9_dice_widget"),
             "schedule": crontab(hour=5, minute=0, day_of_week=1),
             "options": {"expires": 60 * 60},
+        },
+        # Drains the artist enrichment backlog. Runs at 05:00 ET so it
+        # slots in after the 04:00 scraper pass has landed fresh rows
+        # but well before the morning traffic peak.
+        "enrich-unenriched-artists-nightly": {
+            "task": (
+                "backend.services.artist_enrichment_tasks.enrich_unenriched_artists"
+            ),
+            "schedule": crontab(hour=5, minute=30),
+            "options": {"expires": 60 * 60 * 3},
+        },
+        # Posts the daily fleet-health digest at 07:30 ET, after the
+        # nightly scrape and artist enrichment have settled. Acts as a
+        # heartbeat so a silent on-call channel still confirms the job
+        # actually ran.
+        "send-scraper-digest-daily": {
+            "task": "backend.services.scraper_digest.send_daily_digest",
+            "schedule": crontab(hour=7, minute=30),
+            "options": {"expires": 60 * 60 * 6},
+        },
+        # Sweeps every Tier A and Tier B pricing provider at 05:00 ET,
+        # one hour after the nightly scrape so the latest event rows are
+        # already settled but well before any morning traffic. Runs with
+        # ``force=True`` inside the task so the manual-refresh cooldown
+        # can't short-circuit the cron.
+        "refresh-all-event-pricing-daily": {
+            "task": "backend.services.pricing_tasks.refresh_all_event_pricing",
+            "schedule": crontab(hour=5, minute=0),
+            "options": {"expires": 60 * 60 * 4},
+        },
+        # Fans out the weekly digest hourly. Each fire walks every
+        # active weekly subscriber and only sends to users whose local
+        # weekday/hour matches their stored preferences — so a Pacific
+        # user with digest_hour=8 gets emailed at 08:00 PST, not UTC.
+        # ``expires`` keeps a stuck broker from replaying an hour-old
+        # bucket once the next hourly fire takes over.
+        "dispatch-weekly-digests-hourly": {
+            "task": ("backend.services.notification_tasks.dispatch_weekly_digests"),
+            "schedule": crontab(minute=0),
+            "options": {"expires": 60 * 50},
         },
     }
 

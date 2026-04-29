@@ -58,9 +58,11 @@ function eventSummary(id: string, title = `Show ${id}`): EventSummary {
     slug: `show-${id}`,
     starts_at: "2026-05-02T23:00:00.000Z",
     artists: ["Band"],
+    genres: [],
     image_url: null,
     min_price: null,
     max_price: null,
+    prices_refreshed_at: null,
     status: "confirmed",
     venue: null,
   };

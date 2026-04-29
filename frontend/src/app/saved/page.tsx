@@ -12,11 +12,11 @@
 import Link from "next/link";
 
 import EventCard from "@/components/events/EventCard";
-import { useRequireAuth } from "@/lib/auth";
+import { useRequireOnboarded } from "@/lib/auth";
 import { useSavedEvents } from "@/lib/saved-events-context";
 
 export default function SavedPage(): JSX.Element {
-  const { isAuthenticated, isLoading } = useRequireAuth();
+  const { isAuthenticated, isLoading } = useRequireOnboarded();
   const { savedEvents, isLoading: isSavedLoading, isReady } = useSavedEvents();
 
   if (isLoading || !isAuthenticated) {

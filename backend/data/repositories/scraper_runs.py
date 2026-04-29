@@ -208,3 +208,38 @@ def count_failed_runs_since(
         ScraperRun.started_at >= since,
     )
     return session.execute(stmt).scalar_one()
+
+
+def count_consecutive_failed_runs(
+    session: Session,
+    venue_slug: str,
+    *,
+    limit: int = 10,
+) -> int:
+    """Count failed runs at the head of the venue's history.
+
+    Walks the most recent runs newest-first and counts ``FAILED`` rows
+    until the first non-FAILED status (or the ``limit`` is reached).
+    Used by the runner's escalation path: a single failure is a flake,
+    three in a row is a sustained outage and should ping the operator
+    differently.
+
+    Args:
+        session: Active SQLAlchemy session.
+        venue_slug: Slug of the venue.
+        limit: Maximum number of recent runs to inspect. Defaults to 10
+            — large enough to surface a real escalation, small enough
+            to keep the query cheap on the indexed table.
+
+    Returns:
+        Number of consecutive ``FAILED`` runs at the head of the
+        history, capped at ``limit``.
+    """
+    runs = get_recent_runs(session, venue_slug, limit=limit)
+    count = 0
+    for run in runs:
+        if run.status is ScraperRunStatus.FAILED:
+            count += 1
+        else:
+            break
+    return count

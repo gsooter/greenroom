@@ -23,6 +23,10 @@ class RawEvent:
         image_url: Event or artist image URL, if available.
         ends_at: Event end datetime, if available.
         on_sale_at: Ticket on-sale datetime, if available.
+        genres: Canonical genre tags extracted at scrape time (e.g. from
+            Ticketmaster classifications). Empty when the source does
+            not surface genre metadata — per-artist Spotify enrichment
+            fills the gap in that case.
     """
 
     title: str
@@ -38,3 +42,4 @@ class RawEvent:
     image_url: str | None = None
     ends_at: datetime | None = None
     on_sale_at: datetime | None = None
+    genres: list[str] = field(default_factory=list)

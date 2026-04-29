@@ -37,11 +37,18 @@ def list_recommendations_for_user(
 ) -> tuple[list[Recommendation], int]:
     """Return the user's recommendation page, generating on first read.
 
-    If the user has Spotify artists cached but no recommendations yet
-    (typical right after login), regenerate before reading so the
-    For-You page isn't empty on its first paint. Subsequent reads hit
-    the already-persisted list. Callers that want to force a refresh
-    should call :func:`refresh_recommendations_for_user` instead.
+    If the user has any scoreable signal (cached music-service artists
+    or onboarding genre picks) but no recommendations yet — typical
+    right after login or right after completing the taste step — we
+    regenerate before reading so the For-You page isn't empty on its
+    first paint. Subsequent reads hit the already-persisted list.
+    Callers that want to force a refresh should call
+    :func:`refresh_recommendations_for_user` instead.
+
+    Mirror this gate with the inner gate in
+    :func:`backend.recommendations.engine.generate_for_user`: if one
+    lifts, the other must too, otherwise the lazy path pays the cost
+    of running the engine only to have it short-circuit to zero rows.
 
     Args:
         session: Active SQLAlchemy session.
@@ -58,22 +65,41 @@ def list_recommendations_for_user(
     recs, total = users_repo.list_recommendations(
         session, user.id, page=page, per_page=per_page
     )
-    if (
-        total == 0
-        and lazy_generate
-        and (
-            user.spotify_top_artists
-            or user.spotify_recent_artists
-            or user.tidal_top_artists
-            or user.apple_top_artists
-        )
-    ):
+    if total == 0 and lazy_generate and _has_scoreable_signal(session, user):
         rec_engine.generate_for_user(session, user)
         session.commit()
         recs, total = users_repo.list_recommendations(
             session, user.id, page=page, per_page=per_page
         )
     return recs, total
+
+
+def _has_scoreable_signal(session: Session, user: User) -> bool:
+    """Cheap probe: does this user have any input the engine can score on?
+
+    The For-You page should not pay the cost of a full scoring pass when
+    no scorer would have anything to compare against. This mirrors the
+    inner gate in :func:`backend.recommendations.engine.generate_for_user`
+    — if one expands, the other must too.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user: The caller.
+
+    Returns:
+        True if at least one of (cached top/recent artists across
+        Spotify/Tidal/Apple, onboarding genre picks, saved-event
+        venues) is populated.
+    """
+    if (
+        user.spotify_top_artists
+        or user.spotify_recent_artists
+        or user.tidal_top_artists
+        or user.apple_top_artists
+        or user.genre_preferences
+    ):
+        return True
+    return bool(users_repo.list_saved_venue_affinity(session, user.id))
 
 
 def refresh_recommendations_for_user(

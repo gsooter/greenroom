@@ -8,11 +8,11 @@ Decision 007). Rather than ship those credentials to the browser, we
 proxy the ceremonies through Greenroom so the secret stays in the
 server-side environment.
 
-Each route here forwards to the matching Knuckles endpoint via
-:func:`backend.core.knuckles_client.post`, fills in the
-``redirect_url`` from :data:`settings.frontend_base_url`, and — for
-the sign-in-completing halves — decodes the returned access token to
-lazily provision the Greenroom ``users`` row and return a normalized
+Each route here calls into the :mod:`knuckles_client` SDK via
+:func:`backend.core.knuckles.get_client`, fills in the ``redirect_url``
+from :data:`settings.frontend_base_url`, and — for the
+sign-in-completing halves — decodes the returned access token to lazily
+provision the Greenroom ``users`` row and return a normalized
 ``{token, user}`` envelope the frontend's AuthContext already consumes.
 """
 
@@ -22,6 +22,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from flask import request
+from knuckles_client.exceptions import KnucklesAuthError
 
 from backend.api.v1 import api_v1
 from backend.core.auth import require_auth
@@ -33,14 +34,19 @@ from backend.core.exceptions import (
     UnauthorizedError,
     ValidationError,
 )
-from backend.core.knuckles_client import post as knuckles_post
-from backend.core.knuckles_client import verify_knuckles_token
+from backend.core.knuckles import (
+    auth_error_to_app_error,
+    get_client,
+    verify_knuckles_token,
+)
 from backend.core.logging import get_logger
 from backend.core.rate_limit import rate_limit
 from backend.data.repositories import users as users_repo
 from backend.services import users as users_service
 
 if TYPE_CHECKING:
+    from knuckles_client.models import TokenPair
+
     from backend.data.models.users import User
 
 logger = get_logger(__name__)
@@ -81,7 +87,7 @@ def _magic_link_email_key() -> str:
     key_fn=_magic_link_email_key,
 )
 def magic_link_request() -> tuple[dict[str, Any], int]:
-    """Proxy a magic-link send request to Knuckles.
+    """Send a magic-link email via Knuckles.
 
     Returns:
         Tuple of JSON body (``email_sent: True``) and HTTP 200. The
@@ -92,13 +98,13 @@ def magic_link_request() -> tuple[dict[str, Any], int]:
         ValidationError: If the body is missing or ``email`` is absent.
     """
     email = _require_string(request.get_json(silent=True), "email")
-    knuckles_post(
-        "/v1/auth/magic-link/start",
-        json={
-            "email": email,
-            "redirect_url": _frontend_url(_MAGIC_LINK_REDIRECT_PATH),
-        },
-    )
+    try:
+        get_client().magic_link.start(
+            email=email,
+            redirect_url=_frontend_url(_MAGIC_LINK_REDIRECT_PATH),
+        )
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
     return {"data": {"email_sent": True}}, 200
 
 
@@ -118,8 +124,11 @@ def magic_link_verify() -> tuple[dict[str, Any], int]:
             if Knuckles returns an unusable response.
     """
     token = _require_string(request.get_json(silent=True), "token")
-    response = knuckles_post("/v1/auth/magic-link/verify", json={"token": token})
-    return {"data": _exchange_session(response)}, 200
+    try:
+        pair = get_client().magic_link.verify(token)
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {"data": _exchange_session(pair)}, 200
 
 
 # ---------------------------------------------------------------------------
@@ -135,11 +144,15 @@ def google_start() -> tuple[dict[str, Any], int]:
     Returns:
         Tuple of JSON body (``authorize_url``, ``state``) and HTTP 200.
     """
-    response = knuckles_post(
-        "/v1/auth/google/start",
-        json={"redirect_url": _frontend_url(_GOOGLE_REDIRECT_PATH)},
-    )
-    return {"data": _passthrough_data(response)}, 200
+    try:
+        ceremony = get_client().google.start(
+            redirect_url=_frontend_url(_GOOGLE_REDIRECT_PATH),
+        )
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {
+        "data": {"authorize_url": ceremony.authorize_url, "state": ceremony.state}
+    }, 200
 
 
 @api_v1.route("/auth/google/complete", methods=["POST"])
@@ -157,11 +170,11 @@ def google_complete() -> tuple[dict[str, Any], int]:
     body = request.get_json(silent=True)
     code = _require_string(body, "code")
     state = _require_string(body, "state")
-    response = knuckles_post(
-        "/v1/auth/google/complete",
-        json={"code": code, "state": state},
-    )
-    return {"data": _exchange_session(response)}, 200
+    try:
+        pair = get_client().google.complete(code=code, state=state)
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {"data": _exchange_session(pair)}, 200
 
 
 # ---------------------------------------------------------------------------
@@ -177,11 +190,15 @@ def apple_start() -> tuple[dict[str, Any], int]:
     Returns:
         Tuple of JSON body (``authorize_url``, ``state``) and HTTP 200.
     """
-    response = knuckles_post(
-        "/v1/auth/apple/start",
-        json={"redirect_url": _frontend_url(_APPLE_REDIRECT_PATH)},
-    )
-    return {"data": _passthrough_data(response)}, 200
+    try:
+        ceremony = get_client().apple.start(
+            redirect_url=_frontend_url(_APPLE_REDIRECT_PATH),
+        )
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {
+        "data": {"authorize_url": ceremony.authorize_url, "state": ceremony.state}
+    }, 200
 
 
 @api_v1.route("/auth/apple/complete", methods=["POST"])
@@ -206,11 +223,11 @@ def apple_complete() -> tuple[dict[str, Any], int]:
     user_data = body.get("user") if isinstance(body, dict) else None
     if user_data is not None and not isinstance(user_data, dict):
         raise ValidationError("'user' must be an object when provided.")
-    response = knuckles_post(
-        "/v1/auth/apple/complete",
-        json={"code": code, "state": state, "user": user_data},
-    )
-    return {"data": _exchange_session(response)}, 200
+    try:
+        pair = get_client().apple.complete(code=code, state=state, user=user_data)
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {"data": _exchange_session(pair)}, 200
 
 
 # ---------------------------------------------------------------------------
@@ -230,11 +247,11 @@ def passkey_register_start() -> tuple[dict[str, Any], int]:
         Tuple of JSON body (``options``, ``state``) and HTTP 200.
     """
     bearer = _extract_bearer()
-    response = knuckles_post(
-        "/v1/auth/passkey/register/begin",
-        bearer_token=bearer,
-    )
-    return {"data": _passthrough_data(response)}, 200
+    try:
+        challenge = get_client().passkey.register_begin(access_token=bearer)
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {"data": {"options": challenge.options, "state": challenge.state}}, 200
 
 
 @api_v1.route("/auth/passkey/register/complete", methods=["POST"])
@@ -255,15 +272,15 @@ def passkey_register_complete() -> tuple[dict[str, Any], int]:
     credential = _require_object(body, "credential")
     state = _require_string(body, "state")
     name = body.get("name") if isinstance(body, dict) else None
-    knuckles_post(
-        "/v1/auth/passkey/register/complete",
-        json={
-            "credential": credential,
-            "state": state,
-            "name": name if isinstance(name, str) and name else None,
-        },
-        bearer_token=_extract_bearer(),
-    )
+    try:
+        get_client().passkey.register_complete(
+            access_token=_extract_bearer(),
+            credential=credential,
+            state=state,
+            name=name if isinstance(name, str) and name else None,
+        )
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
     return {"data": {"registered": True}}, 200
 
 
@@ -280,8 +297,11 @@ def passkey_authenticate_start() -> tuple[dict[str, Any], int]:
     Returns:
         Tuple of JSON body (``options``, ``state``) and HTTP 200.
     """
-    response = knuckles_post("/v1/auth/passkey/sign-in/begin")
-    return {"data": _passthrough_data(response)}, 200
+    try:
+        challenge = get_client().passkey.sign_in_begin()
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {"data": {"options": challenge.options, "state": challenge.state}}, 200
 
 
 @api_v1.route("/auth/passkey/authenticate/complete", methods=["POST"])
@@ -299,11 +319,11 @@ def passkey_authenticate_complete() -> tuple[dict[str, Any], int]:
     body = request.get_json(silent=True)
     credential = _require_object(body, "credential")
     state = _require_string(body, "state")
-    response = knuckles_post(
-        "/v1/auth/passkey/sign-in/complete",
-        json={"credential": credential, "state": state},
-    )
-    return {"data": _exchange_session(response)}, 200
+    try:
+        pair = get_client().passkey.sign_in_complete(credential=credential, state=state)
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {"data": _exchange_session(pair)}, 200
 
 
 # ---------------------------------------------------------------------------
@@ -332,11 +352,11 @@ def refresh_session() -> tuple[dict[str, Any], int]:
             expired, reused, or belongs to a different client.
     """
     refresh_token = _require_string(request.get_json(silent=True), "refresh_token")
-    response = knuckles_post(
-        "/v1/token/refresh",
-        json={"refresh_token": refresh_token},
-    )
-    return {"data": _session_envelope(response, bump_last_login=False)}, 200
+    try:
+        pair = get_client().refresh(refresh_token)
+    except KnucklesAuthError as exc:
+        raise auth_error_to_app_error(exc) from exc
+    return {"data": _session_envelope(pair, bump_last_login=False)}, 200
 
 
 # ---------------------------------------------------------------------------
@@ -420,21 +440,8 @@ def _extract_bearer() -> str:
     return token
 
 
-def _passthrough_data(response: dict[str, Any]) -> dict[str, Any]:
-    """Unwrap Knuckles' ``{"data": {...}}`` envelope.
-
-    Args:
-        response: Decoded Knuckles JSON response.
-
-    Returns:
-        The inner ``data`` dict, or an empty dict if missing.
-    """
-    data = response.get("data") if isinstance(response, dict) else None
-    return data if isinstance(data, dict) else {}
-
-
-def _exchange_session(response: dict[str, Any]) -> dict[str, Any]:
-    """Turn a Knuckles sign-in response into a fresh-login session envelope.
+def _exchange_session(pair: TokenPair) -> dict[str, Any]:
+    """Turn a Knuckles :class:`TokenPair` into a fresh-login session envelope.
 
     Used by the ceremony-completing proxies (magic-link verify,
     Google/Apple complete, passkey authenticate complete). Bumps
@@ -442,59 +449,45 @@ def _exchange_session(response: dict[str, Any]) -> dict[str, Any]:
     signing in rather than a background refresh.
 
     Args:
-        response: Full Knuckles response body (``{"data": {...}}``).
+        pair: The :class:`TokenPair` the SDK returned from a sign-in
+            ceremony.
 
     Returns:
         Dict with ``token``, ``token_expires_at``, ``refresh_token``,
         ``refresh_token_expires_at``, and ``user``.
 
     Raises:
-        AppError: ``INVALID_TOKEN`` (502) if Knuckles returns a
-            malformed response. ``INVALID_TOKEN`` (401) if the token's
-            claims are missing fields Greenroom needs to provision.
-        UnauthorizedError: If the resolved user has been deactivated.
+        AppError: ``INVALID_TOKEN`` (401) if the token's claims are
+            missing fields Greenroom needs to provision the user row.
     """
-    return _session_envelope(response, bump_last_login=True)
+    return _session_envelope(pair, bump_last_login=True)
 
 
-def _session_envelope(
-    response: dict[str, Any], *, bump_last_login: bool
-) -> dict[str, Any]:
+def _session_envelope(pair: TokenPair, *, bump_last_login: bool) -> dict[str, Any]:
     """Build the normalized ``{token, refresh_token, user, ...}`` envelope.
 
     Args:
-        response: Full Knuckles response body (``{"data": {...}}``).
+        pair: :class:`TokenPair` from a sign-in or refresh ceremony.
         bump_last_login: If True, stamp ``users.last_login_at`` with
             now. Sign-in ceremonies set this; token refresh does not
             (refresh is a silent renewal, not an activity signal).
 
     Returns:
         Dict with ``token``, ``token_expires_at``, ``refresh_token``,
-        ``refresh_token_expires_at``, and ``user``. Expiry fields
-        pass through whatever Knuckles sent (``None`` when absent).
+        ``refresh_token_expires_at``, and ``user``. Datetime fields are
+        ISO-8601 strings.
 
     Raises:
-        AppError: ``INVALID_TOKEN`` (502) if Knuckles returned no
-            access token. ``INVALID_TOKEN`` (401) on claim-validation
-            failures.
-        UnauthorizedError: If the resolved user has been deactivated.
+        AppError: ``INVALID_TOKEN`` (401) on claim-validation failures.
     """
-    data = _passthrough_data(response)
-    access_token = data.get("access_token")
-    if not isinstance(access_token, str) or not access_token:
-        raise AppError(
-            code=INVALID_TOKEN,
-            message="Identity service returned no access token.",
-            status_code=502,
-        )
-    user = _resolve_user(access_token)
+    user = _resolve_user(pair.access_token)
     if bump_last_login:
         users_repo.update_last_login(get_db(), user)
     return {
-        "token": access_token,
-        "token_expires_at": data.get("access_token_expires_at"),
-        "refresh_token": data.get("refresh_token"),
-        "refresh_token_expires_at": data.get("refresh_token_expires_at"),
+        "token": pair.access_token,
+        "token_expires_at": pair.access_token_expires_at.isoformat(),
+        "refresh_token": pair.refresh_token,
+        "refresh_token_expires_at": pair.refresh_token_expires_at.isoformat(),
         "user": users_service.serialize_user(user),
     }
 
@@ -516,7 +509,6 @@ def _resolve_user(access_token: str) -> User:
     Raises:
         AppError: ``INVALID_TOKEN`` (401) if the token is unverifiable
             or the claim shape is unusable for provisioning.
-        UnauthorizedError: If the resolved user has been deactivated.
     """
     claims = verify_knuckles_token(access_token)
     sub = claims.get("sub")
@@ -563,5 +555,9 @@ def _resolve_user(access_token: str) -> User:
             display_name=display_name if isinstance(display_name, str) else None,
         )
     if not user.is_active:
-        raise UnauthorizedError(message="Authenticated user is deactivated.")
+        # A soft-deleted account that completes a fresh Knuckles exchange
+        # is a returning user — restore the row instead of dead-ending
+        # them on a message they can't act on. Deactivation is a pause,
+        # not a tombstone; every downstream row is still intact.
+        user = users_service.reactivate_user(session, user)
     return user

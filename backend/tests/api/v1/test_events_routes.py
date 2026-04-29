@@ -10,6 +10,7 @@ from flask.testing import FlaskClient
 
 from backend.api.v1 import events as events_route
 from backend.core.exceptions import EVENT_NOT_FOUND, NotFoundError, ValidationError
+from backend.services import tickets as tickets_service
 
 
 def _fake_event() -> Any:
@@ -94,6 +95,164 @@ def test_list_events_rejects_malformed_date_as_none(
     assert captured["date_from"] is None
 
 
+def test_list_events_defaults_date_from_to_today(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitted ``date_from`` defaults to today so past events stay hidden."""
+    from datetime import date
+
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = client.get("/api/v1/events?region=DMV")
+    assert resp.status_code == 200
+    assert captured["date_from"] == date.today()
+
+
+def test_list_events_forwards_new_filter_params(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """artist_id, artist_search, price_max, free_only, available_only round-trip."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    artist_id = str(uuid.uuid4())
+    resp = client.get(
+        "/api/v1/events"
+        f"?artist_id={artist_id}&artist_search=phoebe"
+        "&price_max=45.5&free_only=true&available_only=1"
+    )
+    assert resp.status_code == 200
+    assert captured["artist_ids"] == [uuid.UUID(artist_id)]
+    assert captured["artist_search"] == "phoebe"
+    assert captured["price_max"] == 45.5
+    assert captured["free_only"] is True
+    assert captured["available_only"] is True
+
+
+def test_list_events_bool_flags_default_to_false(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitted boolean flags pass as False, not None."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    client.get("/api/v1/events")
+    assert captured["free_only"] is False
+    assert captured["available_only"] is False
+    assert captured["price_max"] is None
+    assert captured["artist_ids"] is None
+    assert captured["artist_search"] is None
+
+
+def test_list_events_default_sort_is_none_and_user_id_unset(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without ``?sort`` or auth, the route forwards ``sort=None`` and no user_id."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = client.get("/api/v1/events")
+    assert resp.status_code == 200
+    assert captured["sort"] is None
+    assert captured["user_id"] is None
+
+
+def test_list_events_for_you_anonymous_passes_sort_without_user_id(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anonymous ``?sort=for_you`` reaches the service with user_id=None."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = client.get("/api/v1/events?sort=for_you")
+    assert resp.status_code == 200
+    assert captured["sort"] == "for_you"
+    assert captured["user_id"] is None
+
+
+def test_list_events_for_you_authed_resolves_user_id(
+    authed_client: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A valid bearer token + ``?sort=for_you`` forwards the caller's user_id."""
+    auth_client, user, headers = authed_client
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = auth_client.get("/api/v1/events?sort=for_you", headers=headers())
+    assert resp.status_code == 200
+    assert captured["sort"] == "for_you"
+    assert captured["user_id"] == user.id
+
+
+def test_list_events_advanced_query_params_round_trip(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """day_of_week, time_of_day, has_image, has_price reach the service typed."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = client.get(
+        "/api/v1/events"
+        "?day_of_week=0&day_of_week=6"
+        "&time_of_day=evening&time_of_day=late"
+        "&has_image=true&has_price=1"
+    )
+    assert resp.status_code == 200
+    assert captured["day_of_week"] == [0, 6]
+    assert captured["time_of_day"] == ["evening", "late"]
+    assert captured["has_image"] is True
+    assert captured["has_price"] is True
+
+
+def test_list_events_followed_only_resolves_user_when_authed(
+    authed_client: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``followed_venues_only`` triggers user lookup so the filter can apply."""
+    auth_client, user, headers = authed_client
+    captured: dict[str, Any] = {}
+
+    def fake_list(_session: Any, **kwargs: Any) -> tuple[list[Any], int]:
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(events_route.events_service, "list_events", fake_list)
+    resp = auth_client.get(
+        "/api/v1/events?followed_venues_only=true", headers=headers()
+    )
+    assert resp.status_code == 200
+    assert captured["followed_venues_only"] is True
+    assert captured["user_id"] == user.id
+
+
 def test_list_events_surfaces_validation_error(
     client: FlaskClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -122,10 +281,17 @@ def test_get_event_by_uuid(
     monkeypatch.setattr(
         events_route.events_service, "serialize_event", lambda _e: {"id": "x"}
     )
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": None, "sources": []},
+    )
     eid = str(uuid.uuid4())
     resp = client.get(f"/api/v1/events/{eid}")
     assert resp.status_code == 200
-    assert resp.get_json()["data"] == {"id": "x"}
+    body = resp.get_json()["data"]
+    assert body["id"] == "x"
+    assert body["pricing"] == {"refreshed_at": None, "sources": []}
 
 
 def test_get_event_by_slug_falls_through(
@@ -138,9 +304,16 @@ def test_get_event_by_slug_falls_through(
         lambda _s, slug: {"slug": slug},
     )
     monkeypatch.setattr(events_route.events_service, "serialize_event", lambda e: e)
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": None, "sources": []},
+    )
     resp = client.get("/api/v1/events/phoebe-bridgers-930-club-2026-05-01-abc")
     assert resp.status_code == 200
-    assert resp.get_json()["data"]["slug"] == "phoebe-bridgers-930-club-2026-05-01-abc"
+    body = resp.get_json()["data"]
+    assert body["slug"] == "phoebe-bridgers-930-club-2026-05-01-abc"
+    assert body["pricing"]["sources"] == []
 
 
 def test_get_event_not_found(
@@ -155,6 +328,168 @@ def test_get_event_not_found(
     resp = client.get("/api/v1/events/nope-slug")
     assert resp.status_code == 404
     assert resp.get_json()["error"]["code"] == EVENT_NOT_FOUND
+
+
+def test_get_event_pricing_returns_serialized_state(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pricing endpoint returns the merged sources payload directly."""
+    event = _fake_event()
+    monkeypatch.setattr(events_route.events_service, "get_event", lambda _s, _i: event)
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": "2026-04-25T14:31:00+00:00", "sources": []},
+    )
+    eid = str(uuid.uuid4())
+    resp = client.get(f"/api/v1/events/{eid}/pricing")
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["refreshed_at"] == "2026-04-25T14:31:00+00:00"
+
+
+def test_get_event_pricing_resolves_slug(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-UUID path falls through to slug lookup."""
+    captured: dict[str, Any] = {}
+
+    def fake_by_slug(_s: Any, slug: str) -> Any:
+        captured["slug"] = slug
+        return _fake_event()
+
+    monkeypatch.setattr(events_route.events_service, "get_event_by_slug", fake_by_slug)
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": None, "sources": []},
+    )
+    resp = client.get("/api/v1/events/phoebe-slug/pricing")
+    assert resp.status_code == 200
+    assert captured["slug"] == "phoebe-slug"
+
+
+def test_refresh_event_pricing_returns_full_envelope(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST sweeps providers and returns refresh + pricing in one body."""
+    from datetime import UTC, datetime
+
+    event = _fake_event()
+    monkeypatch.setattr(events_route.events_service, "get_event", lambda _s, _i: event)
+
+    eid = uuid.uuid4()
+    refreshed = datetime(2026, 4, 25, 14, 31, tzinfo=UTC)
+
+    def fake_refresh(_s: Any, _e: Any) -> Any:
+        return tickets_service.RefreshResult(
+            event_id=eid,
+            refreshed_at=refreshed,
+            cooldown_active=False,
+            quotes_persisted=2,
+            links_upserted=3,
+            provider_errors=("seatgeek",),
+        )
+
+    monkeypatch.setattr(
+        events_route.tickets_service, "refresh_event_pricing", fake_refresh
+    )
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": refreshed.isoformat(), "sources": []},
+    )
+
+    resp = client.post(f"/api/v1/events/{eid}/refresh-pricing")
+    assert resp.status_code == 200
+    body = resp.get_json()["data"]
+    assert body["refresh"]["event_id"] == str(eid)
+    assert body["refresh"]["refreshed_at"] == refreshed.isoformat()
+    assert body["refresh"]["cooldown_active"] is False
+    assert body["refresh"]["quotes_persisted"] == 2
+    assert body["refresh"]["links_upserted"] == 3
+    assert body["refresh"]["provider_errors"] == ["seatgeek"]
+    assert body["pricing"]["refreshed_at"] == refreshed.isoformat()
+
+
+def test_refresh_event_pricing_propagates_cooldown(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cooldown short-circuit still returns 200 with the flag set true.
+
+    The frontend treats this as a successful "your view is already
+    fresh" rather than an error — the data was already persisted.
+    """
+    from datetime import UTC, datetime
+
+    event = _fake_event()
+    monkeypatch.setattr(events_route.events_service, "get_event", lambda _s, _i: event)
+
+    eid = uuid.uuid4()
+    refreshed = datetime(2026, 4, 25, 14, 30, tzinfo=UTC)
+
+    def fake_refresh(_s: Any, _e: Any) -> Any:
+        return tickets_service.RefreshResult(
+            event_id=eid,
+            refreshed_at=refreshed,
+            cooldown_active=True,
+            quotes_persisted=0,
+            links_upserted=0,
+            provider_errors=(),
+        )
+
+    monkeypatch.setattr(
+        events_route.tickets_service, "refresh_event_pricing", fake_refresh
+    )
+    monkeypatch.setattr(
+        events_route.tickets_service,
+        "serialize_pricing_state",
+        lambda _s, _e: {"refreshed_at": refreshed.isoformat(), "sources": []},
+    )
+
+    resp = client.post(f"/api/v1/events/{eid}/refresh-pricing")
+    assert resp.status_code == 200
+    body = resp.get_json()["data"]
+    assert body["refresh"]["cooldown_active"] is True
+    assert body["refresh"]["quotes_persisted"] == 0
+
+
+def test_pricing_freshness_returns_max_timestamp(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The freshness endpoint exposes the listing-page banner anchor."""
+    from datetime import UTC, datetime
+
+    refreshed = datetime(2026, 4, 26, 9, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        events_route.events_repo,
+        "get_latest_pricing_refresh",
+        lambda _s: refreshed,
+    )
+
+    resp = client.get("/api/v1/pricing/freshness")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["refreshed_at"] == refreshed.isoformat()
+
+
+def test_pricing_freshness_returns_null_when_never_swept(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No upcoming event has been priced → null timestamp, not 404.
+
+    The frontend renders this as "never" rather than treating the
+    listing page as broken.
+    """
+    monkeypatch.setattr(
+        events_route.events_repo,
+        "get_latest_pricing_refresh",
+        lambda _s: None,
+    )
+
+    resp = client.get("/api/v1/pricing/freshness")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["data"] == {"refreshed_at": None}
 
 
 def test_event_feed_returns_plain_text(

@@ -4,15 +4,25 @@ All event-related business logic lives here. API routes call these
 functions and never access the repository layer directly.
 """
 
+import math
 import uuid
-from datetime import date, datetime
-from typing import Any
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
 from backend.core.exceptions import EVENT_NOT_FOUND, NotFoundError, ValidationError
 from backend.data.models.events import Event, EventStatus, EventType
+from backend.data.repositories import artists as artists_repo
 from backend.data.repositories import events as events_repo
+from backend.data.repositories import follows as follows_repo
+
+_ET_ZONE = ZoneInfo("America/New_York")
+
+NearMeWindow = Literal["tonight", "week"]
+_NEAR_ME_WINDOWS: frozenset[str] = frozenset({"tonight", "week"})
+_EARTH_RADIUS_KM = 6371.0088
 
 
 def get_event(session: Session, event_id: uuid.UUID) -> Event:
@@ -59,6 +69,10 @@ def get_event_by_slug(session: Session, slug: str) -> Event:
     return event
 
 
+_VALID_SORTS: frozenset[str] = frozenset({"date", "for_you"})
+_VALID_TIME_OF_DAY: frozenset[str] = frozenset({"early", "evening", "late"})
+
+
 def list_events(
     session: Session,
     *,
@@ -68,8 +82,21 @@ def list_events(
     date_from: date | None = None,
     date_to: date | None = None,
     genres: list[str] | None = None,
+    artist_ids: list[uuid.UUID] | None = None,
+    artist_search: str | None = None,
+    price_max: float | None = None,
+    free_only: bool = False,
+    available_only: bool = False,
     event_type: str | None = None,
     status: str | None = None,
+    sort: str | None = None,
+    user_id: uuid.UUID | None = None,
+    day_of_week: list[int] | None = None,
+    time_of_day: list[str] | None = None,
+    has_image: bool = False,
+    has_price: bool = False,
+    followed_venues_only: bool = False,
+    followed_artists_only: bool = False,
     page: int = 1,
     per_page: int = 20,
 ) -> tuple[list[Event], int]:
@@ -83,8 +110,43 @@ def list_events(
         date_from: Start of date range.
         date_to: End of date range.
         genres: Filter by genre overlap.
+        artist_ids: Filter to events whose Spotify artist IDs overlap
+            those of the supplied :class:`Artist` UUIDs. Artists without
+            a resolved ``spotify_id`` are silently skipped — once
+            enrichment lands they'll start matching automatically. If
+            none of the supplied artists have a Spotify ID, the result
+            set is empty (the caller asked for "shows by these artists"
+            and we can't answer that yet).
+        artist_search: Case-insensitive substring on ``events.artists``.
+        price_max: Upper bound (inclusive) for ``min_price``. Must be
+            non-negative when supplied.
+        free_only: Restrict to free shows. When True, ``price_max`` is
+            ignored.
+        available_only: Hide cancelled/sold-out/past shows.
         event_type: Filter by event type string.
-        status: Filter by event status string.
+        status: Filter by event status string. Takes precedence over
+            ``available_only`` when both are passed.
+        sort: Sort key. ``"for_you"`` orders by the user's persisted
+            recommendation scores descending — requires ``user_id`` and
+            silently degrades to ``"date"`` for anonymous callers so the
+            public path stays usable. Default and ``"date"`` order by
+            ``starts_at`` ascending.
+        user_id: Greenroom user UUID. Required for ``followed_venues_only``,
+            ``followed_artists_only``, and ``sort='for_you'``.
+        day_of_week: Filter to specific weekdays (0=Sun..6=Sat). Each
+            value must be in 0..6 or a ValidationError is raised. ``None``
+            and ``[]`` skip the filter.
+        time_of_day: Subset of ``{"early", "evening", "late"}``. Unknown
+            values raise a ValidationError so the caller surfaces the bug.
+        has_image: When True, only return events with an image_url set.
+        has_price: When True, only return events with min_price set.
+        followed_venues_only: When True, restrict to events at venues the
+            caller follows. Silently degrades to "no filter" for anonymous
+            callers — pairs with the public listing's anonymous fallback.
+        followed_artists_only: When True, restrict to events whose
+            ``spotify_artist_ids`` overlap one of the caller's followed
+            (and Spotify-enriched) artists. Anonymous callers get no
+            filter; users with no enriched follows get an empty result.
         page: Page number, 1-indexed.
         per_page: Results per page. Maximum 100.
 
@@ -92,10 +154,36 @@ def list_events(
         Tuple of (events list, total count).
 
     Raises:
-        ValidationError: If per_page exceeds 100 or enum values are invalid.
+        ValidationError: If ``per_page`` exceeds 100, ``price_max`` is
+            negative, an enum string is unrecognized, ``sort`` is not a
+            supported value, ``day_of_week`` contains an out-of-range
+            integer, or ``time_of_day`` contains an unknown bucket.
     """
     if per_page > 100:
         raise ValidationError("per_page cannot exceed 100.")
+
+    if price_max is not None and price_max < 0:
+        raise ValidationError("price_max cannot be negative.")
+
+    if sort is not None and sort not in _VALID_SORTS:
+        raise ValidationError(
+            f"Invalid sort: '{sort}'. Valid values: {sorted(_VALID_SORTS)}"
+        )
+
+    if day_of_week is not None:
+        for d in day_of_week:
+            if d < 0 or d > 6:
+                raise ValidationError(
+                    f"Invalid day_of_week: {d}. Must be 0..6 (0=Sunday)."
+                )
+
+    if time_of_day is not None:
+        invalid = [b for b in time_of_day if b not in _VALID_TIME_OF_DAY]
+        if invalid:
+            raise ValidationError(
+                f"Invalid time_of_day buckets: {invalid}. "
+                f"Valid values: {sorted(_VALID_TIME_OF_DAY)}"
+            )
 
     parsed_type: EventType | None = None
     if event_type is not None:
@@ -117,16 +205,69 @@ def list_events(
                 f"Valid values: {[s.value for s in EventStatus]}"
             ) from err
 
+    spotify_ids: list[str] | None = None
+    if artist_ids is not None:
+        artists = artists_repo.list_artists_by_ids(session, artist_ids)
+        spotify_ids = [a.spotify_id for a in artists if a.spotify_id]
+
+    # Compose follow-based restrictions on top of the explicit filters.
+    # An anonymous caller (user_id=None) silently drops the toggle so the
+    # public listing isn't taken hostage by a stale URL.
+    effective_venue_ids = venue_ids
+    if followed_venues_only and user_id is not None:
+        followed = follows_repo.list_followed_venue_ids(session, user_id)
+        followed_list = sorted(followed)
+        if effective_venue_ids is not None:
+            effective_venue_ids = [v for v in effective_venue_ids if v in followed]
+        else:
+            effective_venue_ids = followed_list
+        # Empty list means "user follows nothing" — short-circuit to no
+        # rows by passing an empty list through to the repo's venue_ids
+        # filter, which `.in_([])` will reduce to no matches.
+        if not effective_venue_ids:
+            effective_venue_ids = []
+
+    effective_spotify_ids = spotify_ids
+    if followed_artists_only and user_id is not None:
+        signals = follows_repo.list_followed_artist_signals(session, user_id)
+        followed_spotify = sorted(signals.get("spotify_ids", {}).keys())
+        if effective_spotify_ids is not None:
+            keep = set(followed_spotify)
+            effective_spotify_ids = [s for s in effective_spotify_ids if s in keep]
+        else:
+            effective_spotify_ids = followed_spotify
+        # Empty list semantics already handled by the repo: it short-
+        # circuits to zero results, which is correct here too — "shows
+        # by my followed artists" with no enriched follows = nothing.
+
+    # Anonymous "for_you" requests degrade to date order — silently, so
+    # the public listing keeps working when an unauthenticated client
+    # sends `?sort=for_you` from a cached link.
+    effective_sort = sort
+    if effective_sort == "for_you" and user_id is None:
+        effective_sort = "date"
+
     return events_repo.list_events(
         session,
         city_id=city_id,
         region=region,
-        venue_ids=venue_ids,
+        venue_ids=effective_venue_ids,
         date_from=date_from,
         date_to=date_to,
         genres=genres,
+        spotify_artist_ids=effective_spotify_ids,
+        artist_search=artist_search,
+        price_max=price_max,
+        free_only=free_only,
+        available_only=available_only,
         event_type=parsed_type,
         status=parsed_status,
+        sort=effective_sort,
+        user_id=user_id if effective_sort == "for_you" else None,
+        day_of_week=day_of_week,
+        time_of_day=time_of_day,
+        has_image=has_image,
+        has_price=has_price,
         page=page,
         per_page=per_page,
     )
@@ -159,6 +300,9 @@ def serialize_event(event: Event) -> dict[str, Any]:
         "ticket_url": event.ticket_url,
         "min_price": event.min_price,
         "max_price": event.max_price,
+        "prices_refreshed_at": (
+            event.prices_refreshed_at.isoformat() if event.prices_refreshed_at else None
+        ),
         "source_url": event.source_url,
         "venue": _serialize_venue_with_city(event),
         "created_at": event.created_at.isoformat(),
@@ -181,9 +325,13 @@ def serialize_event_summary(event: Event) -> dict[str, Any]:
         "slug": event.slug,
         "starts_at": event.starts_at.isoformat() if event.starts_at else None,
         "artists": event.artists or [],
+        "genres": event.genres or [],
         "image_url": event.image_url,
         "min_price": event.min_price,
         "max_price": event.max_price,
+        "prices_refreshed_at": (
+            event.prices_refreshed_at.isoformat() if event.prices_refreshed_at else None
+        ),
         "status": event.status.value,
         "venue": _serialize_venue_with_city(event),
     }
@@ -261,6 +409,240 @@ def format_event_feed(events: list[Event], generated_at: datetime) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def list_tonight_map_events(
+    session: Session,
+    *,
+    region: str = "DMV",
+    now_utc: datetime | None = None,
+    genres: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return the envelope of today's pinnable events for the map surface.
+
+    "Tonight" is defined as the current calendar day in Eastern time (the
+    DMV region), so events scheduled late in the evening still count as
+    tonight even when the UTC wallclock has rolled into the next day.
+    Venues without coordinates are dropped because the map UI has no way
+    to render them.
+
+    Args:
+        session: Active SQLAlchemy session.
+        region: City region filter — defaults to ``"DMV"`` since this is
+            the DC map. Exposed so the same function can be exercised
+            from tests or other regions later.
+        now_utc: Clock anchor in UTC. Injected in tests to pin the ET
+            day window; defaults to :func:`datetime.now` in production.
+        genres: Optional genre overlap filter for the filter bar.
+
+    Returns:
+        Standard envelope dict ``{"data": [...], "meta": {...}}`` where
+        each row carries enough shape to render a map pin plus a
+        preview card: id, slug, title, artists, genres, image_url,
+        min_price, starts_at, and a venue block with latitude and
+        longitude.
+    """
+    anchor = (now_utc or datetime.now(UTC)).astimezone(_ET_ZONE)
+    today = anchor.date()
+
+    events, _total = events_repo.list_events(
+        session,
+        region=region,
+        date_from=today,
+        date_to=today,
+        genres=genres,
+        status=EventStatus.CONFIRMED,
+        page=1,
+        per_page=100,
+    )
+    pins = [_serialize_tonight_event(event) for event in events if _has_coords(event)]
+    return {
+        "data": pins,
+        "meta": {"count": len(pins), "date": today.isoformat()},
+    }
+
+
+def list_events_near(
+    session: Session,
+    *,
+    latitude: float,
+    longitude: float,
+    radius_km: float,
+    window: NearMeWindow = "tonight",
+    region: str = "DMV",
+    limit: int = 50,
+    now_utc: datetime | None = None,
+) -> dict[str, Any]:
+    """Return upcoming events within ``radius_km`` of a lat/lng, nearest first.
+
+    Powers the "Shows Near Me" surface. Unlike the Tonight map (which
+    sweeps the whole DMV), this endpoint narrows to a radius around
+    the user's current location and supports a small time window —
+    ``"tonight"`` for today only, ``"week"`` for the next seven days.
+
+    The distance filter is computed in Python via the haversine formula
+    so the repo query doesn't need PostGIS. The DMV dataset is small
+    enough (< 100 venues) that the post-fetch filter is cheap.
+
+    Args:
+        session: Active SQLAlchemy session.
+        latitude: WGS-84 latitude of the user's current location.
+        longitude: WGS-84 longitude of the user's current location.
+        radius_km: Maximum great-circle distance to include, in km.
+        window: ``"tonight"`` (today only, ET) or ``"week"`` (today
+            through today + 6 days, ET).
+        region: City region filter; defaults to ``"DMV"``.
+        limit: Maximum rows returned after distance sort. Capped
+            internally at 100 since the map surface renders one pin per.
+        now_utc: Clock anchor in UTC, injected by tests to pin the ET
+            day window. Defaults to :func:`datetime.now` in production.
+
+    Returns:
+        Standard envelope ``{"data": [...], "meta": {...}}``. Each row
+        has the tonight-map pin shape plus a ``distance_km`` float.
+        Meta echoes the caller's center, radius, window, and the
+        resolved ``date_from`` / ``date_to`` bounds.
+
+    Raises:
+        ValidationError: If ``window`` is not one of the supported
+            literals.
+    """
+    if window not in _NEAR_ME_WINDOWS:
+        raise ValidationError(
+            f"Invalid window: '{window}'. Valid values: {sorted(_NEAR_ME_WINDOWS)}"
+        )
+    capped_limit = max(1, min(limit, 100))
+
+    anchor = (now_utc or datetime.now(UTC)).astimezone(_ET_ZONE)
+    day_from = anchor.date()
+    day_to = day_from if window == "tonight" else day_from + timedelta(days=6)
+
+    events, _total = events_repo.list_events(
+        session,
+        region=region,
+        date_from=day_from,
+        date_to=day_to,
+        status=EventStatus.CONFIRMED,
+        page=1,
+        per_page=200,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        if not _has_coords(event):
+            continue
+        venue = event.venue
+        assert venue is not None  # narrowed by _has_coords
+        distance = _haversine_km(
+            latitude,
+            longitude,
+            venue.latitude,  # type: ignore[arg-type]
+            venue.longitude,  # type: ignore[arg-type]
+        )
+        if distance > radius_km:
+            continue
+        payload = _serialize_tonight_event(event)
+        payload["distance_km"] = round(distance, 3)
+        rows.append(payload)
+
+    rows.sort(key=lambda r: r["distance_km"])
+    rows = rows[:capped_limit]
+
+    return {
+        "data": rows,
+        "meta": {
+            "count": len(rows),
+            "center": {"latitude": latitude, "longitude": longitude},
+            "radius_km": radius_km,
+            "window": window,
+            "date_from": day_from.isoformat(),
+            "date_to": day_to.isoformat(),
+        },
+    }
+
+
+def _haversine_km(
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+) -> float:
+    """Great-circle distance between two WGS-84 points in kilometres.
+
+    Uses the standard haversine formula with the IUGG mean Earth radius
+    (6371.0088 km) so distances are accurate to within ~0.3% for the
+    sub-100-km ranges the near-me surface cares about.
+
+    Args:
+        lat1: Latitude of point A in decimal degrees.
+        lon1: Longitude of point A in decimal degrees.
+        lat2: Latitude of point B in decimal degrees.
+        lon2: Longitude of point B in decimal degrees.
+
+    Returns:
+        Great-circle distance in kilometres.
+    """
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return _EARTH_RADIUS_KM * c
+
+
+def _has_coords(event: Event) -> bool:
+    """Return True when the event's venue can be placed on a map.
+
+    Args:
+        event: Event instance with its venue relationship loaded.
+
+    Returns:
+        True if the venue relationship is present and both ``latitude``
+        and ``longitude`` are non-null.
+    """
+    venue = event.venue
+    return (
+        venue is not None and venue.latitude is not None and venue.longitude is not None
+    )
+
+
+def _serialize_tonight_event(event: Event) -> dict[str, Any]:
+    """Serialize an event into the compact shape the map surface consumes.
+
+    Drops moderation-only fields (raw_data, source_url, external_id) and
+    wraps the venue with just the fields the pin and preview card need
+    (name, slug, and the two coordinates the map has to have).
+
+    Args:
+        event: An Event instance whose venue has coordinates.
+
+    Returns:
+        JSON-safe dict for the ``data`` array on ``/maps/tonight``.
+    """
+    venue = event.venue
+    return {
+        "id": str(event.id),
+        "slug": event.slug,
+        "title": event.title,
+        "starts_at": event.starts_at.isoformat() if event.starts_at else None,
+        "artists": event.artists or [],
+        "genres": event.genres or [],
+        "image_url": event.image_url,
+        "ticket_url": event.ticket_url,
+        "min_price": event.min_price,
+        "max_price": event.max_price,
+        "venue": {
+            "id": str(venue.id),
+            "name": venue.name,
+            "slug": venue.slug,
+            "latitude": venue.latitude,
+            "longitude": venue.longitude,
+        },
+    }
 
 
 def _format_feed_line(

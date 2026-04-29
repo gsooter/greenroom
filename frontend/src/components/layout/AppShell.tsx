@@ -7,8 +7,11 @@
  * search params itself, so this component needs no props.
  */
 
+import FeedbackWidget from "@/components/feedback/FeedbackWidget";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import TopNav from "@/components/layout/TopNav";
+import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -18,6 +21,7 @@ export default function AppShell({ children }: AppShellProps) {
   return (
     <div className="flex min-h-screen flex-col">
       <TopNav />
+      <OnboardingBanner />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-6 sm:pb-10">
         {children}
       </main>
@@ -28,36 +32,34 @@ export default function AppShell({ children }: AppShellProps) {
             <span className="text-muted/80">
               Made for the DC, Maryland, and Virginia music scene
             </span>
+            <span className="text-muted/80">
+              Questions or feedback?{" "}
+              <a
+                href={SUPPORT_MAILTO}
+                className="underline underline-offset-2 hover:text-foreground"
+              >
+                {SUPPORT_EMAIL}
+              </a>
+            </span>
           </div>
           <nav className="flex flex-wrap items-center gap-4">
-            <a
-              href="/events"
-              className="hover:text-foreground"
-            >
+            <a href="/events" className="hover:text-foreground">
               Events
             </a>
-            <a
-              href="/venues"
-              className="hover:text-foreground"
-            >
+            <a href="/venues" className="hover:text-foreground">
               Venues
             </a>
-            <a
-              href="/about"
-              className="hover:text-foreground"
-            >
+            <a href="/about" className="hover:text-foreground">
               About
             </a>
-            <a
-              href="/sitemap.xml"
-              className="hover:text-foreground"
-            >
+            <a href="/sitemap.xml" className="hover:text-foreground">
               Sitemap
             </a>
           </nav>
         </div>
       </footer>
       <MobileBottomNav />
+      <FeedbackWidget />
     </div>
   );
 }

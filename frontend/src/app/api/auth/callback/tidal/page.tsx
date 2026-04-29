@@ -17,7 +17,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { completeTidalOAuth } from "@/lib/api/auth";
+import { markStepComplete } from "@/lib/api/onboarding";
 import { useAuth } from "@/lib/auth";
+import { consumeWelcomeReturnFlag } from "@/lib/welcome-redirect";
 
 type Status = "pending" | "error";
 
@@ -85,7 +87,17 @@ function TidalCallbackInner(): JSX.Element {
       try {
         await completeTidalOAuth(token, code, state);
         await refreshUser();
-        router.replace("/settings");
+        const fromWelcome = consumeWelcomeReturnFlag();
+        if (fromWelcome) {
+          try {
+            await markStepComplete(token, "music_services");
+          } catch {
+            /* non-fatal */
+          }
+          router.replace("/welcome");
+        } else {
+          router.replace("/settings");
+        }
       } catch (err) {
         setStatus("error");
         setMessage(

@@ -15,12 +15,16 @@ import EmptyState from "@/components/ui/EmptyState";
 import RegionBadge from "@/components/ui/RegionBadge";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
 import VenueStructuredData from "@/components/seo/VenueStructuredData";
+import GetDirectionsButton from "@/components/venues/GetDirectionsButton";
+import VenueSurroundings from "@/components/venues/VenueSurroundings";
+import VenueTipsAnchor from "@/components/venues/VenueTipsAnchor";
 import { ApiNotFoundError } from "@/lib/api/client";
-import { getVenueBySlug } from "@/lib/api/venues";
 import {
-  absolutePageUrl,
-  buildVenueDetailMetadata,
-} from "@/lib/metadata";
+  getVenueBySlug,
+  getVenueMapSnapshot,
+  getVenueNearbyPois,
+} from "@/lib/api/venues";
+import { absolutePageUrl, buildVenueDetailMetadata } from "@/lib/metadata";
 
 export const revalidate = 600;
 
@@ -51,6 +55,18 @@ export default async function VenueDetailPage({
   }
 
   const canonical = absolutePageUrl(`/venues/${venue.slug}`);
+
+  const hasCoords = venue.latitude !== null && venue.longitude !== null;
+  const [snapshot, nearbyPois] = hasCoords
+    ? await Promise.all([
+        getVenueMapSnapshot({
+          slug: venue.slug,
+          width: 800,
+          height: 280,
+        }),
+        getVenueNearbyPois({ slug: venue.slug, limit: 12 }),
+      ])
+    : [null, []];
 
   return (
     <>
@@ -112,18 +128,42 @@ export default async function VenueDetailPage({
             {venue.description ? (
               <p className="text-sm text-foreground">{venue.description}</p>
             ) : null}
-            {venue.website_url ? (
-              <a
-                href={venue.website_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block w-fit rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:border-accent hover:text-accent"
-              >
-                Visit website →
-              </a>
-            ) : null}
+            <div className="flex flex-wrap gap-2">
+              {venue.latitude !== null && venue.longitude !== null ? (
+                <GetDirectionsButton
+                  venueName={venue.name}
+                  latitude={venue.latitude}
+                  longitude={venue.longitude}
+                  address={venue.address}
+                />
+              ) : null}
+              {venue.website_url ? (
+                <a
+                  href={venue.website_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block w-fit rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:border-accent hover:text-accent"
+                >
+                  Visit website →
+                </a>
+              ) : null}
+            </div>
+            <VenueTipsAnchor slug={venue.slug} />
           </div>
         </div>
+
+        {hasCoords ? (
+          <VenueSurroundings
+            slug={venue.slug}
+            venueId={venue.id}
+            venueName={venue.name}
+            venueAddress={venue.address ?? null}
+            latitude={venue.latitude as number}
+            longitude={venue.longitude as number}
+            snapshot={snapshot}
+            nearbyPois={nearbyPois}
+          />
+        ) : null}
 
         <section className="flex flex-col gap-4">
           <div className="flex items-end justify-between">
@@ -157,6 +197,7 @@ export default async function VenueDetailPage({
             </div>
           )}
         </section>
+
       </article>
     </>
   );

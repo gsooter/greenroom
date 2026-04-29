@@ -13,6 +13,7 @@ import importlib
 import re
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from celery import shared_task
 from sqlalchemy.orm import Session
@@ -21,6 +22,7 @@ from backend.core.database import get_session_factory
 from backend.core.logging import get_logger
 from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.models.scraper import ScraperRunStatus
+from backend.data.repositories import artists as artists_repo
 from backend.data.repositories import events as events_repo
 from backend.data.repositories import scraper_runs as runs_repo
 from backend.data.repositories import venues as venues_repo
@@ -102,11 +104,32 @@ def scrape_venue(venue_slug: str) -> dict[str, Any]:
             raise
 
 
+FLEET_FAILURE_THRESHOLD = 0.4
+"""Fraction of venues that must fail in one batch to fire a fleet alert.
+
+Per-venue alerts already deduplicate, but a mass failure (DB outage,
+expired credentials, blocked IP) would still emit N separate alerts in
+quick succession before any cooldown kicks in. The fleet alert is a
+single, distinct signal that lets the operator see "the scraper run
+itself broke, not one venue."
+"""
+
+ESCALATION_FAILURE_THRESHOLD = 3
+"""Consecutive failures that flip a venue from "flake" to "sustained outage."
+
+The first failure already fires a per-venue ``scraper_failed:`` alert.
+Three in a row means the venue has been broken across multiple nightly
+runs and the operator should treat it as a real fix-it task rather
+than a transient blip.
+"""
+
+
 def run_all_scrapers(session: Session) -> dict[str, Any]:
     """Run scrapers for all enabled venues.
 
     Iterates through all enabled venue configs, runs each scraper,
-    ingests results, and returns a summary.
+    ingests results, and returns a summary. Fires a fleet-wide alert
+    when the failure rate exceeds :data:`FLEET_FAILURE_THRESHOLD`.
 
     Args:
         session: Active SQLAlchemy session.
@@ -131,7 +154,69 @@ def run_all_scrapers(session: Session) -> dict[str, Any]:
         len(configs),
     )
 
+    _maybe_alert_fleet_failure(
+        session=session,
+        total=len(configs),
+        failed=failed,
+        results=results,
+    )
+
     return results
+
+
+def _maybe_alert_fleet_failure(
+    *,
+    session: Session,
+    total: int,
+    failed: int,
+    results: dict[str, Any],
+) -> None:
+    """Emit a single fleet-wide alert when too many scrapers failed at once.
+
+    A nightly run with most venues failing usually points at infrastructure
+    (database, Redis, outbound network, expired API keys) rather than at
+    any one venue. Surfacing it as one signal — rather than letting the
+    per-venue alerts pile up in Slack — keeps the on-call channel readable.
+
+    Args:
+        session: Active SQLAlchemy session, reused for the alert dedup row.
+        total: Total number of venues that ran.
+        failed: Number of venues whose run ended in ``status == "failed"``.
+        results: The per-venue results dict, used to enumerate which
+            venues are in the failed set.
+    """
+    if total == 0 or failed == 0:
+        return
+    failure_rate = failed / total
+    if failure_rate < FLEET_FAILURE_THRESHOLD:
+        return
+
+    failed_venues = sorted(
+        slug for slug, info in results.items() if info["status"] == "failed"
+    )
+    preview = ", ".join(failed_venues[:10])
+    if len(failed_venues) > 10:
+        preview += f", ...(+{len(failed_venues) - 10} more)"
+
+    send_alert(
+        title=(f"Fleet failure: {failed}/{total} scrapers failed ({failure_rate:.0%})"),
+        message=(
+            f"{failed} of {total} enabled scrapers ({failure_rate:.0%}) failed "
+            f"in the same batch. This usually means a shared dependency is "
+            f"broken (DB, Redis, outbound network, credentials). "
+            f"Failed venues: {preview}."
+        ),
+        severity="error",
+        details={
+            "total": total,
+            "failed": failed,
+            "failure_rate": f"{failure_rate:.0%}",
+            "venues": preview,
+        },
+        alert_key="fleet_failure",
+        cooldown_hours=2.0,
+        session=session,
+    )
 
 
 def run_scraper_for_venue(
@@ -241,6 +326,16 @@ def run_scraper_for_venue(
                 "scraper_class": config.scraper_class,
                 "error": str(e),
             },
+            alert_key=f"scraper_failed:{config.venue_slug}",
+            cooldown_hours=6.0,
+            session=session,
+        )
+
+        _maybe_alert_escalation(
+            session=session,
+            venue_slug=config.venue_slug,
+            scraper_class=config.scraper_class,
+            last_error=str(e),
         )
 
         return {
@@ -248,6 +343,55 @@ def run_scraper_for_venue(
             "error": str(e),
             "duration_seconds": duration,
         }
+
+
+def _maybe_alert_escalation(
+    *,
+    session: Session,
+    venue_slug: str,
+    scraper_class: str,
+    last_error: str,
+) -> None:
+    """Fire a separate escalation alert when consecutive failures pile up.
+
+    The runner has just inserted a fresh ``FAILED`` row, so the head of
+    the run history reflects the current outage. If the last
+    :data:`ESCALATION_FAILURE_THRESHOLD` runs are all FAILED, the venue
+    is in a sustained-outage state and deserves an attention-grabbing
+    alert distinct from the per-run "scraper failed" notice.
+
+    The escalation alert key is venue-scoped and uses a 24h cooldown
+    so the operator gets a daily reminder until they intervene — but
+    Slack isn't carpet-bombed.
+
+    Args:
+        session: Active SQLAlchemy session, reused for both the count
+            query and the alert dedup row.
+        venue_slug: Slug of the venue that just failed.
+        scraper_class: Fully qualified scraper class for context.
+        last_error: Stringified exception from the most recent failure.
+    """
+    consecutive = runs_repo.count_consecutive_failed_runs(session, venue_slug)
+    if consecutive < ESCALATION_FAILURE_THRESHOLD:
+        return
+    send_alert(
+        title=f"Sustained outage: {venue_slug} ({consecutive} consecutive failures)",
+        message=(
+            f"Scraper for '{venue_slug}' has now failed {consecutive} runs "
+            f"in a row. This is no longer a transient flake — the integration "
+            f"likely needs a fix. Most recent error: {last_error}"
+        ),
+        severity="error",
+        details={
+            "venue": venue_slug,
+            "scraper_class": scraper_class,
+            "consecutive_failures": consecutive,
+            "last_error": last_error,
+        },
+        alert_key=f"escalation:{venue_slug}",
+        cooldown_hours=24.0,
+        session=session,
+    )
 
 
 def _instantiate_scraper(config: VenueScraperConfig) -> BaseScraper:
@@ -306,11 +450,17 @@ def _ingest_events(
         )
         return 0, 0, len(raw_events)
 
+    # Every scraper yields naive wall-clock datetimes in the venue's local
+    # zone; we localize here so events.starts_at (timestamptz) is stored
+    # in UTC with the correct offset applied.
+    venue_tz = venue.city.timezone
+
     created = 0
     updated = 0
     skipped = 0
 
     for raw in raw_events:
+        _upsert_artists(session, raw.artists)
         external_id = _extract_external_id(raw)
         existing = events_repo.get_event_by_external_id(
             session, external_id, source_platform
@@ -318,7 +468,7 @@ def _ingest_events(
 
         if existing is not None:
             # Update existing event
-            changed = _update_event_from_raw(existing, raw)
+            changed = _update_event_from_raw(existing, raw, venue_tz)
             if changed:
                 session.flush()
                 updated += 1
@@ -335,10 +485,11 @@ def _ingest_events(
                 description=raw.description,
                 event_type=EventType.CONCERT,
                 status=EventStatus.CONFIRMED,
-                starts_at=raw.starts_at,
-                ends_at=raw.ends_at,
-                on_sale_at=raw.on_sale_at,
+                starts_at=_localize_venue_datetime(raw.starts_at, venue_tz),
+                ends_at=_localize_venue_datetime(raw.ends_at, venue_tz),
+                on_sale_at=_localize_venue_datetime(raw.on_sale_at, venue_tz),
                 artists=raw.artists,
+                genres=raw.genres or None,
                 image_url=raw.image_url,
                 ticket_url=raw.ticket_url,
                 min_price=raw.min_price,
@@ -351,6 +502,23 @@ def _ingest_events(
             created += 1
 
     return created, updated, skipped
+
+
+def _upsert_artists(session: Session, names: list[str]) -> None:
+    """Upsert each performer name onto the artists table.
+
+    Called once per RawEvent during ingestion so the ``artists`` table
+    grows as events come in. The Spotify enrichment Celery task picks
+    up from there — no synchronous Spotify calls in the scraper path.
+
+    Args:
+        session: Active SQLAlchemy session.
+        names: Performer names straight off the RawEvent.
+    """
+    for name in names:
+        if not isinstance(name, str) or not name.strip():
+            continue
+        artists_repo.upsert_artist_by_name(session, name)
 
 
 def _extract_external_id(raw: RawEvent) -> str:
@@ -382,14 +550,44 @@ def _extract_external_id(raw: RawEvent) -> str:
     return hashlib.sha256(fingerprint.encode()).hexdigest()[:32]
 
 
-def _update_event_from_raw(event: Event, raw: RawEvent) -> bool:
+def _localize_venue_datetime(value: datetime | None, tz_name: str) -> datetime | None:
+    """Treat a naive scraper datetime as venue-local wall time and return UTC.
+
+    Scrapers yield naive datetimes whose fields reflect the venue's local
+    wall clock — a 7 pm show at Black Cat is ``datetime(y, m, d, 19, 0)``
+    with no tzinfo. The ``events.starts_at`` column is ``timestamptz``,
+    so a naive value gets silently stored as UTC, shifting every DMV show
+    four-to-five hours earlier than it actually plays. Attaching the
+    venue's IANA zone before converting to UTC is the fix.
+
+    Datetimes that already carry tzinfo are normalized to UTC but not
+    re-localized, so future tz-aware scrapers aren't double-converted.
+
+    Args:
+        value: The raw datetime from a RawEvent, possibly naive or None.
+        tz_name: IANA timezone name, e.g. ``"America/New_York"``.
+
+    Returns:
+        A timezone-aware datetime in UTC, or None when ``value`` is None.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(UTC)
+    return value.replace(tzinfo=ZoneInfo(tz_name)).astimezone(UTC)
+
+
+def _update_event_from_raw(event: Event, raw: RawEvent, venue_tz: str) -> bool:
     """Update an existing event with fresh data from a scraper.
 
-    Only updates fields that have actually changed.
+    Only updates fields that have actually changed. Datetime fields are
+    localized from the venue's timezone to UTC before comparison so a
+    re-scrape of the same naive wall-clock time doesn't appear as a diff.
 
     Args:
         event: The existing Event instance.
         raw: The fresh RawEvent data.
+        venue_tz: IANA timezone name for the venue's city.
 
     Returns:
         True if any fields were updated, False if unchanged.
@@ -398,10 +596,11 @@ def _update_event_from_raw(event: Event, raw: RawEvent) -> bool:
     field_map: list[tuple[str, Any]] = [
         ("title", raw.title),
         ("description", raw.description),
-        ("starts_at", raw.starts_at),
-        ("ends_at", raw.ends_at),
-        ("on_sale_at", raw.on_sale_at),
+        ("starts_at", _localize_venue_datetime(raw.starts_at, venue_tz)),
+        ("ends_at", _localize_venue_datetime(raw.ends_at, venue_tz)),
+        ("on_sale_at", _localize_venue_datetime(raw.on_sale_at, venue_tz)),
         ("artists", raw.artists),
+        ("genres", raw.genres or None),
         ("image_url", raw.image_url),
         ("ticket_url", raw.ticket_url),
         ("min_price", raw.min_price),

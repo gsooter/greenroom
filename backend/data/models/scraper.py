@@ -2,6 +2,9 @@
 
 The validator uses scraper run history to detect anomalies — zero results
 or >60% drop from the 30-run average triggers an alert (Decision 006).
+The ``scraper_alerts`` table layered on top of that history records the
+last delivery time for each alert key so the notifier can suppress
+duplicates inside an operator-defined cooldown window.
 """
 
 import enum
@@ -76,4 +79,65 @@ class ScraperRun(TimestampMixin, Base):
         return (
             f"<ScraperRun {self.venue_slug} "
             f"{self.status.value} ({self.event_count} events)>"
+        )
+
+
+class ScraperAlert(TimestampMixin, Base):
+    """Last-sent record per alert key, used to dedup notifier deliveries.
+
+    Without this table a single broken scraper would post to Slack on
+    every nightly run (and on every manual re-trigger from /admin),
+    drowning the channel and training the operator to ignore it. Each
+    alert the notifier emits carries an ``alert_key`` — typically
+    ``"<reason>:<venue-slug>"`` — and a ``cooldown_hours`` window. The
+    notifier checks ``last_sent_at`` before delivery and short-circuits
+    when the previous send falls inside the window.
+
+    ``sent_count`` increments on every (non-suppressed) send so the
+    admin UI can surface "how often is this firing past the cooldown."
+
+    Attributes:
+        id: Unique identifier for the alert record.
+        alert_key: Stable, human-readable key for the alert. Same key =
+            same logical alert. Unique across the table.
+        last_sent_at: Timestamp of the most recent (non-suppressed)
+            delivery attempt.
+        severity: Severity recorded on the most recent send
+            (``"info"``, ``"warning"``, ``"error"``).
+        title: Title from the most recent send.
+        message: Message body from the most recent send.
+        details: Optional structured detail payload from the most recent
+            send, kept for the daily fleet-health digest.
+        sent_count: Number of non-suppressed deliveries since the row
+            was created.
+    """
+
+    __tablename__ = "scraper_alerts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    alert_key: Mapped[str] = mapped_column(
+        String(200), nullable=False, unique=True, index=True
+    )
+    last_sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    sent_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the ScraperAlert.
+
+        Returns:
+            String representation with key, severity, and last sent time.
+        """
+        return (
+            f"<ScraperAlert {self.alert_key} "
+            f"{self.severity} last_sent={self.last_sent_at.isoformat()}>"
         )

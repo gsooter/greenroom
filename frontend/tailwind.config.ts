@@ -41,6 +41,9 @@ const config: Config = {
           dark: "var(--color-navy-dark)",
           soft: "var(--color-navy-soft)",
         },
+        amber: "var(--color-amber)",
+        coral: "var(--color-coral)",
+        gold: "var(--color-gold)",
       },
       fontFamily: {
         sans: [

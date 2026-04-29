@@ -11,6 +11,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
+import EventPricingPanel from "@/components/events/EventPricingPanel";
 import SaveEventButton from "@/components/events/SaveEventButton";
 import EmptyState from "@/components/ui/EmptyState";
 import RegionBadge from "@/components/ui/RegionBadge";
@@ -36,11 +37,19 @@ interface EventDetailPageProps {
   params: { id: string };
 }
 
+function decodeParamId(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export async function generateMetadata({
   params,
 }: EventDetailPageProps): Promise<Metadata> {
   try {
-    const event = await getEvent(params.id, 300);
+    const event = await getEvent(decodeParamId(params.id), 300);
     return buildEventDetailMetadata(event);
   } catch {
     return {};
@@ -52,7 +61,7 @@ export default async function EventDetailPage({
 }: EventDetailPageProps) {
   let event;
   try {
-    event = await getEvent(params.id, 300);
+    event = await getEvent(decodeParamId(params.id), 300);
   } catch (err) {
     if (err instanceof ApiNotFoundError) notFound();
     throw err;
@@ -166,6 +175,10 @@ export default async function EventDetailPage({
             </p>
           </section>
         ) : null}
+
+        <EventPricingPanel
+          initial={event.pricing ?? { refreshed_at: null, sources: [] }}
+        />
 
         {event.genres.length > 0 ? (
           <section className="flex flex-wrap items-center gap-2">

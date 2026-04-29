@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.data.models.events import Event
 from backend.data.models.recommendations import Recommendation
 from backend.data.models.users import (
     MusicServiceConnection,
@@ -18,6 +19,7 @@ from backend.data.models.users import (
     SavedEvent,
     User,
 )
+from backend.data.models.venues import Venue
 
 # ---------------------------------------------------------------------------
 # User queries
@@ -108,6 +110,70 @@ def update_user(
             setattr(user, key, value)
     session.flush()
     return user
+
+
+def list_users(
+    session: Session,
+    *,
+    search: str | None = None,
+    is_active: bool | None = None,
+    page: int = 1,
+    per_page: int = 50,
+) -> tuple[list[User], int]:
+    """List users with optional search and active-state filter.
+
+    Newest accounts first. ``search`` does a case-insensitive substring
+    match against ``email`` and ``display_name`` so an admin can locate
+    a user by partial name or domain without remembering the UUID.
+
+    Args:
+        session: Active SQLAlchemy session.
+        search: Optional case-insensitive substring of email or
+            display_name. Whitespace is stripped; an empty/blank value
+            is treated as no filter.
+        is_active: Optional active-state filter. None means both.
+        page: Page number, 1-indexed. Defaults to 1.
+        per_page: Results per page. Defaults to 50.
+
+    Returns:
+        Tuple of (users list, total count).
+    """
+    base = select(User)
+    if is_active is not None:
+        base = base.where(User.is_active.is_(is_active))
+    if search is not None and search.strip():
+        like = f"%{search.strip()}%"
+        base = base.where(
+            func.lower(User.email).like(func.lower(like))
+            | func.lower(func.coalesce(User.display_name, "")).like(func.lower(like))
+        )
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = session.execute(count_stmt).scalar_one()
+
+    stmt = (
+        base.order_by(User.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    users = list(session.execute(stmt).scalars().all())
+    return users, total
+
+
+def delete_user(session: Session, user: User) -> None:
+    """Hard-delete a Greenroom user row and its cascaded children.
+
+    Removes the local profile, music-service connections, saved events,
+    and recommendations via the ORM cascade. Does *not* touch the
+    Knuckles identity record — that lives in the identity service and
+    must be deleted there separately if a full erase is required.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user: The User instance to delete.
+    """
+    session.delete(user)
+    session.flush()
 
 
 def update_last_login(session: Session, user: User) -> User:
@@ -306,6 +372,49 @@ def create_saved_event(
     session.add(saved)
     session.flush()
     return saved
+
+
+def list_saved_venue_affinity(
+    session: Session,
+    user_id: uuid.UUID,
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """Aggregate the user's saved events by venue.
+
+    Counts how many distinct events at each venue the user has bookmarked
+    and bundles the venue's display name in the same dict so the
+    recommendation scorer can label its match-reason chip ("You've saved
+    shows at Black Cat") without a second lookup.
+
+    A single SQL round-trip joins ``saved_events`` → ``events`` →
+    ``venues`` and aggregates server-side; the scorer treats the result
+    as an in-memory map keyed by venue id.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user_id: UUID of the user.
+
+    Returns:
+        Mapping ``{venue_id: {"count": int, "name": str}}``. Empty when
+        the user has no saved events. Venues whose join row is missing
+        a name (shouldn't happen in practice) are dropped.
+    """
+    stmt = (
+        select(
+            Venue.id,
+            Venue.name,
+            func.count(SavedEvent.id).label("count"),
+        )
+        .join(Event, Event.id == SavedEvent.event_id)
+        .join(Venue, Venue.id == Event.venue_id)
+        .where(SavedEvent.user_id == user_id)
+        .group_by(Venue.id, Venue.name)
+    )
+    result: dict[uuid.UUID, dict[str, Any]] = {}
+    for venue_id, venue_name, count in session.execute(stmt).all():
+        if not venue_name:
+            continue
+        result[venue_id] = {"count": int(count), "name": venue_name}
+    return result
 
 
 def delete_saved_event(session: Session, saved: SavedEvent) -> None:

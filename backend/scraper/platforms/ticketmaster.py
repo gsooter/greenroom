@@ -26,6 +26,36 @@ MAX_RETRIES = 3
 INITIAL_BACKOFF = 1.0
 
 
+TICKETMASTER_GENRE_MAP: dict[str, str] = {
+    "rock": "rock",
+    "alternative": "alternative",
+    "indie": "indie",
+    "indie rock": "indie",
+    "pop": "pop",
+    "country": "country",
+    "r&b": "r&b",
+    "rhythm and blues": "r&b",
+    "hip-hop/rap": "hip-hop",
+    "hip hop": "hip-hop",
+    "rap": "hip-hop",
+    "classical": "classical",
+    "jazz": "jazz",
+    "latin": "latin",
+    "metal": "metal",
+    "hard rock": "metal",
+    "folk": "folk",
+    "blues": "blues",
+    "reggae": "reggae",
+    "electronic": "electronic",
+    "dance/electronic": "electronic",
+    "edm": "electronic",
+    "punk": "punk",
+    "world": "world",
+    "soul": "soul",
+    "funk": "funk",
+}
+
+
 class TicketmasterScraper(BaseScraper):
     """Scraper for venues listed on Ticketmaster.
 
@@ -202,6 +232,9 @@ class TicketmasterScraper(BaseScraper):
             # Parse images — pick the largest
             image_url = self._extract_image(data)
 
+            # Parse genres from the classifications block
+            genres = self._extract_genres(data)
+
             # Build ticket URL
             ticket_url = data.get("url")
 
@@ -220,6 +253,7 @@ class TicketmasterScraper(BaseScraper):
                 min_price=min_price,
                 max_price=max_price,
                 image_url=image_url,
+                genres=genres,
             )
 
         except Exception as e:
@@ -300,6 +334,46 @@ class TicketmasterScraper(BaseScraper):
                 max_price = p_max
 
         return min_price, max_price
+
+    def _extract_genres(self, data: dict[str, Any]) -> list[str]:
+        """Extract canonical genre tags from a Ticketmaster classification block.
+
+        Each classification carries ``genre`` and ``subGenre`` names. Both
+        are run through :data:`TICKETMASTER_GENRE_MAP`; names not in the
+        map (including Ticketmaster's catch-all ``Undefined``) are
+        dropped. Order is preserved and duplicates are collapsed so the
+        first occurrence wins.
+
+        Args:
+            data: Full event object from the Discovery API.
+
+        Returns:
+            List of canonical genre strings (e.g. ``["rock", "pop"]``).
+            Empty when the event has no classification block or none of
+            its genres appear in the map.
+        """
+        classifications = data.get("classifications") or []
+        if not isinstance(classifications, list):
+            return []
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for classification in classifications:
+            if not isinstance(classification, dict):
+                continue
+            for field_name in ("genre", "subGenre"):
+                block = classification.get(field_name)
+                if not isinstance(block, dict):
+                    continue
+                name = block.get("name")
+                if not isinstance(name, str):
+                    continue
+                canonical = TICKETMASTER_GENRE_MAP.get(name.strip().lower())
+                if canonical is None or canonical in seen:
+                    continue
+                seen.add(canonical)
+                ordered.append(canonical)
+        return ordered
 
     def _extract_image(self, data: dict[str, Any]) -> str | None:
         """Extract the best image URL from a Ticketmaster event.

@@ -7,13 +7,21 @@ No business logic lives here.
 import uuid
 from typing import Any
 
-from flask import request
+from flask import g, request
 
 from backend.api.v1 import api_v1
 from backend.core.database import get_db
+from backend.core.knuckles import verify_knuckles_token
+from backend.core.logging import get_logger
 from backend.data.repositories import events as events_repo
+from backend.data.repositories import users as users_repo
 from backend.services import events as events_service
+from backend.services import map_recommendations as map_rec_service
 from backend.services import venues as venues_service
+
+logger = get_logger(__name__)
+
+_MAX_SESSION_ID_LEN = 64
 
 
 @api_v1.route("/venues", methods=["GET"])
@@ -101,3 +109,97 @@ def get_venue(slug: str) -> tuple[dict[str, Any], int]:
     venue_data["upcoming_event_count"] = event_count
 
     return {"data": venue_data}, 200
+
+
+@api_v1.route("/venues/<slug>/tips", methods=["GET"])
+def list_venue_tips(slug: str) -> tuple[dict[str, Any], int]:
+    """List community recommendations anchored to a venue.
+
+    Returns non-suppressed :class:`MapRecommendation` rows whose
+    ``venue_id`` is this venue, ordered by net votes with newest as
+    tiebreaker. Each row carries ``distance_from_venue_m`` so the UI
+    can show proximity to the venue.
+
+    Auth is optional: a valid bearer token populates ``viewer_vote``
+    per tip; a signed-out caller can pass a ``session_id`` query arg
+    to get the same treatment for their guest votes.
+
+    Args:
+        slug: URL-safe slug identifier of the venue.
+
+    Query parameters:
+        category: Optional category filter.
+        limit: Max rows (default 100, max 200).
+        session_id: Guest session id for viewer_vote lookup.
+
+    Returns:
+        Tuple of JSON response body and HTTP 200 status code.
+    """
+    session = get_db()
+    venue = venues_service.get_venue_by_slug(session, slug)
+
+    viewer = _maybe_current_user()
+    viewer_session_id = _sanitized_session_id(request.args.get("session_id"))
+    limit = request.args.get("limit", 100, type=int)
+
+    tips = map_rec_service.list_tips_for_venue(
+        session,
+        venue=venue,
+        category=request.args.get("category"),
+        limit=limit,
+        viewer_user_id=viewer.id if viewer is not None else None,
+        viewer_session_id=viewer_session_id if viewer is None else None,
+    )
+    return {"data": tips, "meta": {"count": len(tips)}}, 200
+
+
+def _maybe_current_user() -> Any:
+    """Return the authenticated user if a valid bearer token is present.
+
+    Mirrors the "optional auth" helper in
+    :mod:`backend.api.v1.map_recommendations` — a failed verification
+    falls back to guest behavior rather than raising.
+
+    Returns:
+        The :class:`User` on a successful verification, else ``None``.
+    """
+    header = request.headers.get("Authorization", "")
+    if not header.lower().startswith("bearer "):
+        return None
+    token = header[len("bearer ") :].strip()
+    if not token:
+        return None
+    try:
+        claims = verify_knuckles_token(token)
+        sub = claims.get("sub")
+        if not isinstance(sub, str):
+            return None
+        user_id = uuid.UUID(sub)
+    except Exception:
+        logger.debug("venue_tips_optional_auth_rejected", exc_info=True)
+        return None
+
+    session = get_db()
+    user = users_repo.get_user_by_id(session, user_id)
+    if user is None or not user.is_active:
+        return None
+    g.current_user = user
+    return user
+
+
+def _sanitized_session_id(raw: Any) -> str | None:
+    """Return a non-empty, length-capped guest session id or ``None``.
+
+    Args:
+        raw: Raw value from the query string.
+
+    Returns:
+        A stripped string of at most :data:`_MAX_SESSION_ID_LEN` chars,
+        or ``None`` if missing or malformed.
+    """
+    if not isinstance(raw, str):
+        return None
+    trimmed = raw.strip()
+    if not trimmed or len(trimmed) > _MAX_SESSION_ID_LEN:
+        return None
+    return trimmed

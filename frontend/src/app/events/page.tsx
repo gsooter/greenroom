@@ -5,6 +5,9 @@
  * - `?city=<slug>` to narrow to a single city
  * - `?window=tonight|weekend|week` to restrict to a date window
  * - `?page=<n>` for pagination
+ * - filter-panel params: `?genre=`, `?venue=`, `?artist=`, `?price_max=`,
+ *   `?free=`, `?available=`, `?date_from=`, `?date_to=` — see
+ *   `lib/event-filters.ts` for the full codec.
  *
  * Events are grouped into sticky-header date buckets ("Tonight",
  * "This weekend", "Next 7 days", then week-by-week) so the calendar
@@ -14,13 +17,25 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
+import ActiveFilterChips from "@/components/events/ActiveFilterChips";
 import CalendarView from "@/components/events/CalendarView";
 import EventCard from "@/components/events/EventCard";
+import EventFilterPanel, {
+  type FilterPanelGenre,
+  type FilterPanelVenue,
+} from "@/components/events/EventFilterPanel";
+import PricingFreshnessBanner from "@/components/events/PricingFreshnessBanner";
 import EmptyState from "@/components/ui/EmptyState";
 import WindowFilterChips from "@/components/events/WindowFilterChips";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
 import { getCityBySlug } from "@/lib/api/cities";
-import { listEvents } from "@/lib/api/events";
+import {
+  getPricingFreshness,
+  listEvents,
+  type ListEventsParams,
+} from "@/lib/api/events";
+import { listGenres } from "@/lib/api/onboarding";
+import { listVenues } from "@/lib/api/venues";
 import {
   bucketizeEvents,
   etDateKey,
@@ -33,12 +48,20 @@ import {
   type DateWindow,
 } from "@/lib/dates";
 import {
+  FILTER_PARAM_KEYS,
+  parseEventFilters,
+  type EventFilters,
+} from "@/lib/event-filters";
+import {
   absolutePageUrl,
   buildEventsIndexMetadata,
 } from "@/lib/metadata";
 import type { City, EventSummary, Paginated } from "@/types";
 
-export const revalidate = 300;
+// Disables ISR caching: "Tonight" bucketing calls `new Date()` at render
+// time, and a cached HTML page pins yesterday's date until the next hit.
+// Force-dynamic keeps the clock honest without moving bucketization to the client.
+export const dynamic = "force-dynamic";
 
 const PER_PAGE = 48;
 
@@ -52,6 +75,15 @@ interface EventsPageProps {
     view?: string;
     date?: string;
     month?: string;
+    // Filter-panel params (also see FILTER_PARAM_KEYS in lib/event-filters)
+    genre?: string;
+    venue?: string;
+    artist?: string;
+    price_max?: string;
+    free?: string;
+    available?: string;
+    date_from?: string;
+    date_to?: string;
   };
 }
 
@@ -73,6 +105,7 @@ async function fetchEventsInRange(
     cityId?: string;
     dateFrom: string;
     dateTo: string;
+    extra?: Partial<ListEventsParams>;
   },
 ): Promise<EventSummary[]> {
   const collected: EventSummary[] = [];
@@ -85,11 +118,69 @@ async function fetchEventsInRange(
       page,
       perPage: CALENDAR_PER_PAGE,
       revalidateSeconds: 300,
+      ...(params.extra ?? {}),
     });
     collected.push(...res.data);
     if (!res.meta.has_next) break;
   }
   return collected;
+}
+
+async function loadFilterCatalogs(
+  city: City | null,
+): Promise<{ genres: FilterPanelGenre[]; venues: FilterPanelVenue[] }> {
+  const [genresRes, venuesRes] = await Promise.allSettled([
+    listGenres(60 * 60),
+    listVenues({
+      region: city ? undefined : "DMV",
+      cityId: city?.id,
+      activeOnly: true,
+      perPage: 100,
+      revalidateSeconds: 60 * 60,
+    }),
+  ]);
+
+  const genres: FilterPanelGenre[] =
+    genresRes.status === "fulfilled"
+      ? genresRes.value.map((g) => ({ slug: g.slug, label: g.label }))
+      : [];
+
+  const venues: FilterPanelVenue[] =
+    venuesRes.status === "fulfilled"
+      ? venuesRes.value.data
+          .map((v) => ({ id: v.id, name: v.name }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      : [];
+
+  return { genres, venues };
+}
+
+/**
+ * Pick a date range for the listEvents call, with panel filters winning.
+ *
+ * The /events page already has two pre-existing date inputs: the
+ * ``?date=`` single-day pin and the ``?window=tonight|weekend|week``
+ * preset. The new panel adds ``date_from`` / ``date_to``. When the panel
+ * filter is set, it overrides both. Otherwise, the legacy params apply.
+ */
+function resolveDateRange(
+  filters: EventFilters,
+  specificDate: string | null,
+  windowRange: { dateFrom: string; dateTo: string } | null,
+): { dateFrom: string | undefined; dateTo: string | undefined } {
+  if (filters.dateFrom || filters.dateTo) {
+    return {
+      dateFrom: filters.dateFrom ?? undefined,
+      dateTo: filters.dateTo ?? undefined,
+    };
+  }
+  if (specificDate) {
+    return { dateFrom: specificDate, dateTo: specificDate };
+  }
+  if (windowRange) {
+    return { dateFrom: windowRange.dateFrom, dateTo: windowRange.dateTo };
+  }
+  return { dateFrom: undefined, dateTo: undefined };
 }
 
 function parsePage(value: string | undefined): number {
@@ -113,6 +204,14 @@ async function loadCity(slug: string | undefined): Promise<City | null> {
   }
 }
 
+async function safeGetPricingFreshness(): Promise<string | null> {
+  try {
+    return await getPricingFreshness(300);
+  } catch {
+    return null;
+  }
+}
+
 export async function generateMetadata({
   searchParams,
 }: EventsPageProps): Promise<Metadata> {
@@ -128,6 +227,11 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
   const specificDate = parseDate(searchParams.date);
   const windowRange = activeWindow ? windowDateRange(activeWindow) : null;
 
+  const filters = parseEventFilters(searchParams);
+  const { genres: genreOptions, venues: venueOptions } =
+    await loadFilterCatalogs(city);
+  const pricingRefreshedAt = await safeGetPricingFreshness();
+
   const now = new Date();
   const todayKey = etDateKey(now);
   const requestedMonth = parseMonthKey(searchParams.month);
@@ -140,21 +244,37 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
   };
   let calendarEvents: EventSummary[] = [];
 
+  const filterExtras: Partial<ListEventsParams> = {
+    venueIds: filters.venueIds.length > 0 ? filters.venueIds : undefined,
+    genres: filters.genres.length > 0 ? filters.genres : undefined,
+    artistSearch: filters.artistSearch ?? undefined,
+    priceMax:
+      !filters.freeOnly && filters.priceMax !== null
+        ? filters.priceMax
+        : undefined,
+    freeOnly: filters.freeOnly || undefined,
+    availableOnly: filters.availableOnly || undefined,
+  };
+
   if (activeView === "calendar") {
     const range = monthDateRange(calendarMonth.year, calendarMonth.monthIndex);
     try {
       calendarEvents = await fetchEventsInRange({
         region: city ? undefined : "DMV",
         cityId: city?.id,
-        dateFrom: range.dateFrom,
-        dateTo: range.dateTo,
+        dateFrom: filters.dateFrom ?? range.dateFrom,
+        dateTo: filters.dateTo ?? range.dateTo,
+        extra: filterExtras,
       });
     } catch {
       calendarEvents = [];
     }
   } else {
-    const dateFrom = specificDate ?? windowRange?.dateFrom;
-    const dateTo = specificDate ?? windowRange?.dateTo;
+    const { dateFrom, dateTo } = resolveDateRange(
+      filters,
+      specificDate,
+      windowRange,
+    );
     try {
       results = await listEvents({
         region: city ? undefined : "DMV",
@@ -164,6 +284,7 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
         page,
         perPage: PER_PAGE,
         revalidateSeconds: 300,
+        ...filterExtras,
       });
     } catch {
       results = {
@@ -175,6 +296,22 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
 
   const heading = city ? `Concerts in ${city.name}` : "Concerts across the DMV";
   const buckets = bucketizeEvents(results.data);
+
+  const baseParams = new URLSearchParams();
+  if (city?.slug) baseParams.set("city", city.slug);
+  if (activeWindow) baseParams.set("window", activeWindow);
+  if (activeView === "calendar") baseParams.set("view", "calendar");
+  if (specificDate) baseParams.set("date", specificDate);
+
+  const filterPanelBase = new URLSearchParams(baseParams);
+  for (const key of FILTER_PARAM_KEYS) filterPanelBase.delete(key);
+
+  const genreLabels: Record<string, string> = Object.fromEntries(
+    genreOptions.map((g) => [g.slug, g.label]),
+  );
+  const venueLabels: Record<string, string> = Object.fromEntries(
+    venueOptions.map((v) => [v.id, v.name]),
+  );
 
   const prevMonth = shiftMonth(
     calendarMonth.year,
@@ -219,13 +356,22 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
                   ? `Showing ${results.data.length} of ${results.meta.total} upcoming shows.`
                   : "Updated nightly from venue websites and Ticketmaster."}
             </p>
+            <PricingFreshnessBanner refreshedAt={pricingRefreshedAt} />
           </div>
-          <ViewToggle
-            active={activeView}
-            citySlug={city?.slug ?? null}
-            windowValue={activeWindow}
-            date={specificDate}
-          />
+          <div className="flex items-center gap-2">
+            <EventFilterPanel
+              initialFilters={filters}
+              baseParams={filterPanelBase}
+              genres={genreOptions}
+              venues={venueOptions}
+            />
+            <ViewToggle
+              active={activeView}
+              citySlug={city?.slug ?? null}
+              windowValue={activeWindow}
+              date={specificDate}
+            />
+          </div>
         </div>
         {activeView === "list" ? (
           <WindowFilterChips
@@ -233,6 +379,12 @@ export default async function EventsPage({ searchParams }: EventsPageProps) {
             citySlug={city?.slug ?? null}
           />
         ) : null}
+        <ActiveFilterChips
+          filters={filters}
+          baseParams={filterPanelBase}
+          genreLabels={genreLabels}
+          venueLabels={venueLabels}
+        />
         {specificDate ? (
           <Link
             href={buildEventsUrl({

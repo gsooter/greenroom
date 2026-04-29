@@ -47,9 +47,11 @@ function summary(overrides: Partial<EventSummary> = {}): EventSummary {
     slug: "fake-show",
     starts_at: "2026-05-02T23:00:00.000Z",
     artists: ["Band A", "Band B"],
+    genres: [],
     image_url: "https://img.test/e.jpg",
     min_price: 25,
     max_price: 55,
+    prices_refreshed_at: null,
     status: "confirmed",
     venue: {
       id: "v-1",
@@ -90,6 +92,17 @@ describe("EventCard", () => {
       />,
     );
     expect(screen.queryByText(/\$/)).not.toBeInTheDocument();
+  });
+
+  it("renders a freshness caption when prices were recently refreshed", () => {
+    const recently = new Date(Date.now() - 90 * 60 * 1000).toISOString();
+    render(<EventCard event={summary({ prices_refreshed_at: recently })} />);
+    expect(screen.getByText(/^Updated /)).toBeInTheDocument();
+  });
+
+  it("omits the freshness caption when prices_refreshed_at is null", () => {
+    render(<EventCard event={summary({ prices_refreshed_at: null })} />);
+    expect(screen.queryByText(/^Updated /)).not.toBeInTheDocument();
   });
 
   it("renders an image background when image_url is present", () => {

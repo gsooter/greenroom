@@ -1,7 +1,7 @@
 /**
  * Tests for CityPicker.
  *
- * Covers: option list renders with "All DMV cities" plus each city,
+ * Covers: option list renders with "All cities (DMV default)" plus each city,
  * the current selection is reflected in the select's value, and
  * changing the selection pushes the new URL while preserving the
  * other search params (but always dropping `page`).
@@ -55,9 +55,9 @@ describe("CityPicker", () => {
     }
   });
 
-  it("renders 'All DMV cities' and one option per city", () => {
+  it("renders 'All cities (DMV default)' and one option per city", () => {
     render(<CityPicker cities={cities()} />);
-    expect(screen.getByText("All DMV cities")).toBeInTheDocument();
+    expect(screen.getByText("All cities (DMV default)")).toBeInTheDocument();
     expect(screen.getByText("Washington, DC")).toBeInTheDocument();
     expect(screen.getByText("Baltimore, MD")).toBeInTheDocument();
   });
@@ -78,7 +78,7 @@ describe("CityPicker", () => {
     expect(mockPush).toHaveBeenCalledWith("/events?city=washington-dc");
   });
 
-  it("clears the city param when 'All DMV cities' is selected", () => {
+  it("clears the city param when 'All cities (DMV default)' is selected", () => {
     mockSearchParams.set("city", "baltimore");
     mockSearchParams.set("window", "weekend");
     render(<CityPicker cities={cities()} />);

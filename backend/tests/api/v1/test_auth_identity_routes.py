@@ -1,15 +1,17 @@
 """Route tests for :mod:`backend.api.v1.auth_identity`.
 
-These endpoints are server-side proxies that forward identity
-ceremonies (magic link, Google, Apple, passkey) to Knuckles so the
-app-client secret never ships to the browser. The tests mock
-``knuckles_client.post`` directly rather than standing up an HTTP
-stub — the proxy's job is plumbing, not network behavior.
+These endpoints are server-side proxies that drive the Knuckles SDK
+ceremonies (magic link, Google, Apple, passkey) so the app-client
+secret never ships to the browser. The tests mock
+:func:`backend.core.knuckles.get_client` to return a :class:`MagicMock`
+standing in for the SDK — the proxy's job is plumbing, not network
+behavior, so we don't need a live HTTP stub.
 
 Covered per endpoint:
 - forwarding of the expected payload (including the server-built
   ``redirect_url``),
-- passthrough of Knuckles' ``data`` envelope for the challenge halves,
+- shaping of the SDK's typed dataclasses into the JSON envelope the
+  frontend consumes,
 - lazy user provisioning on the session-completing halves,
 - validation errors for missing body fields,
 - ``@require_auth`` enforcement on the passkey register proxies.
@@ -19,12 +21,15 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from flask.testing import FlaskClient
+from knuckles_client.exceptions import KnucklesAuthError
+from knuckles_client.models import CeremonyStart, PasskeyChallenge, TokenPair
 
 from backend.api.v1 import auth_identity as route
 from backend.data.models.users import User
@@ -33,6 +38,30 @@ from backend.tests.conftest import mint_knuckles_token
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+_SAMPLE_PAIR = TokenPair(
+    access_token="a.b.c",
+    access_token_expires_at=datetime(2030, 1, 1, tzinfo=UTC),
+    refresh_token="r-xyz",
+    refresh_token_expires_at=datetime(2030, 2, 1, tzinfo=UTC),
+)
+
+
+def _install_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Replace ``route.get_client`` with a fresh mock SDK client.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture.
+
+    Returns:
+        The :class:`MagicMock` standing in for the SDK client. Callers
+        configure return values on its sub-clients (``magic_link``,
+        ``google``, ``apple``, ``passkey``) before exercising the route.
+    """
+    client = MagicMock()
+    monkeypatch.setattr(route, "get_client", lambda: client)
+    return client
 
 
 def _stub_session_exchange(
@@ -71,25 +100,8 @@ def test_magic_link_request_forwards_email_and_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Greenroom fills in the frontend ``redirect_url`` from settings."""
-    captured: dict[str, Any] = {}
-
-    def fake_post(
-        path: str, *, json: dict[str, Any] | None = None, **_: Any
-    ) -> dict[str, Any]:
-        """Capture the Knuckles call args for assertion.
-
-        Args:
-            path: The Knuckles path being POSTed.
-            json: The body, if any.
-
-        Returns:
-            An empty Knuckles response body.
-        """
-        captured["path"] = path
-        captured["json"] = json
-        return {}
-
-    monkeypatch.setattr(route, "knuckles_post", fake_post)
+    sdk = _install_client(monkeypatch)
+    sdk.magic_link.start.return_value = None
 
     resp = client.post(
         "/api/v1/auth/magic-link/request",
@@ -97,9 +109,10 @@ def test_magic_link_request_forwards_email_and_redirect(
     )
     assert resp.status_code == 200
     assert resp.get_json()["data"] == {"email_sent": True}
-    assert captured["path"] == "/v1/auth/magic-link/start"
-    assert captured["json"]["email"] == "pat@example.test"
-    assert captured["json"]["redirect_url"].endswith("/auth/verify")
+    sdk.magic_link.start.assert_called_once()
+    kwargs = sdk.magic_link.start.call_args.kwargs
+    assert kwargs["email"] == "pat@example.test"
+    assert kwargs["redirect_url"].endswith("/auth/verify")
 
 
 def test_magic_link_request_rejects_missing_email(client: FlaskClient) -> None:
@@ -115,18 +128,16 @@ def test_magic_link_verify_returns_token_and_user(
     """Happy path returns the exchange envelope verbatim."""
     user = User(id=uuid.uuid4(), email="pat@example.test", is_active=True)
     exchange = _stub_session_exchange(monkeypatch, user=user, access_token="a.b.c")
-    monkeypatch.setattr(
-        route,
-        "knuckles_post",
-        lambda *_a, **_k: {"data": {"access_token": "a.b.c"}},
-    )
+    sdk = _install_client(monkeypatch)
+    sdk.magic_link.verify.return_value = _SAMPLE_PAIR
 
     resp = client.post("/api/v1/auth/magic-link/verify", json={"token": "link-tok"})
     assert resp.status_code == 200
     body = resp.get_json()["data"]
     assert body["token"] == "a.b.c"
     assert body["user"]["id"] == str(user.id)
-    exchange.assert_called_once()
+    sdk.magic_link.verify.assert_called_once_with("link-tok")
+    exchange.assert_called_once_with(_SAMPLE_PAIR)
 
 
 def test_magic_link_verify_rejects_missing_token(client: FlaskClient) -> None:
@@ -144,35 +155,19 @@ def test_google_start_forwards_redirect_and_returns_data(
     client: FlaskClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Start passes the callback URL and returns Knuckles' data block."""
-    captured: dict[str, Any] = {}
-
-    def fake_post(
-        path: str, *, json: dict[str, Any] | None = None, **_: Any
-    ) -> dict[str, Any]:
-        """Record the Knuckles call and return a canned challenge.
-
-        Args:
-            path: Knuckles path being called.
-            json: The forwarded body.
-
-        Returns:
-            A stand-in Knuckles response body.
-        """
-        captured["path"] = path
-        captured["json"] = json
-        return {
-            "data": {"authorize_url": "https://accounts.google.com/x", "state": "s"}
-        }
-
-    monkeypatch.setattr(route, "knuckles_post", fake_post)
+    """Start passes the callback URL and returns the SDK's CeremonyStart."""
+    sdk = _install_client(monkeypatch)
+    sdk.google.start.return_value = CeremonyStart(
+        authorize_url="https://accounts.google.com/x", state="s"
+    )
 
     resp = client.get("/api/v1/auth/google/start")
     assert resp.status_code == 200
     data = resp.get_json()["data"]
     assert data["authorize_url"].startswith("https://accounts.google.com/")
     assert data["state"] == "s"
-    assert captured["json"]["redirect_url"].endswith("/auth/google/callback")
+    redirect = sdk.google.start.call_args.kwargs["redirect_url"]
+    assert redirect.endswith("/auth/google/callback")
 
 
 def test_google_complete_exchanges_and_returns_token(
@@ -182,15 +177,13 @@ def test_google_complete_exchanges_and_returns_token(
     """Complete round-trips code/state and returns a session envelope."""
     user = User(id=uuid.uuid4(), email="pat@example.test", is_active=True)
     _stub_session_exchange(monkeypatch, user=user, access_token="g.t")
-    monkeypatch.setattr(
-        route,
-        "knuckles_post",
-        lambda *_a, **_k: {"data": {"access_token": "g.t"}},
-    )
+    sdk = _install_client(monkeypatch)
+    sdk.google.complete.return_value = _SAMPLE_PAIR
 
     resp = client.post("/api/v1/auth/google/complete", json={"code": "c", "state": "s"})
     assert resp.status_code == 200
     assert resp.get_json()["data"]["token"] == "g.t"
+    sdk.google.complete.assert_called_once_with(code="c", state="s")
 
 
 def test_google_complete_rejects_missing_fields(client: FlaskClient) -> None:
@@ -210,13 +203,10 @@ def test_apple_start_returns_data(
     client: FlaskClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Apple start proxies through to Knuckles and returns the challenge."""
-    monkeypatch.setattr(
-        route,
-        "knuckles_post",
-        lambda *_a, **_k: {
-            "data": {"authorize_url": "https://appleid.apple.com/x", "state": "s"}
-        },
+    """Apple start returns the SDK's CeremonyStart shape."""
+    sdk = _install_client(monkeypatch)
+    sdk.apple.start.return_value = CeremonyStart(
+        authorize_url="https://appleid.apple.com/x", state="s"
     )
     resp = client.get("/api/v1/auth/apple/start")
     assert resp.status_code == 200
@@ -228,24 +218,8 @@ def test_apple_complete_forwards_user_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """First-login ``user`` blob is forwarded verbatim."""
-    captured: dict[str, Any] = {}
-
-    def fake_post(
-        path: str, *, json: dict[str, Any] | None = None, **_: Any
-    ) -> dict[str, Any]:
-        """Record args and return a stub session response.
-
-        Args:
-            path: Knuckles path.
-            json: Forwarded body.
-
-        Returns:
-            Canned Knuckles response.
-        """
-        captured["json"] = json
-        return {"data": {"access_token": "a.t"}}
-
-    monkeypatch.setattr(route, "knuckles_post", fake_post)
+    sdk = _install_client(monkeypatch)
+    sdk.apple.complete.return_value = _SAMPLE_PAIR
     user = User(id=uuid.uuid4(), email="pat@example.test", is_active=True)
     _stub_session_exchange(monkeypatch, user=user, access_token="a.t")
 
@@ -255,7 +229,7 @@ def test_apple_complete_forwards_user_payload(
         json={"code": "c", "state": "s", "user": user_blob},
     )
     assert resp.status_code == 200
-    assert captured["json"]["user"] == user_blob
+    sdk.apple.complete.assert_called_once_with(code="c", state="s", user=user_blob)
 
 
 def test_apple_complete_rejects_non_object_user(client: FlaskClient) -> None:
@@ -282,39 +256,20 @@ def test_passkey_register_start_forwards_bearer(
     authed_client: tuple[FlaskClient, User, Callable[[], dict[str, str]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The caller's token is forwarded to Knuckles as a bearer."""
+    """The caller's token is forwarded to the SDK as ``access_token``."""
     client, _user, headers = authed_client
-    captured: dict[str, Any] = {}
-
-    def fake_post(
-        path: str,
-        *,
-        json: dict[str, Any] | None = None,
-        bearer_token: str | None = None,
-    ) -> dict[str, Any]:
-        """Capture args for assertion.
-
-        Args:
-            path: Knuckles path.
-            json: Forwarded body.
-            bearer_token: Forwarded access token.
-
-        Returns:
-            Canned challenge payload.
-        """
-        captured["path"] = path
-        captured["bearer"] = bearer_token
-        return {"data": {"options": {"challenge": "x"}, "state": "s"}}
-
-    monkeypatch.setattr(route, "knuckles_post", fake_post)
+    sdk = _install_client(monkeypatch)
+    sdk.passkey.register_begin.return_value = PasskeyChallenge(
+        options={"challenge": "x"}, state="s"
+    )
 
     resp = client.post(
         "/api/v1/auth/passkey/register/start",
         headers=headers(),
     )
     assert resp.status_code == 200
-    assert captured["path"] == "/v1/auth/passkey/register/begin"
-    assert captured["bearer"] == headers()["Authorization"].split(" ", 1)[1]
+    expected_token = headers()["Authorization"].split(" ", 1)[1]
+    sdk.passkey.register_begin.assert_called_once_with(access_token=expected_token)
 
 
 def test_passkey_register_complete_returns_registered_flag(
@@ -323,11 +278,8 @@ def test_passkey_register_complete_returns_registered_flag(
 ) -> None:
     """Success collapses Knuckles' credential_id into ``{registered: True}``."""
     client, _user, headers = authed_client
-    monkeypatch.setattr(
-        route,
-        "knuckles_post",
-        lambda *_a, **_k: {"data": {"credential_id": str(uuid.uuid4())}},
-    )
+    sdk = _install_client(monkeypatch)
+    sdk.passkey.register_complete.return_value = "cred-id"
 
     resp = client.post(
         "/api/v1/auth/passkey/register/complete",
@@ -336,6 +288,10 @@ def test_passkey_register_complete_returns_registered_flag(
     )
     assert resp.status_code == 200
     assert resp.get_json()["data"] == {"registered": True}
+    kwargs = sdk.passkey.register_complete.call_args.kwargs
+    assert kwargs["credential"] == {"id": "x"}
+    assert kwargs["state"] == "s"
+    assert kwargs["name"] == "Laptop"
 
 
 def test_passkey_register_complete_rejects_missing_fields(
@@ -361,10 +317,9 @@ def test_passkey_authenticate_start_is_public(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Sign-in begin does not require a bearer token."""
-    monkeypatch.setattr(
-        route,
-        "knuckles_post",
-        lambda *_a, **_k: {"data": {"options": {"challenge": "x"}, "state": "s"}},
+    sdk = _install_client(monkeypatch)
+    sdk.passkey.sign_in_begin.return_value = PasskeyChallenge(
+        options={"challenge": "x"}, state="s"
     )
     resp = client.post("/api/v1/auth/passkey/authenticate/start")
     assert resp.status_code == 200
@@ -378,11 +333,8 @@ def test_passkey_authenticate_complete_returns_session(
     """Completing the assertion returns the normalized session envelope."""
     user = User(id=uuid.uuid4(), email="pat@example.test", is_active=True)
     _stub_session_exchange(monkeypatch, user=user, access_token="p.t")
-    monkeypatch.setattr(
-        route,
-        "knuckles_post",
-        lambda *_a, **_k: {"data": {"access_token": "p.t"}},
-    )
+    sdk = _install_client(monkeypatch)
+    sdk.passkey.sign_in_complete.return_value = _SAMPLE_PAIR
 
     resp = client.post(
         "/api/v1/auth/passkey/authenticate/complete",
@@ -397,6 +349,23 @@ def test_passkey_authenticate_complete_returns_session(
 # ---------------------------------------------------------------------------
 # _exchange_session — branches
 # ---------------------------------------------------------------------------
+
+
+def _make_pair(access_token: str) -> TokenPair:
+    """Build a :class:`TokenPair` carrying the provided access token.
+
+    Args:
+        access_token: Encoded JWT to embed.
+
+    Returns:
+        A :class:`TokenPair` with stable expiry timestamps for assertions.
+    """
+    return TokenPair(
+        access_token=access_token,
+        access_token_expires_at=datetime(2030, 1, 1, tzinfo=UTC),
+        refresh_token="r-xyz",
+        refresh_token_expires_at=datetime(2030, 2, 1, tzinfo=UTC),
+    )
 
 
 def test_exchange_session_auto_provisions_missing_user(
@@ -423,7 +392,7 @@ def test_exchange_session_auto_provisions_missing_user(
         user_id=user_id,
         email="new@example.test",
     )
-    result = route._exchange_session({"data": {"access_token": token}})
+    result = route._exchange_session(_make_pair(token))
     assert result["token"] == token
     assert result["user"]["id"] == str(user_id)
     create.assert_called_once()
@@ -450,21 +419,47 @@ def test_exchange_session_rejects_when_email_belongs_to_different_id(
     from backend.core.exceptions import AppError
 
     with pytest.raises(AppError) as exc_info:
-        route._exchange_session({"data": {"access_token": token}})
+        route._exchange_session(_make_pair(token))
     assert exc_info.value.status_code == 409
 
 
-def test_exchange_session_rejects_deactivated_user(
+def test_exchange_session_reactivates_deactivated_user(
     monkeypatch: pytest.MonkeyPatch,
     knuckles_test_key: rsa.RSAPrivateKey,
     stub_knuckles_jwks: str,
 ) -> None:
-    """A token for a deactivated Greenroom user is refused."""
+    """A soft-deleted user who signs back in is reactivated in place.
+
+    Deactivation is a pause, not a tombstone — saved events, follows,
+    and preferences are all still intact. A fresh Knuckles exchange is
+    unambiguous intent to return, so the row flips back to active and
+    the envelope lands as a normal sign-in instead of a dead-end error.
+    """
     user_id = uuid.uuid4()
     deactivated = User(id=user_id, email="p@example.test", is_active=False)
+
+    def _reactivate(_s: object, user: User) -> User:
+        """Flip ``is_active`` and echo the user, mirroring the real service.
+
+        Args:
+            _s: Unused session arg the real ``reactivate_user`` accepts.
+            user: The deactivated row to flip on.
+
+        Returns:
+            The same ``user`` after mutation.
+        """
+        user.is_active = True
+        return user
+
+    reactivate_mock = MagicMock(side_effect=_reactivate)
     monkeypatch.setattr(route, "get_db", lambda: MagicMock())
     monkeypatch.setattr(
         route.users_repo, "get_user_by_id", lambda _s, _uid: deactivated
+    )
+    monkeypatch.setattr(route.users_service, "reactivate_user", reactivate_mock)
+    monkeypatch.setattr(route.users_repo, "update_last_login", MagicMock())
+    monkeypatch.setattr(
+        route.users_service, "serialize_user", lambda u: {"id": str(u.id)}
     )
 
     token = mint_knuckles_token(
@@ -473,19 +468,11 @@ def test_exchange_session_rejects_deactivated_user(
         user_id=user_id,
         email="p@example.test",
     )
-    from backend.core.exceptions import UnauthorizedError
+    envelope = route._exchange_session(_make_pair(token))
 
-    with pytest.raises(UnauthorizedError):
-        route._exchange_session({"data": {"access_token": token}})
-
-
-def test_exchange_session_rejects_missing_access_token() -> None:
-    """Knuckles returning no token bubbles up as a 502."""
-    from backend.core.exceptions import AppError
-
-    with pytest.raises(AppError) as excinfo:
-        route._exchange_session({"data": {}})
-    assert excinfo.value.status_code == 502
+    reactivate_mock.assert_called_once()
+    assert envelope["user"] == {"id": str(user_id)}
+    assert deactivated.is_active is True
 
 
 def test_exchange_session_envelope_exposes_refresh_fields(
@@ -508,16 +495,13 @@ def test_exchange_session_envelope_exposes_refresh_fields(
         user_id=user_id,
         email="p@example.test",
     )
-    result = route._exchange_session(
-        {
-            "data": {
-                "access_token": token,
-                "access_token_expires_at": "2030-01-01T00:00:00+00:00",
-                "refresh_token": "r-xyz",
-                "refresh_token_expires_at": "2030-02-01T00:00:00+00:00",
-            }
-        }
+    pair = TokenPair(
+        access_token=token,
+        access_token_expires_at=datetime(2030, 1, 1, tzinfo=UTC),
+        refresh_token="r-xyz",
+        refresh_token_expires_at=datetime(2030, 2, 1, tzinfo=UTC),
     )
+    result = route._exchange_session(pair)
     assert result["token"] == token
     assert result["token_expires_at"] == "2030-01-01T00:00:00+00:00"
     assert result["refresh_token"] == "r-xyz"
@@ -541,7 +525,7 @@ def test_refresh_forwards_token_and_skips_last_login_bump(
     knuckles_test_key: rsa.RSAPrivateKey,
     stub_knuckles_jwks: str,
 ) -> None:
-    """Refresh proxies through to Knuckles and does not bump last_login_at."""
+    """Refresh proxies through to the SDK and does not bump last_login_at."""
     user_id = uuid.uuid4()
     existing = User(id=user_id, email="p@example.test", is_active=True)
     monkeypatch.setattr(route.users_repo, "get_user_by_id", lambda _s, _uid: existing)
@@ -557,32 +541,13 @@ def test_refresh_forwards_token_and_skips_last_login_bump(
         user_id=user_id,
         email="p@example.test",
     )
-    captured: dict[str, Any] = {}
-
-    def fake_post(
-        path: str, *, json: dict[str, Any] | None = None, **_: Any
-    ) -> dict[str, Any]:
-        """Record the Knuckles path and body, return a rotated pair.
-
-        Args:
-            path: Knuckles path being called.
-            json: Forwarded body.
-
-        Returns:
-            A stand-in Knuckles refresh response.
-        """
-        captured["path"] = path
-        captured["json"] = json
-        return {
-            "data": {
-                "access_token": new_token,
-                "access_token_expires_at": "2030-01-01T00:00:00+00:00",
-                "refresh_token": "r-new",
-                "refresh_token_expires_at": "2030-02-01T00:00:00+00:00",
-            }
-        }
-
-    monkeypatch.setattr(route, "knuckles_post", fake_post)
+    sdk = _install_client(monkeypatch)
+    sdk.refresh.return_value = TokenPair(
+        access_token=new_token,
+        access_token_expires_at=datetime(2030, 1, 1, tzinfo=UTC),
+        refresh_token="r-new",
+        refresh_token_expires_at=datetime(2030, 2, 1, tzinfo=UTC),
+    )
 
     resp = client.post("/api/v1/auth/refresh", json={"refresh_token": "r-old"})
     assert resp.status_code == 200
@@ -590,8 +555,7 @@ def test_refresh_forwards_token_and_skips_last_login_bump(
     assert body["token"] == new_token
     assert body["refresh_token"] == "r-new"
     assert body["user"]["id"] == str(user_id)
-    assert captured["path"] == "/v1/token/refresh"
-    assert captured["json"] == {"refresh_token": "r-old"}
+    sdk.refresh.assert_called_once_with("r-old")
     last_login.assert_not_called()
 
 
@@ -600,22 +564,15 @@ def test_refresh_bubbles_knuckles_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Knuckles rejecting the refresh token surfaces as the same status."""
-    from backend.core.knuckles_client import KnucklesHTTPError
-
-    def fake_post(*_a: Any, **_k: Any) -> dict[str, Any]:
-        """Always raise a 401 from Knuckles.
-
-        Returns:
-            Never — raises.
-
-        Raises:
-            KnucklesHTTPError: Simulating an expired/revoked token.
-        """
-        raise KnucklesHTTPError(message="invalid", status_code=401)
-
-    monkeypatch.setattr(route, "knuckles_post", fake_post)
+    sdk = _install_client(monkeypatch)
+    sdk.refresh.side_effect = KnucklesAuthError(
+        code="REFRESH_TOKEN_REUSED",
+        message="reuse-detected",
+        status_code=401,
+    )
     resp = client.post("/api/v1/auth/refresh", json={"refresh_token": "dead"})
     assert resp.status_code == 401
+    assert resp.get_json()["error"]["code"] == "REFRESH_TOKEN_REUSED"
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +645,8 @@ def test_magic_link_request_enforces_per_ip_rate_limit(
     counter_instance = _KeyedCounter()
     monkeypatch.setattr(rate_limit_module, "_get_redis", lambda: counter_instance)
 
-    monkeypatch.setattr(route, "knuckles_post", lambda *_a, **_k: {"data": {}})
+    sdk = _install_client(monkeypatch)
+    sdk.magic_link.start.return_value = None
     for i in range(10):
         resp = client.post(
             "/api/v1/auth/magic-link/request",

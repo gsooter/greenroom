@@ -132,6 +132,108 @@ def exchange_code(code: str) -> SpotifyTokens:
     return _parse_token_response(response)
 
 
+def get_app_access_token() -> SpotifyTokens:
+    """Obtain an app-only Spotify token via the Client Credentials flow.
+
+    Used by server-side jobs that need to call endpoints which do not
+    require a specific user's scopes — notably the Spotify enrichment
+    Celery task, which hits ``/v1/search?type=artist``. No refresh token
+    is returned for this flow; callers mint a fresh one each run.
+
+    Returns:
+        A :class:`SpotifyTokens` with ``refresh_token=None``.
+
+    Raises:
+        AppError: ``SPOTIFY_AUTH_FAILED`` if Spotify rejects the request.
+    """
+    response = requests.post(
+        TOKEN_URL,
+        data={"grant_type": "client_credentials"},
+        headers={"Authorization": _basic_auth_header()},
+        timeout=_HTTP_TIMEOUT,
+    )
+    return _parse_token_response(response)
+
+
+# Process-local cache for the client-credentials app token. Spotify
+# tokens live an hour; we refresh a minute early to absorb clock skew.
+# A per-process cache is enough — gunicorn workers are few and the
+# token endpoint is cheap — no Redis round-trip required.
+_APP_TOKEN_SAFETY_MARGIN = timedelta(seconds=60)
+_cached_app_token: SpotifyTokens | None = None
+
+
+def get_cached_app_access_token() -> SpotifyTokens:
+    """Return an app-only Spotify token, reusing the cached one when fresh.
+
+    Hot-path helper for per-request callers (e.g. the onboarding artist
+    search) that would otherwise mint a new token on every keystroke.
+    Falls through to :func:`get_app_access_token` when the cache is
+    empty or the cached token is within one minute of expiry.
+
+    Returns:
+        A :class:`SpotifyTokens` guaranteed to be valid for at least
+        the next minute.
+
+    Raises:
+        AppError: ``SPOTIFY_AUTH_FAILED`` if Spotify rejects the mint.
+    """
+    global _cached_app_token
+    now = datetime.now(UTC)
+    cached = _cached_app_token
+    if cached is not None and cached.expires_at - _APP_TOKEN_SAFETY_MARGIN > now:
+        return cached
+    fresh = get_app_access_token()
+    _cached_app_token = fresh
+    return fresh
+
+
+def search_artist(
+    access_token: str,
+    name: str,
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Search Spotify's catalog for candidate artists matching ``name``.
+
+    The enrichment task uses this to resolve scraped performer names to
+    Spotify artist ids. Spotify's search does fuzzy matching server-side,
+    so we ask for a small top-N and let the caller pick the best fit
+    with a normalized-name similarity check.
+
+    Args:
+        access_token: Valid Spotify access token (app or user).
+        name: Artist name to search for, raw from the scraper is fine.
+        limit: How many candidates to return. Defaults to 5.
+
+    Returns:
+        List of raw Spotify artist dicts, ordered by Spotify's relevance
+        ranking. Empty list when the query returns no matches.
+
+    Raises:
+        AppError: ``SPOTIFY_AUTH_FAILED`` on HTTP failure.
+    """
+    response = requests.get(
+        f"{API_BASE}/search",
+        params={
+            "q": name,
+            "type": "artist",
+            "limit": max(1, min(50, limit)),
+        },
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=_HTTP_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise AppError(
+            code=SPOTIFY_AUTH_FAILED,
+            message="Failed to search Spotify artists.",
+            status_code=502,
+        )
+    body = response.json()
+    artists = (body.get("artists") or {}).get("items") or []
+    return [item for item in artists if isinstance(item, dict)]
+
+
 def refresh_access_token(refresh_token: str) -> SpotifyTokens:
     """Obtain a fresh access token using a stored refresh token.
 
