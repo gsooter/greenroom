@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { GenreChipGrid } from "@/components/ui/GenreChipGrid";
 import { ApiRequestError } from "@/lib/api/client";
 import { followArtist, searchArtists, unfollowArtist } from "@/lib/api/follows";
 import { updateMe } from "@/lib/api/me";
@@ -170,28 +171,12 @@ export function TasteStep({
         <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
           Genres
         </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {genres.map((g) => {
-            const active = selected.has(g.slug);
-            return (
-              <button
-                key={g.slug}
-                type="button"
-                onClick={() => toggleGenre(g.slug)}
-                className={
-                  active
-                    ? "rounded-full bg-green-soft px-3 py-1.5 text-xs font-medium text-green-dark ring-1 ring-green-primary"
-                    : "rounded-full bg-bg-surface px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-green-soft/60"
-                }
-                aria-pressed={active}
-              >
-                <span aria-hidden className="mr-1">
-                  {g.emoji}
-                </span>
-                {g.label}
-              </button>
-            );
-          })}
+        <div className="mt-3">
+          <GenreChipGrid
+            genres={genres}
+            selected={selected}
+            onToggle={toggleGenre}
+          />
         </div>
       </section>
 
