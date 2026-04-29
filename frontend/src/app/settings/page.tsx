@@ -2,17 +2,18 @@
  * /settings — profile + notification preferences.
  *
  * CSR only. Editable fields mirror the PATCH /me allowlist:
- * display name, preferred city, digest frequency, genre preferences.
- * Deactivation is wired to DELETE /me.
+ * display name, preferred city, genre preferences. Email types and
+ * delivery cadence live in EmailPreferencesSection (separate
+ * notification_preferences row). Deactivation is wired to DELETE /me.
  */
 
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DeleteAccountModal } from "@/components/settings/DeleteAccountModal";
+import { EmailPreferencesSection } from "@/components/settings/EmailPreferencesSection";
 import { FollowingSections } from "@/components/settings/FollowingSections";
 import { GenreChipGrid } from "@/components/ui/GenreChipGrid";
 import {
@@ -44,14 +45,11 @@ import {
 } from "@/lib/webauthn";
 import type {
   City,
-  DigestFrequency,
   Genre,
   MusicConnectionState,
   MusicProvider,
   UserPatch,
 } from "@/types";
-
-const DIGEST_OPTIONS: DigestFrequency[] = ["daily", "weekly", "never"];
 
 export default function SettingsPage(): JSX.Element {
   const router = useRouter();
@@ -62,7 +60,6 @@ export default function SettingsPage(): JSX.Element {
   const [allGenres, setAllGenres] = useState<Genre[]>([]);
   const [displayName, setDisplayName] = useState<string>("");
   const [cityId, setCityId] = useState<string>("");
-  const [digest, setDigest] = useState<DigestFrequency>("weekly");
   const [selectedGenres, setSelectedGenres] = useState<Set<string>>(
     () => new Set(),
   );
@@ -105,7 +102,6 @@ export default function SettingsPage(): JSX.Element {
     if (!user) return;
     setDisplayName(user.display_name ?? "");
     setCityId(user.city_id ?? "");
-    setDigest(user.digest_frequency);
     setSelectedGenres(new Set(user.genre_preferences ?? []));
   }, [user]);
 
@@ -129,16 +125,13 @@ export default function SettingsPage(): JSX.Element {
     if ((user.city_id ?? null) !== normalizedCity) {
       next.city_id = normalizedCity;
     }
-    if (user.digest_frequency !== digest) {
-      next.digest_frequency = digest;
-    }
     const genreList = Array.from(selectedGenres).sort();
     const currentGenres = (user.genre_preferences ?? []).slice().sort();
     if (JSON.stringify(currentGenres) !== JSON.stringify(genreList)) {
       next.genre_preferences = genreList;
     }
     return next;
-  }, [user, displayName, cityId, digest, selectedGenres]);
+  }, [user, displayName, cityId, selectedGenres]);
 
   const hasChanges = Object.keys(patch).length > 0;
 
@@ -217,20 +210,6 @@ export default function SettingsPage(): JSX.Element {
           </select>
         </Field>
 
-        <Field label="Email digest">
-          <select
-            value={digest}
-            onChange={(e) => setDigest(e.target.value as DigestFrequency)}
-            className="w-full rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
-          >
-            {DIGEST_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </Field>
-
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
             Favorite genres
@@ -270,21 +249,7 @@ export default function SettingsPage(): JSX.Element {
 
       <hr className="my-10 border-border" />
 
-      <section>
-        <h2 className="text-base font-semibold text-text-primary">
-          Email notifications
-        </h2>
-        <p className="mt-1 text-sm text-text-secondary">
-          Choose exactly which emails Greenroom sends you, with a single
-          pause-all toggle for breaks.
-        </p>
-        <Link
-          href="/settings/notifications"
-          className="mt-3 inline-block rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse"
-        >
-          Manage email preferences
-        </Link>
-      </section>
+      <EmailPreferencesSection token={token} />
 
       <hr className="my-10 border-border" />
 
