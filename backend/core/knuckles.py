@@ -29,6 +29,9 @@ from backend.core.exceptions import (
     TOKEN_EXPIRED,
     AppError,
 )
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 _client: KnucklesClient | None = None
 _client_lock = threading.Lock()
@@ -97,6 +100,17 @@ def verify_knuckles_token(token: str) -> dict[str, Any]:
                 message="Access token has expired.",
                 status_code=401,
             ) from exc
+        cause = exc.__cause__
+        settings = get_settings()
+        logger.warning(
+            "knuckles_token_verify_failed sdk_message=%r cause_type=%s "
+            "cause_message=%r expected_issuer=%r expected_audience=%r",
+            str(exc),
+            type(cause).__name__ if cause is not None else None,
+            str(cause) if cause is not None else None,
+            settings.knuckles_url.rstrip("/"),
+            settings.knuckles_client_id,
+        )
         raise AppError(
             code=INVALID_TOKEN,
             message="Access token is invalid.",
