@@ -15,7 +15,24 @@ from backend.api.v1 import api_v1
 from backend.core.auth import get_current_user, require_auth
 from backend.core.database import get_db
 from backend.core.exceptions import ValidationError
+from backend.core.rate_limit import rate_limit
 from backend.services import recommendations as recs_service
+
+
+def _refresh_subject() -> str:
+    """Return the current user's id as the rate-limit bucket subject.
+
+    The refresh route runs after :func:`require_auth`, so a current user
+    is always available by the time this resolver fires. Empty string
+    falls back to bypassing the limiter (per
+    :func:`backend.core.rate_limit.rate_limit`'s contract) but should
+    never happen in practice.
+
+    Returns:
+        UUID string of the current user, or "" when no user is bound.
+    """
+    user = get_current_user()
+    return str(user.id) if user else ""
 
 
 @api_v1.route("/me/recommendations", methods=["GET"])
@@ -61,6 +78,12 @@ def list_my_recommendations() -> tuple[dict[str, Any], int]:
 
 @api_v1.route("/me/recommendations/refresh", methods=["POST"])
 @require_auth
+@rate_limit(
+    "recommendations_refresh_user",
+    limit=10,
+    window_seconds=3600,
+    key_fn=_refresh_subject,
+)
 def refresh_my_recommendations() -> tuple[dict[str, Any], int]:
     """Force a regeneration of the caller's recommendation list.
 

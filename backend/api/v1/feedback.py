@@ -25,10 +25,12 @@ from backend.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from backend.core.rate_limit import rate_limit
 from backend.services import feedback as feedback_service
 
 
 @api_v1.route("/feedback", methods=["POST"])
+@rate_limit("feedback_submit_ip", limit=10, window_seconds=3600)
 def submit_feedback() -> tuple[dict[str, Any], int]:
     """Accept a feedback submission from the in-app widget.
 

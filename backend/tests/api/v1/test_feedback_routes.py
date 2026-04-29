@@ -135,6 +135,83 @@ def test_submit_feedback_rejects_non_string_email(client: FlaskClient) -> None:
     assert resp.status_code == 422
 
 
+def test_submit_feedback_enforces_per_ip_rate_limit(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 11th submission from the same IP within an hour is blocked.
+
+    Stubs the service so storage isn't exercised, points the limiter at
+    a fake Redis that counts in-process, then fires 10 successful posts
+    plus one expected 429.
+    """
+    from backend.core import rate_limit as rate_limit_module
+
+    monkeypatch.setattr(
+        feedback_route.feedback_service,
+        "submit_feedback",
+        lambda *_a, **_k: object(),
+    )
+    monkeypatch.setattr(
+        feedback_route.feedback_service,
+        "serialize_feedback",
+        lambda _r: _stub_serialized(),
+    )
+
+    counter = _make_keyed_counter()
+    monkeypatch.setattr(rate_limit_module, "_get_redis", lambda: counter)
+
+    payload = {"message": "hi", "kind": "general"}
+    for i in range(10):
+        resp = client.post("/api/v1/feedback", json=payload)
+        assert resp.status_code == 201, f"call {i} unexpectedly blocked"
+
+    resp = client.post("/api/v1/feedback", json=payload)
+    assert resp.status_code == 429
+    assert resp.get_json()["error"]["code"] == "RATE_LIMITED"
+
+
+def _make_keyed_counter() -> Any:
+    """Return a per-key fake Redis client used by the limiter tests.
+
+    Mirrors the pipeline / expire interface that
+    :func:`backend.core.rate_limit.rate_limit` relies on. Counts live in
+    a plain dict keyed by the limiter's full cache key so different
+    rules and subjects never collide.
+
+    Returns:
+        An object that satisfies the limiter's redis-client contract.
+    """
+
+    class _Pipeline:
+        def __init__(self, parent: Any) -> None:
+            self._parent = parent
+            self._key: str | None = None
+
+        def incr(self, key: str, *_a: Any, **_k: Any) -> _Pipeline:
+            self._key = key
+            self._parent.counts[key] = self._parent.counts.get(key, 0) + 1
+            return self
+
+        def ttl(self, *_a: Any, **_k: Any) -> _Pipeline:
+            return self
+
+        def execute(self) -> list[int]:
+            assert self._key is not None
+            return [self._parent.counts[self._key], 30]
+
+    class _Counter:
+        def __init__(self) -> None:
+            self.counts: dict[str, int] = {}
+
+        def pipeline(self) -> Any:
+            return _Pipeline(self)
+
+        def expire(self, *_a: Any, **_k: Any) -> bool:
+            return True
+
+    return _Counter()
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/admin/feedback
 # ---------------------------------------------------------------------------
