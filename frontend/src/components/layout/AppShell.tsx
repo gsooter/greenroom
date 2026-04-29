@@ -7,6 +7,7 @@
  * search params itself, so this component needs no props.
  */
 
+import FeedbackWidget from "@/components/feedback/FeedbackWidget";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import TopNav from "@/components/layout/TopNav";
 import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
@@ -58,6 +59,7 @@ export default function AppShell({ children }: AppShellProps) {
         </div>
       </footer>
       <MobileBottomNav />
+      <FeedbackWidget />
     </div>
   );
 }

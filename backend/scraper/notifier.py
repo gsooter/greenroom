@@ -10,7 +10,7 @@ and on every manual ``/admin`` re-trigger.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import requests
 
@@ -28,6 +28,36 @@ logger = get_logger(__name__)
 
 DEFAULT_COOLDOWN_HOURS = 6.0
 
+AlertCategory = Literal["ops", "digest", "feedback"]
+
+
+def _resolve_webhook_url(category: AlertCategory) -> str:
+    """Return the configured webhook URL for ``category`` with ops fallback.
+
+    Each category has its own env var (``SLACK_WEBHOOK_OPS_URL``,
+    ``SLACK_WEBHOOK_DIGEST_URL``, ``SLACK_WEBHOOK_FEEDBACK_URL``). When
+    the category-specific URL is empty, the ops URL is used so a
+    deployment that only configures one webhook still receives every
+    alert.
+
+    Args:
+        category: The alert category to look up. ``"ops"`` always
+            resolves to the ops URL directly.
+
+    Returns:
+        The webhook URL string. Empty string means no webhook is
+        configured for this category and ops is also unset — the
+        caller is expected to skip the Slack send and let email
+        fallback take over.
+    """
+    settings = get_settings()
+    ops_url = settings.slack_webhook_ops_url
+    if category == "digest":
+        return settings.slack_webhook_digest_url or ops_url
+    if category == "feedback":
+        return settings.slack_webhook_feedback_url or ops_url
+    return ops_url
+
 
 def send_alert(
     *,
@@ -38,6 +68,7 @@ def send_alert(
     alert_key: str | None = None,
     cooldown_hours: float = DEFAULT_COOLDOWN_HOURS,
     session: Session | None = None,
+    category: AlertCategory = "ops",
 ) -> bool:
     """Send an alert via Slack and email, with optional cooldown dedup.
 
@@ -69,6 +100,11 @@ def send_alert(
             session via :func:`get_session_factory`. Test code passes
             an explicit session; production callers usually let it
             default.
+        category: Which Slack channel to route this alert to. ``"ops"``
+            (default) is the noisy operational channel; ``"digest"``
+            is the daily roll-up channel; ``"feedback"`` is the
+            user-feedback channel. Categories without a dedicated
+            webhook fall back to the ops URL.
 
     Returns:
         True when a delivery attempt was made, False when the call was
@@ -93,6 +129,7 @@ def send_alert(
         message=message,
         severity=severity,
         details=details,
+        category=category,
     )
 
     if not slack_sent:
@@ -263,6 +300,7 @@ def _send_slack_alert(
     message: str,
     severity: str,
     details: dict[str, Any] | None = None,
+    category: AlertCategory = "ops",
 ) -> bool:
     """Send an alert to Slack via incoming webhook.
 
@@ -271,15 +309,18 @@ def _send_slack_alert(
         message: Detailed alert message.
         severity: Alert severity level.
         details: Optional additional context.
+        category: Channel category — selects which webhook URL to use,
+            with ops as the universal fallback.
 
     Returns:
         True if the message was sent successfully, False otherwise.
     """
-    settings = get_settings()
-    webhook_url = settings.slack_webhook_url
+    webhook_url = _resolve_webhook_url(category)
 
     if not webhook_url or webhook_url == "x":
-        logger.debug("Slack webhook not configured, skipping.")
+        logger.debug(
+            "Slack webhook for category '%s' not configured, skipping.", category
+        )
         return False
 
     color_map = {

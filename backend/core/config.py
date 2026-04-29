@@ -33,7 +33,18 @@ class Settings(BaseSettings):
         seatgeek_client_id: SeatGeek API client ID.
         seatgeek_client_secret: SeatGeek API client secret.
         admin_secret_key: Secret key for admin API routes.
-        slack_webhook_url: Slack webhook URL for scraper alerts.
+        slack_webhook_ops_url: Slack incoming-webhook URL for the ops
+            channel (scraper failures, validator alerts, watchdog
+            triggers, sustained outages, fleet failures, the admin
+            "test alert" button). The ops channel is the universal
+            fallback — every other category falls back here when its
+            own URL is unset, so a single-webhook deployment still
+            works.
+        slack_webhook_digest_url: Slack webhook URL for the daily
+            scraper digest channel. Falls back to the ops URL when
+            unset.
+        slack_webhook_feedback_url: Slack webhook URL for the user
+            feedback channel. Falls back to the ops URL when unset.
         alert_email: Fallback email for scraper failure alerts.
         posthog_api_key: PostHog analytics API key.
         posthog_host: PostHog instance host URL.
@@ -132,7 +143,9 @@ class Settings(BaseSettings):
     admin_secret_key: str
 
     # Alerting
-    slack_webhook_url: str
+    slack_webhook_ops_url: str = ""
+    slack_webhook_digest_url: str = ""
+    slack_webhook_feedback_url: str = ""
     alert_email: str
 
     # PostHog

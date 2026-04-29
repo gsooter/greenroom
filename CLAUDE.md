@@ -655,8 +655,14 @@ SEATGEEK_CLIENT_SECRET
 # Admin
 ADMIN_SECRET_KEY              # For /api/v1/admin/* routes
 
-# Alerting
-SLACK_WEBHOOK_URL             # Scraper failure alerts
+# Alerting — three Slack channels, one webhook each.
+# Categories without their own webhook fall back to the ops URL,
+# so a single-webhook deployment still receives every alert.
+SLACK_WEBHOOK_OPS_URL         # Ops channel: scraper failures, validator alerts,
+                              # watchdogs, sustained outages, fleet failures, and
+                              # the admin "test alert" button. Universal fallback.
+SLACK_WEBHOOK_DIGEST_URL      # Daily scraper-fleet digest channel.
+SLACK_WEBHOOK_FEEDBACK_URL    # User feedback submissions channel.
 ALERT_EMAIL                   # Scraper failure fallback email
 
 # PostHog

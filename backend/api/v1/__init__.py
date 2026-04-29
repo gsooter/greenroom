@@ -20,6 +20,7 @@ from backend.api.v1 import auth_session as _auth_session  # noqa: F401, E402
 from backend.api.v1 import auth_tidal as _auth_tidal  # noqa: F401, E402
 from backend.api.v1 import cities as _cities  # noqa: F401, E402
 from backend.api.v1 import events as _events  # noqa: F401, E402
+from backend.api.v1 import feedback as _feedback  # noqa: F401, E402
 from backend.api.v1 import map_recommendations as _map_recs  # noqa: F401, E402
 from backend.api.v1 import maps as _maps  # noqa: F401, E402
 from backend.api.v1 import (  # noqa: F401, E402

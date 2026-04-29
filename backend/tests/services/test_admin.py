@@ -262,15 +262,17 @@ def test_serialize_user_summary_renders_connections() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_send_test_alert_invokes_notifier_with_no_cooldown(
+def test_send_test_alert_fires_one_per_category_with_no_cooldown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The test alert must skip cooldown so operators can press the button often."""
+    """The test alert must fire once per category and skip cooldown."""
     alert_mock = MagicMock(return_value=True)
     monkeypatch.setattr(admin_service, "send_alert", alert_mock)
 
     fake_settings = MagicMock(
-        slack_webhook_url="https://hooks.slack/abc",
+        slack_webhook_ops_url="https://hooks.slack/ops",
+        slack_webhook_digest_url="https://hooks.slack/digest",
+        slack_webhook_feedback_url="https://hooks.slack/feedback",
         alert_email="ops@example.com",
         resend_api_key="re_live_123",
     )
@@ -278,23 +280,31 @@ def test_send_test_alert_invokes_notifier_with_no_cooldown(
 
     result = admin_service.send_test_alert(MagicMock())
 
-    alert_mock.assert_called_once()
-    kwargs = alert_mock.call_args.kwargs
-    assert kwargs["alert_key"] is None
-    assert kwargs["severity"] == "info"
+    assert alert_mock.call_count == 3
+    categories = [call.kwargs["category"] for call in alert_mock.call_args_list]
+    assert categories == ["ops", "digest", "feedback"]
+    for call in alert_mock.call_args_list:
+        assert call.kwargs["alert_key"] is None
+        assert call.kwargs["severity"] == "info"
+
     assert result["delivered"] is True
     assert result["slack_configured"] is True
     assert result["email_configured"] is True
     assert result["title"] == "Greenroom alert pipeline test"
+    assert set(result["categories"].keys()) == {"ops", "digest", "feedback"}
+    assert all(c["delivered"] for c in result["categories"].values())
+    assert all(c["configured"] for c in result["categories"].values())
 
 
 def test_send_test_alert_flags_unconfigured_channels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Sentinel placeholders count as 'not configured' in the response."""
-    monkeypatch.setattr(admin_service, "send_alert", MagicMock(return_value=True))
+    """When no webhooks are configured, every category reports unconfigured."""
+    monkeypatch.setattr(admin_service, "send_alert", MagicMock(return_value=False))
     fake_settings = MagicMock(
-        slack_webhook_url="x",
+        slack_webhook_ops_url="x",
+        slack_webhook_digest_url="",
+        slack_webhook_feedback_url="",
         alert_email="x@x.com",
         resend_api_key="x",
     )
@@ -303,3 +313,24 @@ def test_send_test_alert_flags_unconfigured_channels(
     result = admin_service.send_test_alert(MagicMock())
     assert result["slack_configured"] is False
     assert result["email_configured"] is False
+    assert all(not c["configured"] for c in result["categories"].values())
+
+
+def test_send_test_alert_digest_falls_back_to_ops_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ops is set but digest/feedback are not, those still report configured."""
+    monkeypatch.setattr(admin_service, "send_alert", MagicMock(return_value=True))
+    fake_settings = MagicMock(
+        slack_webhook_ops_url="https://hooks.slack/ops",
+        slack_webhook_digest_url="",
+        slack_webhook_feedback_url="",
+        alert_email="ops@example.com",
+        resend_api_key="re_live_123",
+    )
+    monkeypatch.setattr(admin_service, "get_settings", lambda: fake_settings)
+
+    result = admin_service.send_test_alert(MagicMock())
+    assert result["categories"]["ops"]["configured"] is True
+    assert result["categories"]["digest"]["configured"] is True
+    assert result["categories"]["feedback"]["configured"] is True

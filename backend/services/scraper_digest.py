@@ -179,6 +179,7 @@ def send_daily_digest_for_session(
         details=payload.details,
         alert_key=None,
         session=session,
+        category="digest",
     )
     return payload
 

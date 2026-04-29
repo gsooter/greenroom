@@ -289,13 +289,13 @@ def serialize_user_summary(user: User) -> dict[str, Any]:
 
 
 def send_test_alert(session: Session) -> dict[str, Any]:
-    """Fire a non-suppressed info alert so the operator can verify delivery.
+    """Fire a non-suppressed info alert into every Slack channel.
 
-    The notifier is invoked with ``alert_key=None`` so the test alert
-    bypasses the cooldown table — operators can hit the button as often
-    as they want. The response surfaces which delivery channels were
-    configured at call time so a missing webhook or email recipient is
-    visible alongside the boolean result.
+    One alert is sent per category (``ops``, ``digest``, ``feedback``)
+    so an operator can confirm each webhook lands in the right Slack
+    channel. The notifier is invoked with ``alert_key=None`` so the
+    test alerts bypass the cooldown table — operators can hit the
+    button as often as they want.
 
     Args:
         session: Active SQLAlchemy session, forwarded to the notifier so
@@ -303,15 +303,31 @@ def send_test_alert(session: Session) -> dict[str, Any]:
             test alert itself does not write to ``scraper_alerts``).
 
     Returns:
-        Dictionary with ``delivered`` (bool — True when ``send_alert``
-        attempted a delivery), ``slack_configured``, ``email_configured``,
-        plus the ``title`` and ``severity`` that were sent. The Slack
-        and email flags reflect whether the corresponding env vars hold
-        usable values; ``False`` means the call body went nowhere.
+        Dictionary with ``delivered`` (bool — True when *every* category
+        send returned True from the notifier), ``categories`` (per-category
+        delivery results plus whether the webhook is configured), the
+        ``email_configured`` flag, and the ``title`` / ``severity`` of
+        the test message. ``slack_configured`` is preserved as the OR
+        across categories so older callers / dashboards still see a
+        single boolean.
     """
     settings = get_settings()
-    slack_configured = bool(
-        settings.slack_webhook_url and settings.slack_webhook_url != "x"
+    ops_configured = bool(
+        settings.slack_webhook_ops_url and settings.slack_webhook_ops_url != "x"
+    )
+    digest_configured = bool(
+        (settings.slack_webhook_digest_url or settings.slack_webhook_ops_url)
+        and (
+            settings.slack_webhook_digest_url != "x"
+            and settings.slack_webhook_ops_url != "x"
+        )
+    )
+    feedback_configured = bool(
+        (settings.slack_webhook_feedback_url or settings.slack_webhook_ops_url)
+        and (
+            settings.slack_webhook_feedback_url != "x"
+            and settings.slack_webhook_ops_url != "x"
+        )
     )
     email_configured = bool(
         settings.alert_email
@@ -321,22 +337,39 @@ def send_test_alert(session: Session) -> dict[str, Any]:
     )
 
     title = "Greenroom alert pipeline test"
-    message = (
+    base_message = (
         "This is a test alert fired from the admin dashboard. If you can "
         "read this in Slack or your alerts inbox, the proactive alerting "
         "pipeline is wired up correctly. No action required."
     )
-    delivered = send_alert(
-        title=title,
-        message=message,
-        severity="info",
-        details={"source": "admin_test_button"},
-        alert_key=None,
-        session=session,
-    )
+
+    category_results: dict[str, dict[str, Any]] = {}
+    for category, configured in (
+        ("ops", ops_configured),
+        ("digest", digest_configured),
+        ("feedback", feedback_configured),
+    ):
+        delivered = send_alert(
+            title=f"{title} ({category})",
+            message=base_message,
+            severity="info",
+            details={"source": "admin_test_button", "category": category},
+            alert_key=None,
+            session=session,
+            category=category,  # type: ignore[arg-type]
+        )
+        category_results[category] = {
+            "delivered": delivered,
+            "configured": configured,
+        }
+
+    all_delivered = all(r["delivered"] for r in category_results.values())
+    any_slack_configured = ops_configured or digest_configured or feedback_configured
+
     return {
-        "delivered": delivered,
-        "slack_configured": slack_configured,
+        "delivered": all_delivered,
+        "slack_configured": any_slack_configured,
+        "categories": category_results,
         "email_configured": email_configured,
         "title": title,
         "severity": "info",

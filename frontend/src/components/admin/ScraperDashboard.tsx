@@ -158,6 +158,12 @@ export default function ScraperDashboard({ adminKey, signOut }: Props): JSX.Elem
           >
             Manage users
           </Link>
+          <Link
+            href="/admin/feedback"
+            className="rounded-md border border-border px-3 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface"
+          >
+            Feedback
+          </Link>
           <button
             type="button"
             onClick={signOut}

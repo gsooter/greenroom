@@ -38,7 +38,9 @@ def test_send_alert_uses_slack_when_it_succeeds(
 ) -> None:
     """A 200 from the Slack webhook short-circuits — email is not touched."""
     settings = MagicMock()
-    settings.slack_webhook_url = "https://hooks.slack.test/abc"
+    settings.slack_webhook_ops_url = "https://hooks.slack.test/abc"
+    settings.slack_webhook_digest_url = ""
+    settings.slack_webhook_feedback_url = ""
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
     post_mock = MagicMock(return_value=_FakeSlackResponse(status_code=200))
@@ -81,7 +83,9 @@ def test_slack_alert_noop_when_webhook_unconfigured(
 ) -> None:
     """Placeholder ``x`` webhook is treated as unconfigured and returns False."""
     settings = MagicMock()
-    settings.slack_webhook_url = "x"
+    settings.slack_webhook_ops_url = "x"
+    settings.slack_webhook_digest_url = ""
+    settings.slack_webhook_feedback_url = ""
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
     post_mock = MagicMock()
@@ -98,7 +102,9 @@ def test_slack_alert_returns_false_on_request_exception(
 ) -> None:
     """RequestException during post is caught and reported as failure."""
     settings = MagicMock()
-    settings.slack_webhook_url = "https://hooks.slack.test/abc"
+    settings.slack_webhook_ops_url = "https://hooks.slack.test/abc"
+    settings.slack_webhook_digest_url = ""
+    settings.slack_webhook_feedback_url = ""
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
     def boom(*_a: object, **_k: object) -> None:
@@ -117,7 +123,9 @@ def test_slack_alert_defaults_color_for_unknown_severity(
 ) -> None:
     """An unknown severity string still posts; we don't raise."""
     settings = MagicMock()
-    settings.slack_webhook_url = "https://hooks.slack.test/abc"
+    settings.slack_webhook_ops_url = "https://hooks.slack.test/abc"
+    settings.slack_webhook_digest_url = ""
+    settings.slack_webhook_feedback_url = ""
     monkeypatch.setattr(notifier, "get_settings", lambda: settings)
 
     post_mock = MagicMock(return_value=_FakeSlackResponse(status_code=200))
@@ -394,3 +402,115 @@ def test_send_alert_uses_scoped_session_when_none_supplied(
     fake_session.close.assert_called()
     suppress_mock.assert_called_once()
     record_mock.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Category → webhook routing
+# ---------------------------------------------------------------------------
+
+
+def _settings_with(
+    *,
+    ops: str = "",
+    digest: str = "",
+    feedback: str = "",
+) -> MagicMock:
+    """Build a mock Settings populated with the three webhook URLs."""
+    settings = MagicMock()
+    settings.slack_webhook_ops_url = ops
+    settings.slack_webhook_digest_url = digest
+    settings.slack_webhook_feedback_url = feedback
+    return settings
+
+
+def test_resolve_webhook_url_routes_each_category(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each category resolves to its own URL when configured."""
+    monkeypatch.setattr(
+        notifier,
+        "get_settings",
+        lambda: _settings_with(
+            ops="https://ops.example",
+            digest="https://digest.example",
+            feedback="https://feedback.example",
+        ),
+    )
+    assert notifier._resolve_webhook_url("ops") == "https://ops.example"
+    assert notifier._resolve_webhook_url("digest") == "https://digest.example"
+    assert notifier._resolve_webhook_url("feedback") == "https://feedback.example"
+
+
+def test_resolve_webhook_url_falls_back_to_ops_when_category_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset category URL falls back to the ops URL."""
+    monkeypatch.setattr(
+        notifier,
+        "get_settings",
+        lambda: _settings_with(ops="https://ops.example"),
+    )
+    assert notifier._resolve_webhook_url("digest") == "https://ops.example"
+    assert notifier._resolve_webhook_url("feedback") == "https://ops.example"
+
+
+def test_slack_alert_posts_to_category_webhook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The webhook URL passed to requests.post matches the category."""
+    monkeypatch.setattr(
+        notifier,
+        "get_settings",
+        lambda: _settings_with(
+            ops="https://ops.example",
+            feedback="https://feedback.example",
+        ),
+    )
+    post_mock = MagicMock(return_value=_FakeSlackResponse(status_code=200))
+    monkeypatch.setattr(notifier.requests, "post", post_mock)
+
+    notifier._send_slack_alert(
+        title="t",
+        message="m",
+        severity="info",
+        category="feedback",
+    )
+
+    assert post_mock.call_args.args[0] == "https://feedback.example"
+
+
+def test_send_alert_forwards_category_to_slack_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The top-level helper forwards ``category`` to ``_send_slack_alert``."""
+    captured: dict[str, object] = {}
+
+    def fake_slack(**kwargs: object) -> bool:
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(notifier, "_send_slack_alert", fake_slack)
+    monkeypatch.setattr(notifier, "_send_email_alert", lambda **_kw: True)
+
+    notifier.send_alert(
+        title="hi",
+        message="m",
+        severity="info",
+        category="digest",
+    )
+    assert captured["category"] == "digest"
+
+
+def test_send_alert_defaults_category_to_ops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An omitted ``category`` argument routes to ops."""
+    captured: dict[str, object] = {}
+
+    def fake_slack(**kwargs: object) -> bool:
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(notifier, "_send_slack_alert", fake_slack)
+    notifier.send_alert(title="t", message="m", severity="warning")
+    assert captured["category"] == "ops"

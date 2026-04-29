@@ -2440,6 +2440,144 @@ ships everywhere recommendations are surfaced.
 
 ---
 
+### 053 — In-App Feedback Stores To DB, Reuses The Existing Slack Notifier, And Routes Optional Auth Through `try_get_current_user`
+
+**Date:** 2026-04-27
+**Status:** Decided
+
+**Decision:** Ship the beta feedback widget as a single endpoint
+(`POST /api/v1/feedback`) that persists to a new `feedback` table and
+fires a Slack message via the existing `backend.scraper.notifier.send_alert`
+helper. The route is auth-optional via `try_get_current_user()`. When a
+user is signed in, the service overrides whatever email arrives in the
+form with `user.email`; the form email field is hidden in the UI for
+signed-in users. Admin triage uses the existing `@require_admin` /
+`X-Admin-Key` pattern with a list/resolve pair of routes plus a new
+`/admin/feedback` dashboard.
+
+**Rationale:**
+- The widget needs to work for logged-out browsers (the homepage is
+  fully public and SSR'd), so requiring auth would silently lose 80% of
+  the signal we actually want during beta.
+- We already have a Slack alerting pipeline used by the scraper failure
+  path. Adding a second notifier just for feedback would duplicate the
+  webhook env var, the message-formatting code, and the email-fallback
+  branch. Passing `alert_key=None` to `send_alert` bypasses the
+  per-key cooldown so every submission posts, which is what we want
+  for a low-volume beta channel.
+- Auto-filling the email from the account (and hiding the field) means
+  signed-in users don't have to retype something we already know — and
+  prevents them from typo-ing it. The override is server-side so a
+  malicious client can't strip the user_id and submit on someone else's
+  behalf.
+- A dedicated `feedback` table (not a generic `events` log) gives us a
+  CHECK-constrained `kind` enum and an `is_resolved` boolean we can
+  actually filter on in the admin UI without hauling a JSONB column.
+
+**Alternatives considered:**
+- **Slack only, no DB row.** Rejected — we want to triage and mark
+  resolved without scrolling Slack history, and we want analytics on
+  feedback volume per kind over time.
+- **Linear/GitHub Issues integration.** Rejected for now — too heavy
+  for unstructured beta feedback. Most messages will be one-line
+  reactions, not actionable tickets. Promotion to Linear can be a
+  manual triage step from the admin dashboard later.
+- **Require auth.** Rejected — anonymous browsers are exactly the
+  cohort whose first impression matters most for a public concert
+  calendar.
+- **A new SLACK_FEEDBACK_WEBHOOK_URL env var.** Rejected — one Slack
+  channel for ops alerts is fine during beta. If the noise becomes a
+  problem we can split later by passing a `channel` arg.
+
+**Consequences:**
+- The `feedback` table is the canonical record; Slack is fire-and-forget
+  best-effort. A Slack outage cannot lose a submission and cannot fail
+  the request (the helper is wrapped in `try/except` and only logs).
+- Anyone adding new fields to feedback must update the model, the
+  migration, the repo signature, the service (validation + truncation),
+  the route's JSON parsing, the serializer, and the admin dashboard's
+  row rendering — the layered architecture means there's no single
+  shortcut. This is intentional.
+- The admin dashboard is gated behind the same `AdminKeyGate` used by
+  the user/scraper dashboards, so there's no new auth surface to
+  audit.
+- Per-session pill dismissal lives in `sessionStorage` under
+  `greenroom.feedback.dismissed`. It's intentionally not persistent —
+  re-opening a tab gives the user another nudge. If that becomes
+  annoying we can promote it to `localStorage` later, but the cost of
+  a missed nudge is higher than the cost of a slightly noisy one
+  during beta.
+
+---
+
+### 054 — Slack Alerts Are Routed To Three Category Channels (Ops / Digest / Feedback) With Ops As The Universal Fallback
+
+**Date:** 2026-04-27
+**Status:** Decided
+
+**Decision:** `notifier.send_alert` takes a
+`category: Literal["ops", "digest", "feedback"]` parameter (default
+`"ops"`) that selects which Slack webhook URL is used. There are three
+env vars — `SLACK_WEBHOOK_OPS_URL`, `SLACK_WEBHOOK_DIGEST_URL`,
+`SLACK_WEBHOOK_FEEDBACK_URL`. When a category-specific URL is empty,
+the ops URL is used. Routing by call site:
+- `scraper/runner.py`, `scraper/validator.py`,
+  `scraper/watchdogs/*` → `ops` (default).
+- `services/scraper_digest.py` → `digest`.
+- `services/feedback.py` → `feedback`.
+- `services/admin.py::send_test_alert` fires once per category so an
+  operator can confirm all three channels are wired up in one click.
+
+**Rationale:**
+- The original single-webhook design mixed three different audiences
+  in one channel: ops on-call signal (every scraper failure), product
+  signal (the daily digest summary), and user feedback. Each has a
+  different read pattern. Ops needs to be silent when healthy so a
+  red signal stands out; the digest is a steady info-level heartbeat;
+  feedback is something a PM scans, not someone debugging at 3am.
+- `category` as an enum on `send_alert` (not a `webhook_url` arg)
+  keeps the channel decision policy-level — call sites declare *what
+  kind of signal* they're sending, not *where to send it*. The
+  routing table can change without touching every call site.
+- Ops as universal fallback means you can ship with one webhook
+  configured and everything still lands somewhere — no silent drops.
+  Adding the digest and feedback channels later is a config change,
+  not a code change.
+
+**Alternatives considered:**
+- **Pass `webhook_url` directly to `send_alert`.** Rejected — leaks
+  the routing decision to every call site and makes a global
+  re-routing impossible without grep.
+- **Keep one channel, separate by Slack message prefix.** Rejected —
+  notification settings, mute rules, and on-call rotations are
+  per-channel in Slack. Prefix-based filtering is fragile and
+  doesn't scale to multiple humans.
+- **Make ops required (no empty default).** Rejected — local dev
+  and tests run with all three blank, and the existing
+  `if not webhook_url` guard already handles the "nothing configured"
+  case gracefully. Failing config validation just to enforce one
+  webhook would be a regression for anyone who doesn't run Slack
+  locally.
+
+**Consequences:**
+- The old `SLACK_WEBHOOK_URL` env var is gone. Production deployments
+  must rename it to `SLACK_WEBHOOK_OPS_URL` before the next release.
+  The `.env.example` and Railway config need to be updated.
+- The admin "test alert" button now sends three Slack messages
+  instead of one. The response payload gained a `categories` dict so
+  the admin dashboard can show per-channel delivery status.
+- Adding a fourth category (e.g. `recommendations` for ML pipeline
+  alerts) is a one-line change to the `Literal` plus a settings
+  field plus an entry in `_resolve_webhook_url`. Existing call sites
+  are unaffected.
+- The fallback semantics (`category_url or ops_url`) mean
+  `_resolve_webhook_url` can return an empty string when *nothing* is
+  configured. The Slack helper guards against that with the existing
+  `if not webhook_url` check, so an unconfigured deployment quietly
+  no-ops the Slack send and falls through to email — same as before.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

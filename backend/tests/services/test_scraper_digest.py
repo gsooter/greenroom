@@ -269,6 +269,7 @@ def test_send_daily_digest_dispatches_with_alert_key_none(
     assert kwargs["severity"] == payload.severity
     assert kwargs["title"] == payload.title
     assert kwargs["message"] == payload.message
+    assert kwargs["category"] == "digest"
 
 
 def test_format_relative_handles_known_buckets() -> None:

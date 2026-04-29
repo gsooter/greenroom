@@ -70,11 +70,12 @@ interface AdminFetchOptions {
   method?: "GET" | "POST" | "DELETE";
   query?: Record<string, string | number | undefined>;
   adminKey: string;
+  body?: unknown;
 }
 
 async function adminFetch<T>(
   path: string,
-  { method = "GET", query, adminKey }: AdminFetchOptions,
+  { method = "GET", query, adminKey, body }: AdminFetchOptions,
 ): Promise<JsonEnvelope<T>> {
   const base = config.publicApiUrl.replace(/\/$/, "");
   const url = new URL(`${base}${ADMIN_BASE}${path}`);
@@ -84,12 +85,15 @@ async function adminFetch<T>(
       url.searchParams.set(key, String(value));
     }
   }
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "X-Admin-Key": adminKey,
+  };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(url.toString(), {
     method,
-    headers: {
-      Accept: "application/json",
-      "X-Admin-Key": adminKey,
-    },
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
   });
   if (!res.ok) {
@@ -232,4 +236,60 @@ export async function deleteAdminUser(
     `/users/${encodeURIComponent(userId)}`,
     { method: "DELETE", adminKey },
   );
+}
+
+export type AdminFeedbackKind = "bug" | "feature" | "general";
+
+export interface AdminFeedback {
+  id: string;
+  user_id: string | null;
+  email: string | null;
+  message: string;
+  kind: AdminFeedbackKind;
+  page_url: string | null;
+  user_agent: string | null;
+  is_resolved: boolean;
+  created_at: string;
+}
+
+export async function listAdminFeedback(
+  adminKey: string,
+  params: {
+    kind?: AdminFeedbackKind;
+    isResolved?: boolean;
+    page?: number;
+    perPage?: number;
+  } = {},
+): Promise<{ feedback: AdminFeedback[]; meta: PaginatedMeta }> {
+  const res = await adminFetch<AdminFeedback[]>("/feedback", {
+    adminKey,
+    query: {
+      kind: params.kind,
+      is_resolved:
+        params.isResolved === undefined
+          ? undefined
+          : params.isResolved
+            ? "true"
+            : "false",
+      page: params.page,
+      per_page: params.perPage,
+    },
+  });
+  return { feedback: res.data, meta: res.meta as PaginatedMeta };
+}
+
+export async function setAdminFeedbackResolved(
+  adminKey: string,
+  feedbackId: string,
+  isResolved: boolean,
+): Promise<AdminFeedback> {
+  const res = await adminFetch<AdminFeedback>(
+    `/feedback/${encodeURIComponent(feedbackId)}/resolve`,
+    {
+      method: "POST",
+      adminKey,
+      body: { is_resolved: isResolved },
+    },
+  );
+  return res.data;
 }
