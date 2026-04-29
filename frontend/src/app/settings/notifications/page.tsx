@@ -15,11 +15,11 @@ import { useEffect, useState } from "react";
 import { NotificationPreferencesForm } from "@/components/settings/NotificationPreferencesForm";
 import { ApiRequestError } from "@/lib/api/client";
 import { getNotificationPreferences } from "@/lib/api/notification-preferences";
-import { useRequireAuth } from "@/lib/auth";
+import { useRequireOnboarded } from "@/lib/auth";
 import type { NotificationPreferences } from "@/types";
 
 export default function NotificationSettingsPage(): JSX.Element {
-  const { token, isLoading, isAuthenticated } = useRequireAuth();
+  const { token, isLoading, isAuthenticated } = useRequireOnboarded();
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 

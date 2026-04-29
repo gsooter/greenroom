@@ -30,7 +30,7 @@ import { ApiRequestError } from "@/lib/api/client";
 import { listCities } from "@/lib/api/cities";
 import { deleteMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
 import { listGenres } from "@/lib/api/onboarding";
-import { useRequireAuth } from "@/lib/auth";
+import { useRequireOnboarded } from "@/lib/auth";
 import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
 import { authorizeAppleMusic } from "@/lib/musickit";
 import {
@@ -54,7 +54,7 @@ import type {
 export default function SettingsPage(): JSX.Element {
   const router = useRouter();
   const { user, token, isLoading, isAuthenticated, refreshUser, logout } =
-    useRequireAuth();
+    useRequireOnboarded();
 
   const [cities, setCities] = useState<City[]>([]);
   const [allGenres, setAllGenres] = useState<Genre[]>([]);
@@ -579,6 +579,8 @@ function ConnectedServicesSection({
         state={tidalState}
         busy={tidalConnecting}
         onConnect={() => void handleTidalConnect()}
+        advisoryNote="Tidal recommendations are still being improved — only your
+                      favorites are currently used as signal."
       />
 
       <ServiceCard
@@ -627,6 +629,7 @@ function ServiceCard({
   onConnect,
   gated = false,
   gateNote,
+  advisoryNote,
 }: {
   provider: MusicProvider;
   state: MusicConnectionState | undefined;
@@ -634,6 +637,7 @@ function ServiceCard({
   onConnect: () => void;
   gated?: boolean;
   gateNote?: string;
+  advisoryNote?: string;
 }): JSX.Element {
   const label = PROVIDER_LABEL[provider];
   const connected = Boolean(state?.connected);
@@ -687,6 +691,11 @@ function ServiceCard({
             {!gated ? (
               <p className="mt-1 text-[11px] italic text-text-secondary/80">
                 {PROVIDER_SIGNAL_NOTE[provider]}
+              </p>
+            ) : null}
+            {!gated && advisoryNote ? (
+              <p className="mt-1 rounded-md bg-bg-surface px-2 py-1 text-[11px] text-text-secondary">
+                {advisoryNote}
               </p>
             ) : null}
           </div>

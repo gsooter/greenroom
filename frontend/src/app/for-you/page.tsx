@@ -21,7 +21,7 @@ import {
   listRecommendations,
   refreshRecommendations,
 } from "@/lib/api/recommendations";
-import { useRequireAuth } from "@/lib/auth";
+import { useRequireOnboarded } from "@/lib/auth";
 import { bucketizeRecommendations } from "@/lib/recommendations/bucket";
 import type { Recommendation } from "@/types";
 
@@ -30,7 +30,7 @@ const PER_PAGE = 24;
 type Status = "idle" | "loading" | "ready" | "empty" | "error";
 
 export default function ForYouPage(): JSX.Element {
-  const { isAuthenticated, isLoading, token } = useRequireAuth();
+  const { isAuthenticated, isLoading, token } = useRequireOnboarded();
 
   const [recs, setRecs] = useState<Recommendation[]>([]);
   const [status, setStatus] = useState<Status>("idle");

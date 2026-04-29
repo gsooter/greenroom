@@ -156,6 +156,8 @@ export function MusicServicesStep({
           state={connections.find((c) => c.provider === "tidal")}
           busy={busy === "tidal"}
           onConnect={() => void handleTidal()}
+          note="Tidal recommendations are still being improved — only your favorites
+                are currently used as signal."
         />
         <ProviderRow
           provider="apple_music"
@@ -196,34 +198,43 @@ function ProviderRow({
   state,
   busy,
   onConnect,
+  note,
 }: {
   provider: MusicProvider;
   state: MusicConnectionState | undefined;
   busy: boolean;
   onConnect: () => void;
+  note?: string;
 }): JSX.Element {
   const label = PROVIDER_LABEL[provider];
   const connected = Boolean(state?.connected);
   return (
-    <div className="flex items-center justify-between rounded-lg border border-border bg-bg-white p-4">
-      <div>
-        <p className="text-sm font-medium text-text-primary">{label}</p>
-        <p className="mt-1 text-xs text-text-secondary">
-          {connected
-            ? state?.artist_count
-              ? `Connected — ${state.artist_count} artists synced.`
-              : "Connected."
-            : "Not connected yet."}
-        </p>
+    <div className="rounded-lg border border-border bg-bg-white p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-text-primary">{label}</p>
+          <p className="mt-1 text-xs text-text-secondary">
+            {connected
+              ? state?.artist_count
+                ? `Connected — ${state.artist_count} artists synced.`
+                : "Connected."
+              : "Not connected yet."}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onConnect}
+          disabled={busy}
+          className="shrink-0 rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? "Working…" : connected ? "Reconnect" : `Connect ${label}`}
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={onConnect}
-        disabled={busy}
-        className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {busy ? "Working…" : connected ? "Reconnect" : `Connect ${label}`}
-      </button>
+      {note ? (
+        <p className="mt-2 rounded-md bg-bg-surface px-2 py-1 text-[11px] text-text-secondary">
+          {note}
+        </p>
+      ) : null}
     </div>
   );
 }
