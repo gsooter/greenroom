@@ -46,11 +46,18 @@ function buildContentSecurityPolicy(env) {
     "https://*.ls.apple.com",
   ].join(" ");
 
+  // Sentry's browser SDK posts envelope payloads to the org-specific
+  // ingest subdomain (e.g. o12345.ingest.us.sentry.io). The wildcard
+  // covers every Sentry region without needing the DSN at config-build
+  // time.
+  const sentryIngest = "https://*.ingest.sentry.io https://*.ingest.us.sentry.io";
+
   const connectSources = [
     "'self'",
     apiOrigin,
     appleMusicApi,
     mapKitConnect,
+    sentryIngest,
     isDev && "ws://127.0.0.1:3000",
     isDev && "ws://localhost:3000",
   ]
@@ -124,4 +131,19 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// Wrap with Sentry only when a DSN is configured. Avoids dragging the
+// Sentry build plugin into local dev where contributors don't need it.
+const sentryConfigured = Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN);
+let exportedConfig = nextConfig;
+if (sentryConfigured) {
+  const { withSentryConfig } = await import("@sentry/nextjs");
+  exportedConfig = withSentryConfig(nextConfig, {
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    silent: !process.env.CI,
+    widenClientFileUpload: true,
+    disableLogger: true,
+  });
+}
+
+export default exportedConfig;

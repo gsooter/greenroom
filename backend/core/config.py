@@ -95,6 +95,15 @@ class Settings(BaseSettings):
             endpoints.
         knuckles_client_secret: Matching app-client secret. Sent with
             ``X-Client-Secret`` on every Knuckles call.
+        sentry_dsn: Sentry DSN for backend error reporting. Empty
+            during local dev — when unset the SDK is never initialized
+            and error reporting is a no-op.
+        sentry_environment: Sentry environment label
+            (``production``/``staging``/``development``). Defaults to
+            ``development`` so Sentry-side filters can split prod and
+            staging traffic.
+        sentry_traces_sample_rate: Fraction of requests to capture
+            performance traces for. Defaults to 0.0 (errors only).
         debug: Enable debug mode. Defaults to False.
     """
 
@@ -163,6 +172,11 @@ class Settings(BaseSettings):
     # App
     frontend_base_url: str = "http://localhost:3000"
     debug: bool = False
+
+    # Sentry
+    sentry_dsn: str = ""
+    sentry_environment: str = "development"
+    sentry_traces_sample_rate: float = 0.0
 
     # Tidal (Phase 5)
     tidal_client_id: str = ""

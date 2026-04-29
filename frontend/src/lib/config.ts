@@ -31,6 +31,8 @@ export const config = {
   publicApiUrl,
   baseUrl: requireEnv("NEXT_PUBLIC_BASE_URL", process.env.NEXT_PUBLIC_BASE_URL),
   posthogKey: process.env.NEXT_PUBLIC_POSTHOG_KEY ?? "",
+  sentryDsn: process.env.NEXT_PUBLIC_SENTRY_DSN ?? "",
+  sentryEnvironment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? "development",
 } as const;
 
 export const SUPPORT_EMAIL = "greenroom_support@gstwentyseven.com";

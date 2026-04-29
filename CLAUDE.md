@@ -676,10 +676,22 @@ ALERT_EMAIL                   # Scraper failure fallback email
 POSTHOG_API_KEY
 POSTHOG_HOST
 
+# Sentry — error reporting for the Flask app and Celery workers.
+# Empty in dev: when SENTRY_DSN is unset the SDK is never initialized
+# and reporting is a no-op, so contributors don't need a Sentry account
+# to run the app.
+SENTRY_DSN
+SENTRY_ENVIRONMENT            # production | staging | development (default)
+SENTRY_TRACES_SAMPLE_RATE     # 0.0–1.0; default 0.0 (errors only)
+
 # Frontend
 NEXT_PUBLIC_API_URL
 NEXT_PUBLIC_BASE_URL
 NEXT_PUBLIC_POSTHOG_KEY
+NEXT_PUBLIC_SENTRY_DSN              # Empty in dev disables the SDK entirely
+NEXT_PUBLIC_SENTRY_ENVIRONMENT      # production | staging | development
+SENTRY_ORG                          # Used by withSentryConfig at build time
+SENTRY_PROJECT                      # Used by withSentryConfig at build time
 ```
 
 ---

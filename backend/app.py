@@ -14,6 +14,7 @@ from backend.core.config import get_settings
 from backend.core.database import init_db
 from backend.core.exceptions import AppError
 from backend.core.logging import setup_logging
+from backend.core.observability import init_sentry
 
 _CORS_ALLOWED_HEADERS = "Content-Type, Authorization, X-Admin-Key"
 _CORS_ALLOWED_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
@@ -32,6 +33,7 @@ def create_app() -> Flask:
     settings = get_settings()
 
     setup_logging(debug=settings.debug)
+    init_sentry("web")
 
     app = Flask(__name__)
     app.config["DEBUG"] = settings.debug

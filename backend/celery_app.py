@@ -18,6 +18,7 @@ from celery import Celery
 from celery.schedules import crontab
 
 from backend.core.config import get_settings
+from backend.core.observability import init_sentry
 
 
 def _build_app() -> Celery:
@@ -28,6 +29,7 @@ def _build_app() -> Celery:
         broker and ready to register tasks against.
     """
     settings = get_settings()
+    init_sentry("worker")
 
     app = Celery(
         "greenroom",

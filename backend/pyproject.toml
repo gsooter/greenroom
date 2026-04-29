@@ -27,6 +27,7 @@ dependencies = [
     "gunicorn>=21.2,<23",
     "webauthn>=2.0,<3",
     "knuckles-client>=0.1.0,<0.2.0",
+    "sentry-sdk[flask,celery,sqlalchemy]>=2.0,<3",
 ]
 
 [project.optional-dependencies]
