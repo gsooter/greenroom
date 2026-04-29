@@ -52,11 +52,22 @@ def get_client() -> KnucklesClient:
         with _client_lock:
             if _client is None:
                 settings = get_settings()
-                _client = KnucklesClient(
+                client = KnucklesClient(
                     base_url=settings.knuckles_url,
                     client_id=settings.knuckles_client_id,
                     client_secret=settings.knuckles_client_secret,
                 )
+                # Knuckles' WAF returns 403 to the `Python-urllib/*` UA that
+                # PyJWKClient sends by default, breaking JWKS fetches for
+                # every token verification. Swap in a PyJWKClient with a
+                # neutral UA until the WAF whitelists the JWKS path.
+                verifier = client._verifier
+                verifier._jwks = jwt.PyJWKClient(
+                    verifier.jwks_uri,
+                    cache_keys=True,
+                    headers={"User-Agent": "greenroom-backend"},
+                )
+                _client = client
     return _client
 
 
