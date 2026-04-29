@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { FollowingSections } from "@/components/settings/FollowingSections";
 import { GenreChipGrid } from "@/components/ui/GenreChipGrid";
 import {
   connectAppleMusic,
@@ -280,6 +281,10 @@ export default function SettingsPage(): JSX.Element {
           Manage email preferences
         </Link>
       </section>
+
+      <hr className="my-10 border-border" />
+
+      <FollowingSections token={token} />
 
       <hr className="my-10 border-border" />
 
