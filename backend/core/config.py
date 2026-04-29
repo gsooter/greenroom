@@ -15,6 +15,12 @@ class Settings(BaseSettings):
         spotify_client_id: Spotify OAuth client ID.
         spotify_client_secret: Spotify OAuth client secret.
         spotify_redirect_uri: Spotify OAuth redirect URI.
+        spotify_beta_emails: Comma-separated allowlist of email
+            addresses approved for the Spotify dev-mode beta. The
+            Spotify app is in development mode (capped at 25 user
+            accounts), so most users see a disabled "Limited access"
+            card; only addresses in this list see a working Connect
+            button. Whitespace and case are ignored.
         database_url: PostgreSQL connection string.
         redis_url: Redis connection string.
         jwt_secret_key: Secret key for signing JWTs.
@@ -103,6 +109,12 @@ class Settings(BaseSettings):
     spotify_client_id: str
     spotify_client_secret: str
     spotify_redirect_uri: str
+    # Comma-separated allowlist of email addresses approved for the
+    # Spotify dev-mode beta. Greenroom is currently in Spotify's
+    # development quota cap (max 25 accounts), so most users see a
+    # disabled "Limited access" card — only addresses in this list
+    # see a working Connect button. Whitespace and case are ignored.
+    spotify_beta_emails: str = ""
 
     # Database
     database_url: str
@@ -174,6 +186,23 @@ class Settings(BaseSettings):
     knuckles_url: str = ""
     knuckles_client_id: str = ""
     knuckles_client_secret: str = ""
+
+    def spotify_beta_email_set(self) -> frozenset[str]:
+        """Parse :attr:`spotify_beta_emails` into a normalized set.
+
+        The env var is comma-separated to keep deploy-time editing
+        simple. Each entry is trimmed and lowercased so callers can
+        compare against ``user.email.lower()`` without re-normalizing.
+
+        Returns:
+            Frozenset of approved email addresses, lowercased and
+            stripped. Empty when the env var is unset.
+        """
+        return frozenset(
+            entry.strip().lower()
+            for entry in self.spotify_beta_emails.split(",")
+            if entry.strip()
+        )
 
 
 def get_settings() -> Settings:

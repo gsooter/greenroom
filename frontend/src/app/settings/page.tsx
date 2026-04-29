@@ -260,6 +260,7 @@ export default function SettingsPage(): JSX.Element {
       <ConnectedServicesSection
         token={token}
         connections={connections}
+        spotifyBetaAccess={user.spotify_beta_access}
         onConnectionChange={() => void loadConnections()}
       />
 
@@ -471,10 +472,12 @@ function providerStatusMessage(
 function ConnectedServicesSection({
   token,
   connections,
+  spotifyBetaAccess,
   onConnectionChange,
 }: {
   token: string | null;
   connections: MusicConnectionState[];
+  spotifyBetaAccess: boolean;
   onConnectionChange: () => void;
 }): JSX.Element {
   const [spotifyConnecting, setSpotifyConnecting] = useState<boolean>(false);
@@ -566,6 +569,9 @@ function ConnectedServicesSection({
         state={spotifyState}
         busy={spotifyConnecting}
         onConnect={() => void handleSpotifyConnect()}
+        gated={!spotifyBetaAccess && !spotifyState?.connected}
+        gateNote="Spotify is in limited beta while we wait on production
+                  approval. Email support if you'd like an invite."
       />
 
       <ServiceCard
@@ -619,11 +625,15 @@ function ServiceCard({
   state,
   busy,
   onConnect,
+  gated = false,
+  gateNote,
 }: {
   provider: MusicProvider;
   state: MusicConnectionState | undefined;
   busy: boolean;
   onConnect: () => void;
+  gated?: boolean;
+  gateNote?: string;
 }): JSX.Element {
   const label = PROVIDER_LABEL[provider];
   const connected = Boolean(state?.connected);
@@ -632,24 +642,41 @@ function ServiceCard({
   const artists = state?.artists ?? [];
   const syncedAt = state?.synced_at ? formatSyncedAt(state.synced_at) : null;
   return (
-    <div className="mt-3 rounded-lg border border-border bg-bg-white p-4">
+    <div
+      className={
+        "mt-3 rounded-lg border border-border bg-bg-white p-4 " +
+        (gated ? "opacity-60" : "")
+      }
+      aria-disabled={gated || undefined}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div
             aria-hidden
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-green-dark text-base font-semibold text-text-inverse"
+            className={
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-base font-semibold text-text-inverse " +
+              (gated ? "bg-text-secondary" : "bg-green-dark")
+            }
           >
             {PROVIDER_GLYPH[provider]}
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm font-medium text-text-primary">{label}</p>
-              <StatusPill connected={connected} />
+              {gated ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-bg-surface px-2 py-0.5 text-[11px] font-medium text-text-secondary ring-1 ring-border">
+                  Limited access
+                </span>
+              ) : (
+                <StatusPill connected={connected} />
+              )}
             </div>
             <p className="mt-1 text-xs text-text-secondary">
-              {providerStatusMessage(provider, state)}
+              {gated && gateNote
+                ? gateNote
+                : providerStatusMessage(provider, state)}
             </p>
-            {connected && syncedAt ? (
+            {!gated && connected && syncedAt ? (
               <p className="mt-1 text-[11px] text-text-secondary/80">
                 Last synced {syncedAt}
                 {state?.artist_count
@@ -657,21 +684,30 @@ function ServiceCard({
                   : ""}
               </p>
             ) : null}
-            <p className="mt-1 text-[11px] italic text-text-secondary/80">
-              {PROVIDER_SIGNAL_NOTE[provider]}
-            </p>
+            {!gated ? (
+              <p className="mt-1 text-[11px] italic text-text-secondary/80">
+                {PROVIDER_SIGNAL_NOTE[provider]}
+              </p>
+            ) : null}
           </div>
         </div>
         <button
           type="button"
           onClick={onConnect}
-          disabled={busy}
-          className="shrink-0 rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={busy || gated}
+          aria-label={gated ? `Connect ${label} (limited access)` : undefined}
+          className="shrink-0 rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-green-primary"
         >
-          {busy ? busyLabel : connected ? "Reconnect" : `Connect ${label}`}
+          {gated
+            ? "Unavailable"
+            : busy
+              ? busyLabel
+              : connected
+                ? "Reconnect"
+                : `Connect ${label}`}
         </button>
       </div>
-      {artists.length > 0 ? (
+      {!gated && artists.length > 0 ? (
         <div className="mt-4 border-t border-border/60 pt-3">
           <p className="text-[11px] font-medium uppercase tracking-wide text-text-secondary">
             Your rotation

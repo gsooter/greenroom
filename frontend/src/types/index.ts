@@ -165,6 +165,7 @@ export interface User {
   digest_frequency: DigestFrequency;
   genre_preferences: string[];
   notification_settings: Record<string, unknown>;
+  spotify_beta_access: boolean;
   last_login_at: string | null;
   created_at: string;
 }

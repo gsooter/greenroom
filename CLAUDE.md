@@ -612,6 +612,13 @@ KNUCKLES_CLIENT_SECRET
 SPOTIFY_CLIENT_ID
 SPOTIFY_CLIENT_SECRET
 SPOTIFY_REDIRECT_URI
+SPOTIFY_BETA_EMAILS           # Comma-separated allowlist of email addresses
+                              # approved for Spotify's dev-mode beta. The
+                              # Spotify app is capped at 25 OAuth users; only
+                              # listed addresses see a working Connect button
+                              # on /settings — everyone else sees a disabled
+                              # "Limited access" card. Whitespace and case
+                              # are ignored.
 
 # Tidal (music-service connect — Phase 5)
 TIDAL_CLIENT_ID

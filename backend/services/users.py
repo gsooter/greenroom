@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from backend.core.config import get_settings
 from backend.core.exceptions import (
     CITY_NOT_FOUND,
     USER_NOT_FOUND,
@@ -129,6 +130,12 @@ def serialize_user(user: User) -> dict[str, Any]:
     Intentionally omits ``is_active`` and anything OAuth-token-related
     — those are internal state the client never needs.
 
+    Includes ``spotify_beta_access`` so the settings page can render
+    the Spotify card as either a working Connect or a disabled
+    "Limited access" card. The flag is recomputed on every call so an
+    admin can grant access by editing the env var without invalidating
+    sessions.
+
     Args:
         user: The user to serialize.
 
@@ -144,11 +151,33 @@ def serialize_user(user: User) -> dict[str, Any]:
         "digest_frequency": user.digest_frequency.value,
         "genre_preferences": user.genre_preferences or [],
         "notification_settings": user.notification_settings or {},
+        "spotify_beta_access": is_spotify_beta_user(user),
         "last_login_at": (
             user.last_login_at.isoformat() if user.last_login_at else None
         ),
         "created_at": user.created_at.isoformat(),
     }
+
+
+def is_spotify_beta_user(user: User) -> bool:
+    """Return whether ``user`` is allowlisted for the Spotify dev beta.
+
+    The Spotify app currently runs in development mode, which caps
+    real OAuth to 25 testers. Approved testers are listed in the
+    ``SPOTIFY_BETA_EMAILS`` env var. Everyone else sees the Spotify
+    card disabled with "Limited access" copy so the option doesn't
+    feel like a broken promise.
+
+    Args:
+        user: The authenticated user.
+
+    Returns:
+        True when the user's email (case-insensitive) is in the
+        allowlist, False otherwise.
+    """
+    if not user.email:
+        return False
+    return user.email.lower() in get_settings().spotify_beta_email_set()
 
 
 _ARTIST_PREVIEW_LIMIT = 24

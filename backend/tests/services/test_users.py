@@ -45,6 +45,31 @@ class _FakeUser:
     created_at: object
 
 
+@dataclass
+class _StubSettings:
+    """Tiny stand-in for the real Settings object.
+
+    Carries only the ``spotify_beta_emails`` field plus the parsing
+    helper, since that's all the serializer touches. Patched in via
+    ``monkeypatch.setattr(users_service, "get_settings", ...)`` so the
+    serializer reads our test allowlist instead of the env-loaded one.
+    """
+
+    spotify_beta_emails: str
+
+    def spotify_beta_email_set(self) -> frozenset[str]:
+        """Mirror :meth:`Settings.spotify_beta_email_set`.
+
+        Returns:
+            Frozenset of normalized (trimmed, lowercased) addresses.
+        """
+        return frozenset(
+            entry.strip().lower()
+            for entry in self.spotify_beta_emails.split(",")
+            if entry.strip()
+        )
+
+
 @pytest.fixture
 def fake_session() -> MagicMock:
     """Return a MagicMock that mimics a SQLAlchemy session.
@@ -247,6 +272,66 @@ def test_serialize_user_renders_uuids_and_enums_as_strings() -> None:
     assert payload["genre_preferences"] == ["indie"]
     assert payload["notification_settings"] == {"email": True}
     assert payload["city_id"] is None
+    assert payload["spotify_beta_access"] is False
+
+
+def test_serialize_user_marks_spotify_beta_when_email_allowlisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allowlisted email flips ``spotify_beta_access`` to True."""
+    from datetime import datetime
+
+    from backend.core import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_settings",
+        lambda: _StubSettings("Beta@Example.com, other@example.com"),
+    )
+    monkeypatch.setattr(
+        users_service,
+        "get_settings",
+        lambda: _StubSettings("Beta@Example.com, other@example.com"),
+    )
+
+    user = _FakeUser(
+        id=uuid.uuid4(),
+        email="beta@example.com",
+        display_name=None,
+        avatar_url=None,
+        city_id=None,
+        digest_frequency=DigestFrequency.WEEKLY,
+        genre_preferences=None,
+        notification_settings=None,
+        last_login_at=None,
+        created_at=datetime(2026, 4, 17, 12, 0, 0),
+    )
+
+    payload = users_service.serialize_user(user)  # type: ignore[arg-type]
+
+    assert payload["spotify_beta_access"] is True
+
+
+def test_is_spotify_beta_user_handles_empty_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset env var → no one has beta access."""
+    monkeypatch.setattr(users_service, "get_settings", lambda: _StubSettings(""))
+
+    user = _FakeUser(
+        id=uuid.uuid4(),
+        email="someone@example.com",
+        display_name=None,
+        avatar_url=None,
+        city_id=None,
+        digest_frequency=DigestFrequency.WEEKLY,
+        genre_preferences=None,
+        notification_settings=None,
+        last_login_at=None,
+        created_at=None,
+    )
+
+    assert users_service.is_spotify_beta_user(user) is False  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

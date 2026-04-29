@@ -47,6 +47,7 @@ function userFixture(overrides: Partial<User> = {}): User {
     digest_frequency: "weekly",
     genre_preferences: [],
     notification_settings: {},
+    spotify_beta_access: false,
     last_login_at: null,
     created_at: "2026-04-01T00:00:00Z",
     ...overrides,
