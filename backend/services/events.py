@@ -300,6 +300,9 @@ def serialize_event(event: Event) -> dict[str, Any]:
         "ticket_url": event.ticket_url,
         "min_price": event.min_price,
         "max_price": event.max_price,
+        "prices_refreshed_at": (
+            event.prices_refreshed_at.isoformat() if event.prices_refreshed_at else None
+        ),
         "source_url": event.source_url,
         "venue": _serialize_venue_with_city(event),
         "created_at": event.created_at.isoformat(),
@@ -326,6 +329,9 @@ def serialize_event_summary(event: Event) -> dict[str, Any]:
         "image_url": event.image_url,
         "min_price": event.min_price,
         "max_price": event.max_price,
+        "prices_refreshed_at": (
+            event.prices_refreshed_at.isoformat() if event.prices_refreshed_at else None
+        ),
         "status": event.status.value,
         "venue": _serialize_venue_with_city(event),
     }

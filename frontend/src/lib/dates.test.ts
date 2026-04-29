@@ -33,6 +33,7 @@ function eventAt(starts_at: string | null, id = crypto.randomUUID()): EventSumma
     image_url: null,
     min_price: null,
     max_price: null,
+    prices_refreshed_at: null,
     status: "confirmed",
     venue: null,
   };

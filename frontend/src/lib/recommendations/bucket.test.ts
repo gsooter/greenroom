@@ -21,6 +21,7 @@ function event(startsAt: string | null, id = crypto.randomUUID()): EventSummary 
     image_url: null,
     min_price: null,
     max_price: null,
+    prices_refreshed_at: null,
     status: "confirmed",
     venue: null,
   };

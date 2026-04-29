@@ -12,7 +12,7 @@ import Link from "next/link";
 import EventDateTime from "@/components/events/EventDateTime";
 import SaveEventButton from "@/components/events/SaveEventButton";
 import RegionBadge from "@/components/ui/RegionBadge";
-import { formatPriceRange, joinArtists } from "@/lib/format";
+import { formatPriceRange, formatRelativeTime, joinArtists } from "@/lib/format";
 import type { EventStatus, EventSummary } from "@/types";
 
 interface EventCardProps {
@@ -40,6 +40,10 @@ const STATUS_CLASS: Record<EventStatus, string> = {
 export default function EventCard({ event }: EventCardProps) {
   const artists = joinArtists(event.artists);
   const price = formatPriceRange(event.min_price, event.max_price);
+  const priceAge =
+    price && event.prices_refreshed_at
+      ? formatRelativeTime(event.prices_refreshed_at)
+      : null;
   const venue = event.venue;
 
   return (
@@ -88,7 +92,16 @@ export default function EventCard({ event }: EventCardProps) {
             {venue ? <RegionBadge city={venue.city} /> : null}
           </div>
           {price ? (
-            <span className="text-sm font-medium text-foreground">{price}</span>
+            <div className="flex flex-col items-end leading-tight">
+              <span className="text-sm font-medium text-foreground">
+                {price}
+              </span>
+              {priceAge ? (
+                <span className="text-[10px] text-muted">
+                  Updated {priceAge}
+                </span>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>

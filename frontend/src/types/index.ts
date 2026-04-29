@@ -83,6 +83,7 @@ export interface EventSummary {
   image_url: string | null;
   min_price: number | null;
   max_price: number | null;
+  prices_refreshed_at: string | null;
   status: EventStatus;
   venue: NestedVenue | null;
 }

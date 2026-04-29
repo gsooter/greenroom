@@ -63,6 +63,7 @@ class _FakeEvent:
     ticket_url: str | None = "https://tickets.test/x"
     min_price: float | None = 35.0
     max_price: float | None = 65.0
+    prices_refreshed_at: datetime | None = None
     source_url: str | None = "https://source.test"
     created_at: datetime = field(
         default_factory=lambda: datetime(2026, 4, 1, tzinfo=UTC)
