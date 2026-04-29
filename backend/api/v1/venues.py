@@ -11,7 +11,7 @@ from flask import g, request
 
 from backend.api.v1 import api_v1
 from backend.core.database import get_db
-from backend.core.knuckles_client import verify_knuckles_token
+from backend.core.knuckles import verify_knuckles_token
 from backend.core.logging import get_logger
 from backend.data.repositories import events as events_repo
 from backend.data.repositories import users as users_repo

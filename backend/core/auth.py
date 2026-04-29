@@ -27,7 +27,7 @@ from backend.core.exceptions import (
     AppError,
     UnauthorizedError,
 )
-from backend.core.knuckles_client import verify_knuckles_token
+from backend.core.knuckles import verify_knuckles_token
 from backend.data.models.users import User
 from backend.data.repositories import users as users_repo
 

@@ -89,10 +89,6 @@ class Settings(BaseSettings):
             endpoints.
         knuckles_client_secret: Matching app-client secret. Sent with
             ``X-Client-Secret`` on every Knuckles call.
-        knuckles_jwks_cache_ttl_seconds: How long to keep a fetched
-            JWKS in memory before refetching. A token signed with an
-            unknown ``kid`` always triggers an immediate refresh
-            regardless of TTL.
         debug: Enable debug mode. Defaults to False.
     """
 
@@ -178,7 +174,6 @@ class Settings(BaseSettings):
     knuckles_url: str = ""
     knuckles_client_id: str = ""
     knuckles_client_secret: str = ""
-    knuckles_jwks_cache_ttl_seconds: int = 60 * 60
 
 
 def get_settings() -> Settings:

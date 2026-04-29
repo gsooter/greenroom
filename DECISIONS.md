@@ -2578,6 +2578,72 @@ the ops URL is used. Routing by call site:
 
 ---
 
+### 055 — Adopt The `knuckles-client` Python SDK Instead Of A Hand-Rolled HTTP Client
+
+**Date:** 2026-04-29
+**Status:** Decided
+
+**Decision:** All Knuckles calls (magic-link, Google, Apple, passkey,
+refresh, logout, JWKS-backed access-token verification) now go through
+the published `knuckles-client>=0.1.0` SDK via a single
+`backend.core.knuckles.get_client()` singleton. The previous custom
+module (`backend.core.knuckles_client` — hand-rolled `requests`
+transport, file-backed JWKS cache, bespoke exception envelope) is
+deleted along with its test file.
+
+**Rationale:**
+- The SDK already encodes Decision 030's contract: `X-Client-Id` /
+  `X-Client-Secret` headers, `KnucklesAuthError` with `.code`
+  attributes for the refresh-token error family
+  (`REFRESH_TOKEN_REUSED`, `REFRESH_TOKEN_EXPIRED`, etc.), and a
+  `verify_access_token` shim built on `jwt.PyJWKClient` for in-memory
+  JWKS caching. Owning a parallel implementation in Greenroom was pure
+  duplication and a drift risk every time Knuckles added a code or
+  changed a payload shape.
+- Catching `KnucklesAuthError` and pulling `.code` off the SDK
+  exception is dramatically clearer than the old `if "REUSED" in
+  err.message` string-pattern checks. Frontends already consume the
+  same codes, so passthrough via `auth_error_to_app_error` keeps the
+  UX identical.
+- `KnucklesTokenError` distinguishes expired from other failures via
+  `__cause__` (the SDK preserves the underlying `jwt.PyJWTError` with
+  `from exc`). That gives `verify_knuckles_token` enough fidelity to
+  surface `TOKEN_EXPIRED` for silent-refresh flows without re-decoding
+  the token.
+
+**Alternatives considered:**
+- **Keep the custom client and pull in the SDK only for new endpoints.**
+  Rejected — every endpoint we'd skip is one we'd need to maintain a
+  bespoke error-translation path for. The whole-cloth swap is the only
+  way to delete `backend/core/knuckles_client.py` outright.
+- **Build a thin wrapper that exposes a Greenroom-shaped facade over
+  the SDK.** Rejected as premature abstraction. The SDK's shape (sub-
+  clients per ceremony, dataclass returns) reads cleanly at the route
+  layer; an extra facade buys nothing and forces a re-rewrite if the
+  SDK adds methods.
+
+**Consequences:**
+- The `KNUCKLES_JWKS_CACHE_TTL_SECONDS` env var is gone. The SDK uses
+  `jwt.PyJWKClient`'s built-in cache, which is read-mostly and bounded
+  by process lifetime — there's no TTL knob to expose. Removing the
+  setting is safe because no code referenced it after the swap.
+- Test fixtures stub the JWKS endpoint by patching
+  `jwt.PyJWKClient.fetch_data` (the SDK's underlying fetcher) instead
+  of the legacy `requests.get` interception. The autouse
+  `_reset_knuckles_client` fixture drops the singleton between tests so
+  each case rebuilds the SDK against a clean state.
+- Route-level tests now mock the SDK by patching
+  `route.get_client` to return a `MagicMock`; assertions inspect
+  `sdk.<sub_client>.<method>.call_args.kwargs` instead of HTTP-shaped
+  bodies. This is a strictly better test surface — it exercises the
+  same contract the production code calls, and breaks loudly if a
+  call-site argument name drifts.
+- Adding new Knuckles endpoints in the future is a one-liner per route
+  (`get_client().<sub>.<method>(...)`); no new transport, exception
+  type, or test scaffolding required.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

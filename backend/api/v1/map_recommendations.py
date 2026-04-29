@@ -22,7 +22,7 @@ from backend.api.v1 import api_v1
 from backend.core.auth import get_current_user, require_auth
 from backend.core.database import get_db
 from backend.core.exceptions import ValidationError
-from backend.core.knuckles_client import verify_knuckles_token
+from backend.core.knuckles import verify_knuckles_token
 from backend.core.logging import get_logger
 from backend.core.rate_limit import get_request_ip, rate_limit
 from backend.data.repositories import users as users_repo
