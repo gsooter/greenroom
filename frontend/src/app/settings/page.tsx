@@ -606,6 +606,29 @@ function ConnectedServicesSection({
   );
 }
 
+const PROVIDER_GLYPH: Record<MusicProvider, string> = {
+  spotify: "S",
+  tidal: "T",
+  apple_music: "A",
+};
+
+function StatusPill({ connected }: { connected: boolean }): JSX.Element {
+  return connected ? (
+    <span className="inline-flex items-center gap-1 rounded-full bg-green-soft px-2 py-0.5 text-[11px] font-medium text-green-dark ring-1 ring-green-primary/40">
+      <span
+        aria-hidden
+        className="h-1.5 w-1.5 rounded-full bg-green-primary"
+      />
+      Connected
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 rounded-full bg-bg-surface px-2 py-0.5 text-[11px] font-medium text-text-secondary ring-1 ring-border">
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-border" />
+      Not connected
+    </span>
+  );
+}
+
 function ServiceCard({
   provider,
   state,
@@ -622,37 +645,57 @@ function ServiceCard({
   const busyLabel =
     provider === "apple_music" ? "Authorizing…" : "Redirecting…";
   const artists = state?.artists ?? [];
+  const syncedAt = state?.synced_at ? formatSyncedAt(state.synced_at) : null;
   return (
     <div className="mt-3 rounded-lg border border-border bg-bg-white p-4">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-text-primary">{label}</p>
-          <p className="mt-1 text-xs text-text-secondary">
-            {providerStatusMessage(provider, state)}
-          </p>
-          <p className="mt-1 text-[11px] italic text-text-secondary/80">
-            {PROVIDER_SIGNAL_NOTE[provider]}
-          </p>
+        <div className="flex items-start gap-3">
+          <div
+            aria-hidden
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-green-dark text-base font-semibold text-text-inverse"
+          >
+            {PROVIDER_GLYPH[provider]}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-medium text-text-primary">{label}</p>
+              <StatusPill connected={connected} />
+            </div>
+            <p className="mt-1 text-xs text-text-secondary">
+              {providerStatusMessage(provider, state)}
+            </p>
+            {connected && syncedAt ? (
+              <p className="mt-1 text-[11px] text-text-secondary/80">
+                Last synced {syncedAt}
+                {state?.artist_count
+                  ? ` · ${state.artist_count} artists`
+                  : ""}
+              </p>
+            ) : null}
+            <p className="mt-1 text-[11px] italic text-text-secondary/80">
+              {PROVIDER_SIGNAL_NOTE[provider]}
+            </p>
+          </div>
         </div>
         <button
           type="button"
           onClick={onConnect}
           disabled={busy}
-          className="rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
+          className="shrink-0 rounded-md border border-green-primary px-3 py-1.5 text-xs font-medium text-green-primary transition hover:bg-green-primary hover:text-text-inverse disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busy ? busyLabel : connected ? "Reconnect" : `Connect ${label}`}
         </button>
       </div>
       {artists.length > 0 ? (
-        <div className="mt-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+        <div className="mt-4 border-t border-border/60 pt-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-text-secondary">
             Your rotation
           </p>
-          <ul className="mt-2 flex flex-wrap gap-2">
+          <ul className="mt-2 flex flex-wrap gap-1.5">
             {artists.map((artist) => (
               <li
                 key={`${provider}-${artist.id ?? artist.name}`}
-                className="rounded-full bg-blush-soft px-3 py-1 text-xs font-medium text-blush-accent"
+                className="rounded-full bg-bg-surface px-2.5 py-1 text-xs font-medium text-text-secondary"
               >
                 {artist.name}
               </li>
