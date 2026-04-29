@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { DeleteAccountModal } from "@/components/settings/DeleteAccountModal";
 import { FollowingSections } from "@/components/settings/FollowingSections";
 import { GenreChipGrid } from "@/components/ui/GenreChipGrid";
 import {
@@ -69,6 +70,10 @@ export default function SettingsPage(): JSX.Element {
     "idle",
   );
   const [error, setError] = useState<string | null>(null);
+
+  const [deleteOpen, setDeleteOpen] = useState<boolean>(false);
+  const [deleteBusy, setDeleteBusy] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [connections, setConnections] = useState<MusicConnectionState[]>([]);
 
@@ -160,16 +165,15 @@ export default function SettingsPage(): JSX.Element {
 
   const handleDelete = useCallback(async (): Promise<void> => {
     if (!token) return;
-    const confirmed = window.confirm(
-      "Deactivate your account? You can contact support to reactivate later.",
-    );
-    if (!confirmed) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
     try {
       await deleteMe(token);
       logout();
       router.replace("/");
     } catch (err) {
-      setError(
+      setDeleteBusy(false);
+      setDeleteError(
         err instanceof ApiRequestError
           ? err.message
           : "Could not deactivate account.",
@@ -332,12 +336,28 @@ export default function SettingsPage(): JSX.Element {
         </p>
         <button
           type="button"
-          onClick={() => void handleDelete()}
+          onClick={() => {
+            setDeleteError(null);
+            setDeleteOpen(true);
+          }}
           className="mt-4 rounded-md border border-blush-accent px-4 py-2 text-sm font-medium text-blush-accent hover:bg-blush-soft"
         >
           Deactivate account
         </button>
       </section>
+
+      {deleteOpen ? (
+        <DeleteAccountModal
+          email={user.email}
+          busy={deleteBusy}
+          error={deleteError}
+          onCancel={() => {
+            if (deleteBusy) return;
+            setDeleteOpen(false);
+          }}
+          onConfirm={() => void handleDelete()}
+        />
+      ) : null}
     </PageShell>
   );
 }
