@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { GenreChipGrid } from "@/components/ui/GenreChipGrid";
 import {
   connectAppleMusic,
   getAppleMusicDeveloperToken,
@@ -25,6 +26,7 @@ import {
 import { ApiRequestError } from "@/lib/api/client";
 import { listCities } from "@/lib/api/cities";
 import { deleteMe, getMyMusicConnections, updateMe } from "@/lib/api/me";
+import { listGenres } from "@/lib/api/onboarding";
 import { useRequireAuth } from "@/lib/auth";
 import { SUPPORT_EMAIL, SUPPORT_MAILTO } from "@/lib/config";
 import { authorizeAppleMusic } from "@/lib/musickit";
@@ -41,6 +43,7 @@ import {
 import type {
   City,
   DigestFrequency,
+  Genre,
   MusicConnectionState,
   MusicProvider,
   UserPatch,
@@ -54,10 +57,13 @@ export default function SettingsPage(): JSX.Element {
     useRequireAuth();
 
   const [cities, setCities] = useState<City[]>([]);
+  const [allGenres, setAllGenres] = useState<Genre[]>([]);
   const [displayName, setDisplayName] = useState<string>("");
   const [cityId, setCityId] = useState<string>("");
   const [digest, setDigest] = useState<DigestFrequency>("weekly");
-  const [genres, setGenres] = useState<string>("");
+  const [selectedGenres, setSelectedGenres] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">(
     "idle",
   );
@@ -80,6 +86,12 @@ export default function SettingsPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    void listGenres()
+      .then(setAllGenres)
+      .catch(() => setAllGenres([]));
+  }, []);
+
+  useEffect(() => {
     void loadConnections();
   }, [loadConnections]);
 
@@ -88,8 +100,17 @@ export default function SettingsPage(): JSX.Element {
     setDisplayName(user.display_name ?? "");
     setCityId(user.city_id ?? "");
     setDigest(user.digest_frequency);
-    setGenres((user.genre_preferences ?? []).join(", "));
+    setSelectedGenres(new Set(user.genre_preferences ?? []));
   }, [user]);
+
+  const toggleGenre = useCallback((slug: string): void => {
+    setSelectedGenres((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  }, []);
 
   const patch = useMemo<UserPatch>(() => {
     if (!user) return {};
@@ -105,16 +126,13 @@ export default function SettingsPage(): JSX.Element {
     if (user.digest_frequency !== digest) {
       next.digest_frequency = digest;
     }
-    const genreList = genres
-      .split(",")
-      .map((g) => g.trim())
-      .filter(Boolean);
-    const currentGenres = user.genre_preferences ?? [];
+    const genreList = Array.from(selectedGenres).sort();
+    const currentGenres = (user.genre_preferences ?? []).slice().sort();
     if (JSON.stringify(currentGenres) !== JSON.stringify(genreList)) {
       next.genre_preferences = genreList;
     }
     return next;
-  }, [user, displayName, cityId, digest, genres]);
+  }, [user, displayName, cityId, digest, selectedGenres]);
 
   const hasChanges = Object.keys(patch).length > 0;
 
@@ -208,15 +226,25 @@ export default function SettingsPage(): JSX.Element {
           </select>
         </Field>
 
-        <Field label="Favorite genres (comma-separated)">
-          <input
-            type="text"
-            value={genres}
-            onChange={(e) => setGenres(e.target.value)}
-            placeholder="indie, electronic, post-punk"
-            className="w-full rounded-md border border-border bg-bg-white px-3 py-2 text-sm"
-          />
-        </Field>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+            Favorite genres
+          </p>
+          <p className="mt-1 text-xs text-text-secondary/80">
+            Tap to toggle. Picks shape your For-You feed and weekly digest.
+          </p>
+          <div className="mt-3">
+            {allGenres.length > 0 ? (
+              <GenreChipGrid
+                genres={allGenres}
+                selected={selectedGenres}
+                onToggle={toggleGenre}
+              />
+            ) : (
+              <p className="text-xs text-text-secondary">Loading genres…</p>
+            )}
+          </div>
+        </div>
 
         <div className="flex items-center gap-3">
           <button
