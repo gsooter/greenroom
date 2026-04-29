@@ -263,12 +263,12 @@ class SeatGeekPricingProvider(BasePricingProvider):
             A non-empty query string, or ``None`` when the event has
             neither artists nor a title to search on.
         """
-        artists = getattr(event, "artists", None) or []
+        artists: list[str] = getattr(event, "artists", None) or []
         if artists:
             headline = next((a for a in artists if a and a.strip()), None)
             if headline:
                 return headline.strip()
-        title = getattr(event, "title", None)
+        title: str | None = getattr(event, "title", None)
         if title and title.strip():
             return title.strip()
         return None

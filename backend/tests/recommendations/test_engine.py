@@ -212,7 +212,7 @@ def test_generate_caps_total_score_at_one(
         def score(self, _event: Any) -> dict[str, Any]:
             return {"score": 5.0}
 
-    monkeypatch_scorers = [
+    monkeypatch_scorers: list[Any] = [
         engine_module.ArtistMatchScorer(user),  # type: ignore[arg-type]
         InflatingScorer(),
     ]

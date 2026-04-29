@@ -50,7 +50,7 @@ class _NoopProvider(BasePricingProvider):
 
     name = "noop"
 
-    def fetch(self, event):  # type: ignore[override]
+    def fetch(self, event: object) -> PriceQuote | None:  # type: ignore[override]
         """Return no quote for any event.
 
         Args:
@@ -72,7 +72,7 @@ class _StaticProvider(BasePricingProvider):
 
     name = "static"
 
-    def fetch(self, event):  # type: ignore[override]
+    def fetch(self, event: object) -> PriceQuote | None:  # type: ignore[override]
         """Return a constant quote regardless of the event.
 
         Args:

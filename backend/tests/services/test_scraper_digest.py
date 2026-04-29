@@ -9,6 +9,7 @@ details — can be asserted directly without standing up a database.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -88,7 +89,8 @@ def _stub_fleet(
         return run
 
     def _consecutive(_session: object, slug: str, *, limit: int = 10) -> int:
-        return int(snapshots[slug].get("consecutive_failures", 0))
+        value: Any = snapshots[slug].get("consecutive_failures", 0)
+        return int(value)
 
     monkeypatch.setattr(digest_mod.runs_repo, "get_recent_runs", _recent)
     monkeypatch.setattr(digest_mod.runs_repo, "get_last_successful_run", _last_success)

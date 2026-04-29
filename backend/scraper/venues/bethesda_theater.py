@@ -35,7 +35,7 @@ from backend.scraper.base.scraper import BaseScraper
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from datetime import date
+    from datetime import date, datetime
 
 logger = get_logger(__name__)
 
@@ -239,7 +239,7 @@ class BethesdaTheaterScraper(BaseScraper):
             image_url=image_url,
         )
 
-    def _parse_date_text(self, text: str):
+    def _parse_date_text(self, text: str) -> datetime | None:
         """Parse a Bethesda date heading like ``SAT APRIL 25| 8:00PM``.
 
         Args:

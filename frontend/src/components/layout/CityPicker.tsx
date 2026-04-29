@@ -51,7 +51,7 @@ function groupCitiesByRegion(cities: City[]): RegionGroup[] {
       groups.delete(region);
     }
   }
-  for (const [region, members] of groups) {
+  for (const [region, members] of Array.from(groups.entries())) {
     ordered.push({
       region,
       label: REGION_LABELS[region] ?? region,

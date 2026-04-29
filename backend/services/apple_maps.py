@@ -185,7 +185,7 @@ def mint_mapkit_token(
     anchor = now or datetime.now(UTC)
     expires_at = int((anchor + ttl).timestamp())
     token = _sign_token(origin=origin, now=anchor, ttl=ttl)
-    payload = {"token": token, "expires_at": expires_at}
+    payload: dict[str, str | int] = {"token": token, "expires_at": expires_at}
     _write_cache(client, cache_key, payload)
     return payload
 

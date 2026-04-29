@@ -9,7 +9,7 @@ route touches :mod:`backend.data.repositories.onboarding` directly.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
 from backend.core.exceptions import ValidationError
 from backend.data.repositories import onboarding as onboarding_repo
@@ -65,9 +65,7 @@ def mark_step_complete(session: Session, user: User, step: str) -> UserOnboardin
     if step not in _STEP_VALUES:
         allowed = ", ".join(_STEP_VALUES)
         raise ValidationError(f"Unknown onboarding step '{step}'. Allowed: {allowed}.")
-    return onboarding_repo.mark_step_complete(
-        session, user.id, cast("OnboardingStep", step)
-    )
+    return onboarding_repo.mark_step_complete(session, user.id, step)
 
 
 def mark_skipped_entirely(session: Session, user: User) -> UserOnboardingState:

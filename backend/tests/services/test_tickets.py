@@ -580,8 +580,11 @@ def test_serialize_pricing_state_joins_snapshots_and_links(
     )
 
     assert payload["refreshed_at"] == refreshed.isoformat()
-    assert len(payload["sources"]) == 3
-    by_source = {row["source"]: row for row in payload["sources"]}
+    sources_obj = payload["sources"]
+    assert isinstance(sources_obj, list)
+    sources_list: list[dict[str, Any]] = sources_obj
+    assert len(sources_list) == 3
+    by_source = {row["source"]: row for row in sources_list}
 
     assert by_source["seatgeek"]["min_price"] == 40.0
     assert by_source["seatgeek"]["max_price"] == 80.0

@@ -325,9 +325,10 @@ def _parse_vote_value(raw: Any) -> int:
     """
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise ValidationError("value must be -1, 0, or +1.")
-    if raw not in (-1, 0, 1):
+    value: int = raw
+    if value not in (-1, 0, 1):
         raise ValidationError("value must be -1, 0, or +1.")
-    return raw
+    return value
 
 
 def _sanitized_session_id(raw: Any) -> str | None:

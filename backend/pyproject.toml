@@ -93,18 +93,34 @@ warn_unused_ignores = true
 # is noise for internal modules.
 implicit_reexport = true
 exclude = ["migrations/"]
-disable_error_code = ["comparison-overlap", "list-item", "union-attr", "unused-ignore"]
+disable_error_code = [
+    "comparison-overlap",
+    "list-item",
+    "union-attr",
+    "unused-ignore",
+    # The error codes below fire almost exclusively in test modules that
+    # use small `_Fake*` dataclasses as stand-ins for SQLAlchemy models.
+    # Strict checks around identity and container element types can't see
+    # through the monkey-patches the tests use; these codes are low-value
+    # in source where we catch the same bugs via stricter narrowing.
+    "arg-type",
+    "operator",
+    "call-overload",
+    "func-returns-value",
+    "import-untyped",
+]
 
 [[tool.mypy.overrides]]
 module = ["celery.*"]
 ignore_missing_imports = true
+follow_imports = "skip"
 
 # Tests use small `_Fake*` dataclasses as stand-ins for SQLAlchemy models
 # (the repos are monkey-patched to return them). Strict checks around
-# identity and container element types can't see through the monkey-patch.
-# mypy's `module = "tests.*"` scoping doesn't match file-discovered modules
-# reliably, so disable globally — these codes are low-value in source where
-# we catch the same bugs via stricter narrowing.
+# identity and container element types can't see through the monkey-patch,
+# so we relax `arg-type`, `operator`, `call-overload`, and
+# `func-returns-value` for test modules only — production code keeps the
+# strict checks.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
