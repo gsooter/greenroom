@@ -7,7 +7,8 @@ on teardown.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -125,3 +126,96 @@ def test_search_artists_honors_limit(session: Session) -> None:
 
     results = artists_repo.search_artists(session, query="match", limit=3)
     assert len(results) == 3
+
+
+# ---------------------------------------------------------------------------
+# MusicBrainz enrichment helpers
+# ---------------------------------------------------------------------------
+
+
+def test_list_artists_for_musicbrainz_enrichment_filters_to_unenriched(
+    session: Session,
+) -> None:
+    fresh = Artist(
+        name="Fresh",
+        normalized_name="fresh",
+        genres=[],
+        musicbrainz_enriched_at=datetime.now(UTC),
+    )
+    pending_one = Artist(name="A", normalized_name="a", genres=[])
+    pending_two = Artist(name="B", normalized_name="b", genres=[])
+    session.add_all([fresh, pending_one, pending_two])
+    session.flush()
+
+    results = artists_repo.list_artists_for_musicbrainz_enrichment(session, limit=10)
+    names = [a.normalized_name for a in results]
+    assert "fresh" not in names
+    assert names == ["a", "b"]
+
+
+def test_list_artists_for_musicbrainz_enrichment_includes_stale_when_threshold_set(
+    session: Session,
+) -> None:
+    """A row enriched longer ago than ``stale_after`` is eligible."""
+    stale = Artist(
+        name="Stale",
+        normalized_name="stale",
+        genres=[],
+        musicbrainz_enriched_at=datetime.now(UTC) - timedelta(days=60),
+    )
+    fresh = Artist(
+        name="Fresh",
+        normalized_name="fresh",
+        genres=[],
+        musicbrainz_enriched_at=datetime.now(UTC),
+    )
+    session.add_all([stale, fresh])
+    session.flush()
+
+    results = artists_repo.list_artists_for_musicbrainz_enrichment(
+        session, limit=10, stale_after=timedelta(days=30)
+    )
+    names = [a.normalized_name for a in results]
+    assert "stale" in names
+    assert "fresh" not in names
+
+
+def test_mark_artist_musicbrainz_enriched_stamps_all_fields(
+    session: Session,
+) -> None:
+    artist = artists_repo.upsert_artist_by_name(session, "boygenius")
+    genres = [{"name": "indie rock", "count": 12}]
+    tags = [{"name": "supergroup", "count": 4}]
+    updated = artists_repo.mark_artist_musicbrainz_enriched(
+        session,
+        artist,
+        musicbrainz_id="9c0bd8b6-1c1d-49ec-9cb3-0fd9f9d6b3e3",
+        genres=genres,
+        tags=tags,
+        confidence=Decimal("0.95"),
+    )
+    assert updated.musicbrainz_id == "9c0bd8b6-1c1d-49ec-9cb3-0fd9f9d6b3e3"
+    assert updated.musicbrainz_genres == genres
+    assert updated.musicbrainz_tags == tags
+    assert updated.musicbrainz_match_confidence == Decimal("0.95")
+    assert updated.musicbrainz_enriched_at is not None
+
+
+def test_mark_artist_musicbrainz_enriched_records_null_match(
+    session: Session,
+) -> None:
+    """No-match outcomes still stamp the timestamp so we don't re-search."""
+    artist = artists_repo.upsert_artist_by_name(session, "Very Niche Act")
+    updated = artists_repo.mark_artist_musicbrainz_enriched(
+        session,
+        artist,
+        musicbrainz_id=None,
+        genres=None,
+        tags=None,
+        confidence=None,
+    )
+    assert updated.musicbrainz_id is None
+    assert updated.musicbrainz_genres is None
+    assert updated.musicbrainz_tags is None
+    assert updated.musicbrainz_match_confidence is None
+    assert updated.musicbrainz_enriched_at is not None
