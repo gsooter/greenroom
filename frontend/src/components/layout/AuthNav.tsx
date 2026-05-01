@@ -5,6 +5,10 @@
  * SSR while the sign-in / profile controls react to the client-side
  * AuthContext. While the context is hydrating, nothing is rendered to
  * avoid a visible "Sign in" flash for already-authenticated users.
+ *
+ * Mirrors the mobile bottom nav: instead of separate links for For You,
+ * Saved, and Settings, signed-in visitors get a single "Me" entry point
+ * that lands on the consolidated /me dashboard, plus a Sign out button.
  */
 
 "use client";
@@ -42,19 +46,7 @@ export default function AuthNav(): JSX.Element | null {
   return (
     <div className="hidden items-center gap-2 text-sm sm:flex">
       <Link
-        href="/for-you"
-        className="rounded-md px-3 py-1.5 font-medium text-muted hover:bg-surface hover:text-foreground"
-      >
-        For you
-      </Link>
-      <Link
-        href="/saved"
-        className="rounded-md px-3 py-1.5 font-medium text-muted hover:bg-surface hover:text-foreground"
-      >
-        Saved
-      </Link>
-      <Link
-        href="/settings"
+        href="/me"
         className="max-w-[12rem] truncate rounded-md border border-border px-3 py-1.5 font-medium text-foreground hover:border-accent hover:text-accent"
         title={user.email}
       >
