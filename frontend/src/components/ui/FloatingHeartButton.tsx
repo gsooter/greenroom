@@ -1,10 +1,17 @@
 /**
  * Frosted-glass heart button that floats over a card image.
  *
- * Pure presentational primitive: it owns the markup and the heart
- * glyph, but knows nothing about auth, persistence, or which thing is
- * being saved. Callers (e.g. SaveEventButton) wire `saved`, `onClick`,
- * and the right `aria-label` for their domain.
+ * Pure presentational primitive: it owns the markup and toggles the
+ * `data-saved` attribute that the `.floating-heart-btn` rule in
+ * globals.css uses to swap fill colors. It knows nothing about auth,
+ * persistence, or which thing is being saved — callers (e.g.
+ * SaveEventButton) wire `saved`, `onClick`, and the right
+ * `aria-label` for their domain.
+ *
+ * Visual stack lives in globals.css because hover and active
+ * pseudo-classes can't be expressed with inline styles. The button is
+ * 44×44 (Apple HIG tap target); the glass tint, blur, border, and
+ * lift-shadow all flow from the class.
  */
 
 "use client";
@@ -23,8 +30,9 @@ interface FloatingHeartButtonProps {
 }
 
 /**
- * Renders the floating heart button. Caller controls the saved state
- * and click handler; this component owns the visual chrome.
+ * Renders the floating heart button. All visual layering — tint, blur,
+ * border, shadow, hover, active, saved-state recolor — comes from the
+ * `.floating-heart-btn` class in globals.css.
  */
 export default function FloatingHeartButton({
   saved,
@@ -40,12 +48,7 @@ export default function FloatingHeartButton({
       aria-label={ariaLabel}
       aria-pressed={saved}
       data-saved={saved ? "true" : "false"}
-      className={
-        "inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-sm ring-1 ring-black/5 backdrop-blur transition disabled:opacity-50 " +
-        (saved
-          ? "border-blush-accent bg-blush-soft text-blush-accent"
-          : "border-border bg-bg-white/90 text-text-primary hover:border-blush-accent hover:text-blush-accent")
-      }
+      className="floating-heart-btn"
     >
       <HeartIcon filled={saved} />
     </button>

@@ -16,6 +16,13 @@
   --color-bg-surface: #efe6e2;     /* Warm Linen — card surfaces, inputs */
   --color-bg-white: #ffffff;       /* Pure white — raised cards */
 
+  /* RGB triplet companions — for rgba() tints in frosted-glass surfaces
+     (sticky nav, floating heart button, etc.). Keep these in lockstep
+     with the hex tokens directly above. */
+  --color-bg-base-rgb: 247, 240, 238;
+  --color-blush-soft-rgb: 245, 213, 208;
+  --color-text-secondary-rgb: 122, 106, 101;
+
   /* Text */
   --color-text-primary: #1a2820;   /* Deep Canopy — headings, body */
   --color-text-secondary: #7a6a65; /* Dusty Rose — metadata, captions */
@@ -66,6 +73,61 @@ body {
     Inter,
     system-ui,
     sans-serif;
+}
+
+/*
+ * Floating heart button — frosted glass over card images.
+ *
+ * Layered for legibility against any background: tinted page-bg fill,
+ * backdrop blur + saturation, low-opacity border for a defined edge,
+ * inset highlight + drop shadow for lift, drop-shadow filter on the
+ * icon itself so its outline never dissolves into a same-tone image.
+ *
+ * The visible glass is 36px; the button itself is 44px so the tap
+ * target meets Apple HIG without bloating the visual footprint.
+ */
+.floating-heart-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(var(--color-text-secondary-rgb), 0.16);
+  background-color: rgba(var(--color-bg-base-rgb), 0.72);
+  color: var(--color-text-primary);
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 2px 8px rgba(26, 40, 32, 0.08);
+  transition: all 150ms ease;
+}
+
+.floating-heart-btn:hover:not(:disabled) {
+  background-color: rgba(var(--color-bg-base-rgb), 0.85);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 4px 12px rgba(26, 40, 32, 0.12);
+  transform: translateY(-1px);
+}
+
+.floating-heart-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.floating-heart-btn[data-saved="true"] {
+  background-color: rgba(var(--color-blush-soft-rgb), 0.78);
+  color: var(--color-blush-accent);
+}
+
+.floating-heart-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.floating-heart-btn svg {
+  filter: drop-shadow(0 0 1px rgba(var(--color-bg-base-rgb), 0.5));
 }
 
 /* Pulse animation for map pins on the Tonight map. Kept in globals so
