@@ -16,6 +16,13 @@
   --color-bg-surface: #efe6e2;     /* Warm Linen — card surfaces, inputs */
   --color-bg-white: #ffffff;       /* Pure white — raised cards */
 
+  /* RGB triplet companions — for rgba() tints in frosted-glass surfaces
+     (sticky nav, floating heart button, etc.). Keep these in lockstep
+     with the hex tokens directly above. */
+  --color-bg-base-rgb: 247, 240, 238;
+  --color-blush-soft-rgb: 245, 213, 208;
+  --color-text-secondary-rgb: 122, 106, 101;
+
   /* Text */
   --color-text-primary: #1a2820;   /* Deep Canopy — headings, body */
   --color-text-secondary: #7a6a65; /* Dusty Rose — metadata, captions */
@@ -66,6 +73,116 @@ body {
     Inter,
     system-ui,
     sans-serif;
+}
+
+/*
+ * Floating heart button — frosted glass over card images.
+ *
+ * Layered for legibility against any background: tinted page-bg fill,
+ * backdrop blur + saturation, low-opacity border for a defined edge,
+ * inset highlight + drop shadow for lift, drop-shadow filter on the
+ * icon itself so its outline never dissolves into a same-tone image.
+ *
+ * The visible glass is 36px; the button itself is 44px so the tap
+ * target meets Apple HIG without bloating the visual footprint.
+ */
+.floating-heart-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(var(--color-text-secondary-rgb), 0.16);
+  background-color: rgba(var(--color-bg-base-rgb), 0.72);
+  color: var(--color-text-primary);
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 2px 8px rgba(26, 40, 32, 0.08);
+  transition: all 150ms ease;
+}
+
+.floating-heart-btn:hover:not(:disabled) {
+  background-color: rgba(var(--color-bg-base-rgb), 0.85);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 4px 12px rgba(26, 40, 32, 0.12);
+  transform: translateY(-1px);
+}
+
+.floating-heart-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.floating-heart-btn[data-saved="true"] {
+  background-color: rgba(var(--color-blush-soft-rgb), 0.78);
+  color: var(--color-blush-accent);
+}
+
+.floating-heart-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.floating-heart-btn svg {
+  filter: drop-shadow(0 0 1px rgba(var(--color-bg-base-rgb), 0.5));
+}
+
+/*
+ * Sticky / fixed navigation glass.
+ *
+ * Five layers stacked to keep the nav legible over any underlying
+ * content while preserving the frosted-glass aesthetic:
+ *  1. 24px blur + 1.8 saturation — strong enough to obscure dark
+ *     content beneath; saturation pulls in color so the surface feels
+ *     alive instead of flat gray.
+ *  2. Petal Mist tint at 72% opacity — a real fill (not transparency)
+ *     so dark posters get washed in warm light, not bled through.
+ *  3. 1px low-opacity edge in the secondary text color so the nav has
+ *     a defined boundary against the page.
+ *  4. Inset highlight + soft drop shadow — sells the "floating glass
+ *     above the page" feeling.
+ *  5. A tiny vertical lensing gradient — barely perceptible, but it's
+ *     what gives the surface its liquid-glass quality.
+ *
+ * `text-shadow` on the root paints a near-invisible blush halo around
+ * any nested text, preserving readability when very dark images
+ * scroll behind the glass.
+ *
+ * Variant `.app-glass-nav--bottom` flips the inset highlight, drop
+ * shadow, border, and lensing gradient so the same effect reads
+ * correctly on a fixed-bottom mobile nav (light catches the top edge
+ * of any glass surface, not the bottom).
+ */
+.app-glass-nav {
+  background-color: rgba(var(--color-bg-base-rgb), 0.72);
+  background-image: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.06),
+    rgba(0, 0, 0, 0.02)
+  );
+  border-bottom: 1px solid rgba(var(--color-text-secondary-rgb), 0.12);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.4) inset,
+    0 4px 16px rgba(26, 40, 32, 0.04);
+  backdrop-filter: blur(24px) saturate(1.8);
+  -webkit-backdrop-filter: blur(24px) saturate(1.8);
+  text-shadow: 0 0 1px rgba(var(--color-bg-base-rgb), 0.6);
+}
+
+.app-glass-nav--bottom {
+  background-image: linear-gradient(
+    to top,
+    rgba(255, 255, 255, 0.06),
+    rgba(0, 0, 0, 0.02)
+  );
+  border-bottom: none;
+  border-top: 1px solid rgba(var(--color-text-secondary-rgb), 0.12);
+  box-shadow:
+    0 -1px 0 rgba(255, 255, 255, 0.4) inset,
+    0 -4px 16px rgba(26, 40, 32, 0.04);
 }
 
 /* Pulse animation for map pins on the Tonight map. Kept in globals so

@@ -105,14 +105,22 @@ export default async function HomePage() {
       </section>
 
       <section className="flex flex-col gap-4 pb-10">
-        <div className="flex items-end justify-between">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <h2 className="text-xl font-semibold">Upcoming across the DMV</h2>
-          <Link
-            href="/events"
-            className="text-sm font-medium text-accent hover:underline"
-          >
-            See all →
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/venues"
+              className="text-sm font-medium text-text-secondary hover:text-foreground hover:underline"
+            >
+              Browse by venue →
+            </Link>
+            <Link
+              href="/events"
+              className="text-sm font-medium text-accent hover:underline"
+            >
+              See all →
+            </Link>
+          </div>
         </div>
 
         {upcoming.length === 0 ? (

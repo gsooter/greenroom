@@ -217,6 +217,13 @@ in component files — always use the token name.
   /* Navy — accent pop, used sparingly */
   --color-navy-dark:      #1E3A5A;  /* Midnight Ink — date highlights */
   --color-navy-soft:      #C8D0DC;  /* Haze Slate — secondary chips */
+
+  /* RGB triplet companions — for rgba() tints in frosted-glass surfaces
+     (sticky nav, floating heart button, etc.). Keep these in lockstep
+     with the hex tokens above. */
+  --color-bg-base-rgb:        247, 240, 238;
+  --color-blush-soft-rgb:     245, 213, 208;
+  --color-text-secondary-rgb: 122, 106, 101;
 }
 ```
 

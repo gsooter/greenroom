@@ -87,7 +87,7 @@ describe("AuthNav", () => {
     expect(link.getAttribute("href")).toBe("/login");
   });
 
-  it("renders the authenticated cluster with the user's display name", () => {
+  it("renders the Me entry point pointing at /me and a Sign out button", () => {
     mockAuth = {
       user: userFixture({ display_name: "Garrett" }),
       isAuthenticated: true,
@@ -95,10 +95,13 @@ describe("AuthNav", () => {
       token: "tok",
     };
     render(<AuthNav />);
-    expect(screen.getByRole("link", { name: "For you" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Saved" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Garrett" })).toBeInTheDocument();
+    const meLink = screen.getByRole("link", { name: "Garrett" });
+    expect(meLink.getAttribute("href")).toBe("/me");
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    // The desktop authenticated cluster mirrors the new mobile nav by
+    // collapsing For You and Saved into the /me dashboard.
+    expect(screen.queryByRole("link", { name: "For you" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Saved" })).toBeNull();
   });
 
   it("falls back to the email when display_name is blank", () => {
