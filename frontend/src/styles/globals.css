@@ -130,6 +130,61 @@ body {
   filter: drop-shadow(0 0 1px rgba(var(--color-bg-base-rgb), 0.5));
 }
 
+/*
+ * Sticky / fixed navigation glass.
+ *
+ * Five layers stacked to keep the nav legible over any underlying
+ * content while preserving the frosted-glass aesthetic:
+ *  1. 24px blur + 1.8 saturation — strong enough to obscure dark
+ *     content beneath; saturation pulls in color so the surface feels
+ *     alive instead of flat gray.
+ *  2. Petal Mist tint at 72% opacity — a real fill (not transparency)
+ *     so dark posters get washed in warm light, not bled through.
+ *  3. 1px low-opacity edge in the secondary text color so the nav has
+ *     a defined boundary against the page.
+ *  4. Inset highlight + soft drop shadow — sells the "floating glass
+ *     above the page" feeling.
+ *  5. A tiny vertical lensing gradient — barely perceptible, but it's
+ *     what gives the surface its liquid-glass quality.
+ *
+ * `text-shadow` on the root paints a near-invisible blush halo around
+ * any nested text, preserving readability when very dark images
+ * scroll behind the glass.
+ *
+ * Variant `.app-glass-nav--bottom` flips the inset highlight, drop
+ * shadow, border, and lensing gradient so the same effect reads
+ * correctly on a fixed-bottom mobile nav (light catches the top edge
+ * of any glass surface, not the bottom).
+ */
+.app-glass-nav {
+  background-color: rgba(var(--color-bg-base-rgb), 0.72);
+  background-image: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.06),
+    rgba(0, 0, 0, 0.02)
+  );
+  border-bottom: 1px solid rgba(var(--color-text-secondary-rgb), 0.12);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.4) inset,
+    0 4px 16px rgba(26, 40, 32, 0.04);
+  backdrop-filter: blur(24px) saturate(1.8);
+  -webkit-backdrop-filter: blur(24px) saturate(1.8);
+  text-shadow: 0 0 1px rgba(var(--color-bg-base-rgb), 0.6);
+}
+
+.app-glass-nav--bottom {
+  background-image: linear-gradient(
+    to top,
+    rgba(255, 255, 255, 0.06),
+    rgba(0, 0, 0, 0.02)
+  );
+  border-bottom: none;
+  border-top: 1px solid rgba(var(--color-text-secondary-rgb), 0.12);
+  box-shadow:
+    0 -1px 0 rgba(255, 255, 255, 0.4) inset,
+    0 -4px 16px rgba(26, 40, 32, 0.04);
+}
+
 /* Pulse animation for map pins on the Tonight map. Kept in globals so
    the raw MapKit-rendered <span> elements (which live outside React)
    can still reference it. */

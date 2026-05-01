@@ -143,6 +143,17 @@ describe("MobileBottomNav", () => {
     expect(mockReplace).toHaveBeenCalledWith("/");
   });
 
+  it("applies the bottom-variant glass class so the layered chrome reaches it", () => {
+    // The same .app-glass-nav rule that styles TopNav, with
+    // .app-glass-nav--bottom flipping the highlight, shadow, border,
+    // and lensing gradient so light catches the top edge of a fixed-
+    // bottom nav.
+    const { container } = render(<MobileBottomNav />);
+    const nav = container.querySelector("nav");
+    expect(nav?.className).toContain("app-glass-nav");
+    expect(nav?.className).toContain("app-glass-nav--bottom");
+  });
+
   it("renders no auth-specific tab while the auth state is still hydrating", () => {
     mockAuth = {
       user: null,

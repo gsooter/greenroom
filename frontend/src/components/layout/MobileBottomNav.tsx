@@ -80,7 +80,7 @@ export default function MobileBottomNav(): JSX.Element {
   const gridClass = showAuthed ? "grid-cols-7" : "grid-cols-6";
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 backdrop-blur sm:hidden">
+    <nav className="app-glass-nav app-glass-nav--bottom fixed inset-x-0 bottom-0 z-30 sm:hidden">
       {isMeOpen && showAuthed ? (
         <div
           ref={menuRef}
