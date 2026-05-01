@@ -9,16 +9,17 @@ to keep Spotify-derived genres fresh.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from backend.core.text import normalize_artist_name
 from backend.data.models.artists import Artist
 
 if TYPE_CHECKING:
     import uuid
+    from decimal import Decimal
 
     from sqlalchemy.orm import Session
 
@@ -154,6 +155,83 @@ def search_artists(session: Session, *, query: str, limit: int = 10) -> list[Art
         .limit(limit)
     )
     return list(session.execute(stmt).scalars().all())
+
+
+def list_artists_for_musicbrainz_enrichment(
+    session: Session,
+    *,
+    limit: int,
+    stale_after: timedelta | None = None,
+) -> list[Artist]:
+    """Return artists that need a MusicBrainz enrichment pass.
+
+    Selects artists whose ``musicbrainz_enriched_at`` is NULL — the
+    primary backfill case — or whose timestamp is older than
+    ``stale_after`` if a refresh interval is provided. Ordered by
+    creation time so older artists drain first.
+
+    Args:
+        session: Active SQLAlchemy session.
+        limit: Maximum number of artists to return.
+        stale_after: Optional age threshold; rows enriched longer ago
+            than this are considered for re-enrichment. ``None`` (the
+            default) selects only rows that have never been enriched.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows due for enrichment.
+    """
+    if stale_after is None:
+        condition = Artist.musicbrainz_enriched_at.is_(None)
+    else:
+        cutoff = datetime.now(UTC) - stale_after
+        condition = or_(
+            Artist.musicbrainz_enriched_at.is_(None),
+            Artist.musicbrainz_enriched_at < cutoff,
+        )
+    stmt = (
+        select(Artist).where(condition).order_by(Artist.created_at.asc()).limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def mark_artist_musicbrainz_enriched(
+    session: Session,
+    artist: Artist,
+    *,
+    musicbrainz_id: str | None,
+    genres: list[dict[str, Any]] | None,
+    tags: list[dict[str, Any]] | None,
+    confidence: Decimal | None,
+) -> Artist:
+    """Persist the result of a MusicBrainz enrichment attempt.
+
+    Always stamps ``musicbrainz_enriched_at`` so the nightly task does
+    not re-check the same row on its next pass; callers indicate "no
+    match found" by passing ``musicbrainz_id=None``. The genres and
+    tags blobs are stored verbatim (with vote counts and original
+    casing) because normalization is a separate future sprint.
+
+    Args:
+        session: Active SQLAlchemy session.
+        artist: The :class:`Artist` row being updated.
+        musicbrainz_id: MBID of the matched MusicBrainz artist, or None
+            when no candidate cleared the confidence threshold.
+        genres: Raw ``genres`` array from the MusicBrainz API. ``None``
+            or ``[]`` when there was no match.
+        tags: Raw ``tags`` array from the MusicBrainz API. ``None`` or
+            ``[]`` when there was no match.
+        confidence: Match confidence in 0.00-1.00, or None for no match.
+
+    Returns:
+        The updated :class:`Artist` row (same instance, for convenience).
+    """
+    artist.musicbrainz_id = musicbrainz_id
+    artist.musicbrainz_genres = genres
+    artist.musicbrainz_tags = tags
+    artist.musicbrainz_match_confidence = confidence
+    artist.musicbrainz_enriched_at = datetime.now(UTC)
+    session.flush()
+    return artist
 
 
 def mark_artist_enriched(
