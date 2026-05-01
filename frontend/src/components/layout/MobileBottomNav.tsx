@@ -1,166 +1,149 @@
 /**
  * Mobile bottom navigation bar — client component.
  *
- * Rendered only below the `sm` breakpoint. Highlights the active route
- * by checking the current pathname so the user always knows which
- * section of the app they're in.
+ * Rendered only below the ``sm`` breakpoint as an iOS-native four-tab
+ * bar. Authenticated visitors see [Home][Events][Map][Me]; anonymous
+ * visitors see [Home][Events][Map] (the auth-specific tab is dropped
+ * rather than swapped, so the bar stays uncluttered for guests).
  *
- * The desktop TopNav hosts Saved, Settings, and Sign out inside
- * ``AuthNav`` — every one of those is gated behind ``sm:flex``, which
- * means on mobile they're unreachable without typing the URL. The
- * "Me" tab below exposes them through a small menu anchored above the
- * nav so a signed-in mobile user can reach their account in one tap.
+ * Two routing notes shape the structure:
+ *
+ *   - Map is the unified tab — ``/map`` hosts both the tonight-on-map
+ *     experience and the geolocated Near Me view (``?view=near-me``).
+ *   - Me is the consolidated authenticated dashboard at ``/me``, which
+ *     bundles For You, Saved, Following, Settings, and Sign out.
+ *
+ * The nav hides itself entirely on the ``/welcome`` onboarding flow so
+ * the four-step sheet can own the full screen.
  */
 
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth";
 
 interface NavItem {
   href: string;
   label: string;
+  icon: ReactNode;
+  /** Routes whose pathname should also light up this tab. */
+  matchPaths?: readonly string[];
 }
 
+/**
+ * SVG sprite — small inline glyphs sized 24×24 to match Apple HIG mobile
+ * tab bars. Inline rather than a third-party icon library because the
+ * project hasn't adopted one and adding a dependency for four icons
+ * isn't worth it.
+ */
+const ICONS = {
+  home: (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 11.5 12 4l9 7.5" />
+      <path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9" />
+    </svg>
+  ),
+  events: (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3.5" y="5" width="17" height="15" rx="2" />
+      <path d="M3.5 9h17" />
+      <path d="M8 3v4" />
+      <path d="M16 3v4" />
+    </svg>
+  ),
+  map: (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 4 3.5 6v14L9 18l6 2 5.5-2V4L15 6Z" />
+      <path d="M9 4v14" />
+      <path d="M15 6v14" />
+    </svg>
+  ),
+  me: (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="9" r="3.5" />
+      <path d="M5 20c1.5-3.5 4-5 7-5s5.5 1.5 7 5" />
+    </svg>
+  ),
+} as const;
+
 const BASE_ITEMS: NavItem[] = [
-  { href: "/", label: "Home" },
-  { href: "/events", label: "Events" },
-  { href: "/map", label: "Tonight" },
-  { href: "/near-me", label: "Near Me" },
-  { href: "/venues", label: "Venues" },
+  { href: "/", label: "Home", icon: ICONS.home },
+  { href: "/events", label: "Events", icon: ICONS.events },
+  {
+    href: "/map",
+    label: "Map",
+    icon: ICONS.map,
+    matchPaths: ["/map", "/near-me"],
+  },
 ];
 
-const ME_ROUTES: readonly string[] = ["/saved", "/settings"];
+const ME_ITEM: NavItem = { href: "/me", label: "Me", icon: ICONS.me };
 
-export default function MobileBottomNav(): JSX.Element {
+const HIDDEN_PATH_PREFIXES: readonly string[] = ["/welcome"];
+
+export default function MobileBottomNav(): JSX.Element | null {
   const pathname = usePathname();
-  const router = useRouter();
-  const { isAuthenticated, isLoading, logout } = useAuth();
-  const [isMeOpen, setIsMeOpen] = useState<boolean>(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  const { isAuthenticated, isLoading } = useAuth();
 
-  const closeMenu = useCallback((): void => {
-    setIsMeOpen(false);
-  }, []);
-
-  useEffect(() => {
-    closeMenu();
-  }, [pathname, closeMenu]);
-
-  useEffect(() => {
-    if (!isMeOpen) return;
-    const handleClick = (event: MouseEvent): void => {
-      if (!menuRef.current) return;
-      if (menuRef.current.contains(event.target as Node)) return;
-      closeMenu();
-    };
-    const handleKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") closeMenu();
-    };
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [isMeOpen, closeMenu]);
-
-  const handleSignOut = useCallback((): void => {
-    closeMenu();
-    logout();
-    router.replace("/");
-  }, [closeMenu, logout, router]);
+  if (HIDDEN_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return null;
+  }
 
   const showAuthed = !isLoading && isAuthenticated;
-  const showGuest = !isLoading && !isAuthenticated;
-  const meActive = ME_ROUTES.some((route) => pathname.startsWith(route));
-  const gridClass = showAuthed ? "grid-cols-7" : "grid-cols-6";
+  const items: NavItem[] = showAuthed ? [...BASE_ITEMS, ME_ITEM] : BASE_ITEMS;
+  const gridClass = items.length === 4 ? "grid-cols-4" : "grid-cols-3";
 
   return (
     <nav className="app-glass-nav app-glass-nav--bottom fixed inset-x-0 bottom-0 z-30 sm:hidden">
-      {isMeOpen && showAuthed ? (
-        <div
-          ref={menuRef}
-          role="menu"
-          aria-label="Account menu"
-          className="absolute bottom-full right-2 mb-2 w-52 overflow-hidden rounded-lg border border-border bg-bg-white shadow-lg"
-        >
-          <Link
-            href="/saved"
-            role="menuitem"
-            className="block px-4 py-3 text-sm font-medium text-text-primary hover:bg-bg-surface"
-          >
-            Saved
-          </Link>
-          <Link
-            href="/settings"
-            role="menuitem"
-            className="block border-t border-border px-4 py-3 text-sm font-medium text-text-primary hover:bg-bg-surface"
-          >
-            Settings
-          </Link>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={handleSignOut}
-            className="block w-full border-t border-border px-4 py-3 text-left text-sm font-medium text-blush-accent hover:bg-blush-soft/60"
-          >
-            Sign out
-          </button>
-        </div>
-      ) : null}
-
       <ul className={`mx-auto grid max-w-6xl ${gridClass}`}>
-        {BASE_ITEMS.map((item) => (
+        {items.map((item) => (
           <li key={item.href}>
-            <NavTab
-              item={item}
-              active={
-                item.href === "/"
-                  ? pathname === "/"
-                  : pathname.startsWith(item.href)
-              }
-            />
+            <NavTab item={item} active={isActive(pathname, item)} />
           </li>
         ))}
-        {showAuthed ? (
-          <>
-            <li>
-              <NavTab
-                item={{ href: "/for-you", label: "For you" }}
-                active={pathname.startsWith("/for-you")}
-              />
-            </li>
-            <li>
-              <button
-                type="button"
-                onClick={() => setIsMeOpen((open) => !open)}
-                aria-haspopup="menu"
-                aria-expanded={isMeOpen}
-                aria-label="Account menu"
-                className={
-                  "flex w-full items-center justify-center px-2 py-3 text-xs font-medium " +
-                  (meActive || isMeOpen
-                    ? "text-accent"
-                    : "text-text-primary/75 hover:text-foreground")
-                }
-              >
-                Me
-              </button>
-            </li>
-          </>
-        ) : null}
-        {showGuest ? (
-          <li>
-            <NavTab
-              item={{ href: "/login", label: "Sign in" }}
-              active={pathname.startsWith("/login")}
-            />
-          </li>
-        ) : null}
       </ul>
     </nav>
   );
@@ -172,22 +155,49 @@ interface NavTabProps {
 }
 
 /**
- * Renders a single mobile nav tab as a Next.js Link.
+ * Renders a single mobile nav tab with stacked icon and label.
  *
- * @param item - The nav destination (href + label).
- * @param active - Whether the current pathname matches this tab.
- * @returns A styled link with active-state coloring.
+ * Args:
+ *     item: The nav destination (href, label, icon).
+ *     active: Whether the current pathname matches this tab.
+ *
+ * Returns:
+ *     A styled link with an icon glyph above the label and an active-
+ *     state color treatment.
  */
 function NavTab({ item, active }: NavTabProps): JSX.Element {
   return (
     <Link
       href={item.href}
+      aria-current={active ? "page" : undefined}
       className={
-        "flex items-center justify-center px-2 py-3 text-xs font-medium " +
-        (active ? "text-accent" : "text-text-primary/75 hover:text-foreground")
+        "flex flex-col items-center justify-center gap-0.5 px-2 py-2 text-[11px] font-medium " +
+        (active
+          ? "text-accent"
+          : "text-text-primary/75 hover:text-foreground")
       }
     >
-      {item.label}
+      <span aria-hidden="true">{item.icon}</span>
+      <span>{item.label}</span>
     </Link>
+  );
+}
+
+/**
+ * Decides whether a tab should render in its active state for the
+ * supplied pathname.
+ *
+ * Args:
+ *     pathname: The current route path.
+ *     item: The nav item being checked.
+ *
+ * Returns:
+ *     ``true`` if the path matches the tab's href (or any of its
+ *     declared ``matchPaths``).
+ */
+function isActive(pathname: string, item: NavItem): boolean {
+  const candidates = item.matchPaths ?? [item.href];
+  return candidates.some((candidate) =>
+    candidate === "/" ? pathname === "/" : pathname.startsWith(candidate),
   );
 }
