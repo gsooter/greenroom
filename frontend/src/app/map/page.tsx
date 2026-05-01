@@ -38,7 +38,7 @@ const DMV_BBOX = {
 };
 
 interface MapPageProps {
-  searchParams?: { view?: string };
+  searchParams: { view?: string };
 }
 
 /**
@@ -55,9 +55,7 @@ function resolveView(raw: string | undefined): MapView {
   return raw === "near-me" ? "near-me" : "tonight";
 }
 
-export function generateMetadata({
-  searchParams,
-}: MapPageProps = {}): Metadata {
+export function generateMetadata({ searchParams }: MapPageProps): Metadata {
   const view = resolveView(searchParams?.view);
   if (view === "near-me") {
     return buildPageMetadata({
@@ -102,7 +100,7 @@ async function loadRecommendations(): Promise<MapRecommendation[]> {
 export default async function MapPage({
   searchParams,
 }: MapPageProps): Promise<JSX.Element> {
-  const view = resolveView(searchParams?.view);
+  const view = resolveView(searchParams.view);
 
   if (view === "near-me") {
     return (
