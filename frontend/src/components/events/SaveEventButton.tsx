@@ -8,14 +8,16 @@
  * and lets the user keep browsing.
  *
  * Two variants:
- *  - "icon"    — compact circular button designed to overlay EventCard
- *  - "pill"    — full-width pill for the event detail page
+ *  - "icon"    — circular floating glass button rendered via the shared
+ *                `FloatingHeartButton` primitive. Used over card images.
+ *  - "pill"    — full-width pill for the event detail page CTA.
  */
 
 "use client";
 
 import { useCallback, type MouseEvent } from "react";
 
+import FloatingHeartButton from "@/components/ui/FloatingHeartButton";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/lib/auth";
 import { useSavedEvents } from "@/lib/saved-events-context";
@@ -65,32 +67,28 @@ export default function SaveEventButton({
             : "border-border bg-bg-surface text-text-primary hover:border-blush-accent hover:text-blush-accent")
         }
       >
-        <HeartIcon filled={saved} />
+        <PillHeartIcon filled={saved} />
         {saved ? "Saved" : "Save show"}
       </button>
     );
   }
 
   return (
-    <button
-      type="button"
+    <FloatingHeartButton
+      saved={saved}
       onClick={handleClick}
+      ariaLabel={label}
       disabled={authLoading}
-      aria-label={label}
-      aria-pressed={saved}
-      className={
-        "inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-sm ring-1 ring-black/5 backdrop-blur transition disabled:opacity-50 " +
-        (saved
-          ? "border-blush-accent bg-blush-soft text-blush-accent"
-          : "border-border bg-bg-white/90 text-text-primary hover:border-blush-accent hover:text-blush-accent")
-      }
-    >
-      <HeartIcon filled={saved} />
-    </button>
+    />
   );
 }
 
-function HeartIcon({ filled }: { filled: boolean }): JSX.Element {
+/**
+ * Heart glyph for the inline pill variant. Kept local because the pill
+ * variant doesn't need the `FloatingHeartButton` styling shell — only
+ * a stroke/fill icon next to text.
+ */
+function PillHeartIcon({ filled }: { filled: boolean }): JSX.Element {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
