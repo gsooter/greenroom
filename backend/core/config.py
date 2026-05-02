@@ -35,6 +35,10 @@ class Settings(BaseSettings):
             one-click unsubscribe tokens embedded in every outbound
             email. Falls back to ``jwt_secret_key`` when unset so dev
             keeps working with the existing secret material.
+        lastfm_api_key: Last.fm API key for the artist tag enrichment
+            task. Empty in dev keeps the app booting without a key —
+            the enrichment service raises at request time when called
+            without one rather than at import.
         ticketmaster_api_key: Ticketmaster Discovery API key.
         seatgeek_client_id: SeatGeek API client ID.
         seatgeek_client_secret: SeatGeek API client secret.
@@ -148,6 +152,9 @@ class Settings(BaseSettings):
     # JWT_SECRET_KEY so dev environments don't need a separate value;
     # production should set its own to keep token compromise scoped.
     email_token_secret: str = ""
+
+    # Last.fm — empty in dev disables the enrichment client.
+    lastfm_api_key: str = ""
 
     # Ticketmaster
     ticketmaster_api_key: str

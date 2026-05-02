@@ -1,0 +1,30 @@
+{
+  "artist": {
+    "name": "boygenius",
+    "mbid": "9c0bd8b6-1c1d-49ec-9cb3-0fd9f9d6b3e3",
+    "url": "https://www.last.fm/music/boygenius",
+    "image": [],
+    "streamable": "0",
+    "ontour": "0",
+    "stats": {
+      "listeners": "523412",
+      "playcount": "18723441"
+    },
+    "similar": {"artist": []},
+    "tags": {
+      "tag": [
+        {"name": "indie rock", "url": "https://www.last.fm/tag/indie+rock"},
+        {"name": "indie folk", "url": "https://www.last.fm/tag/indie+folk"},
+        {"name": "supergroup", "url": "https://www.last.fm/tag/supergroup"},
+        {"name": "indie", "url": "https://www.last.fm/tag/indie"},
+        {"name": "female vocalists", "url": "https://www.last.fm/tag/female+vocalists"}
+      ]
+    },
+    "bio": {
+      "links": {"link": {"#text": "", "rel": "original", "href": "https://last.fm/music/boygenius/+wiki"}},
+      "published": "20 Oct 2018, 21:08",
+      "summary": "boygenius is an American indie supergroup composed of Julien Baker, Phoebe Bridgers, and Lucy Dacus. <a href=\"https://www.last.fm/music/boygenius\">Read more on Last.fm</a>",
+      "content": "boygenius is an American indie supergroup. Long content here..."
+    }
+  }
+}

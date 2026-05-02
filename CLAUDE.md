@@ -662,6 +662,13 @@ RESEND_FROM_EMAIL
 # Ticketmaster
 TICKETMASTER_API_KEY
 
+# Last.fm (artist tag enrichment — Sprint 1B)
+LASTFM_API_KEY                # Free key from
+                              # https://www.last.fm/api/account/create.
+                              # Empty in dev — the enrichment client
+                              # surfaces API failures at request time
+                              # rather than refusing to boot.
+
 # SeatGeek
 SEATGEEK_CLIENT_ID
 SEATGEEK_CLIENT_SECRET
