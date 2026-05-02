@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from decimal import Decimal
 
     from sqlalchemy.orm import Session
+    from sqlalchemy.sql import ColumnElement
 
 
 def get_artist_by_id(session: Session, artist_id: uuid.UUID) -> Artist | None:
@@ -180,6 +181,7 @@ def list_artists_for_musicbrainz_enrichment(
     Returns:
         Up to ``limit`` :class:`Artist` rows due for enrichment.
     """
+    condition: ColumnElement[bool]
     if stale_after is None:
         condition = Artist.musicbrainz_enriched_at.is_(None)
     else:

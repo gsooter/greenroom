@@ -38,7 +38,8 @@ def _load_fixture(name: str) -> dict[str, Any]:
     Returns:
         The decoded JSON payload as a dict.
     """
-    return json.loads((FIXTURES / name).read_text())
+    payload: dict[str, Any] = json.loads((FIXTURES / name).read_text())
+    return payload
 
 
 def _fake_response(
