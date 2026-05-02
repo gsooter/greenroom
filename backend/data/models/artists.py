@@ -79,6 +79,20 @@ class Artist(TimestampMixin, Base):
         lastfm_match_confidence: Confidence score 0.00-1.00 of the
             chosen Last.fm candidate. ``1.00`` for MBID-based lookups
             (exact match), blended name/listener score otherwise.
+        canonical_genres: Ordered list of GREENROOM canonical genre
+            labels (e.g. ``["Indie Rock", "Folk"]``) produced by the
+            nightly normalization pass. None when the artist has never
+            been normalized; an empty list when no canonical mapping
+            could be derived from the available MusicBrainz/Last.fm
+            data.
+        genre_confidence: Per-genre confidence score in 0.0-1.0 relative
+            to the strongest genre signal for this artist. Keys mirror
+            :attr:`canonical_genres`.
+        genres_normalized_at: UTC timestamp of the most recent
+            normalization attempt. None means the row has never been
+            considered. Set on every attempt — including no-match
+            outcomes — so the nightly task can skip already-normalized
+            rows whose source enrichment hasn't changed.
     """
 
     __tablename__ = "artists"
@@ -87,6 +101,12 @@ class Artist(TimestampMixin, Base):
         Index("ix_artists_spotify_enriched_at", "spotify_enriched_at"),
         Index("ix_artists_musicbrainz_enriched_at", "musicbrainz_enriched_at"),
         Index("ix_artists_lastfm_enriched_at", "lastfm_enriched_at"),
+        Index(
+            "ix_artists_canonical_genres_gin",
+            "canonical_genres",
+            postgresql_using="gin",
+        ),
+        Index("ix_artists_genres_normalized_at", "genres_normalized_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -131,6 +151,15 @@ class Artist(TimestampMixin, Base):
     )
     lastfm_match_confidence: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=3, scale=2), nullable=True
+    )
+    canonical_genres: Mapped[list[str] | None] = mapped_column(
+        ARRAY(Text), nullable=True
+    )
+    genre_confidence: Mapped[dict[str, float] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    genres_normalized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     def __repr__(self) -> str:
