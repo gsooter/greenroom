@@ -316,6 +316,80 @@ def mark_artist_lastfm_enriched(
     return artist
 
 
+def list_artists_for_genre_normalization(
+    session: Session,
+    *,
+    limit: int,
+    force: bool = False,
+) -> list[Artist]:
+    """Return artists whose canonical genre output is stale or missing.
+
+    Three buckets qualify under default selection: rows that have never
+    been normalized, rows whose MusicBrainz enrichment is more recent
+    than the last normalization, and rows whose Last.fm enrichment is
+    more recent than the last normalization. ``force=True`` ignores the
+    timestamp comparisons and returns up to ``limit`` rows in creation
+    order — useful when the canonical mapping dictionary changes and
+    every artist needs a re-run.
+
+    Args:
+        session: Active SQLAlchemy session.
+        limit: Maximum number of artists to return.
+        force: When True, return any artist (oldest first) regardless
+            of whether their canonical genres are already current.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows due for normalization.
+    """
+    if force:
+        stmt = select(Artist).order_by(Artist.created_at.asc()).limit(limit)
+        return list(session.execute(stmt).scalars().all())
+
+    condition = or_(
+        Artist.genres_normalized_at.is_(None),
+        Artist.musicbrainz_enriched_at > Artist.genres_normalized_at,
+        Artist.lastfm_enriched_at > Artist.genres_normalized_at,
+    )
+    stmt = (
+        select(Artist).where(condition).order_by(Artist.created_at.asc()).limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def mark_artist_genres_normalized(
+    session: Session,
+    artist: Artist,
+    *,
+    canonical_genres: list[str],
+    genre_confidence: dict[str, float],
+) -> Artist:
+    """Persist the result of a genre normalization pass.
+
+    Always stamps ``genres_normalized_at`` so the nightly task does not
+    re-process the same row until either source enrichment moves on.
+    Empty results (``[]`` and ``{}``) are stored verbatim — they encode
+    "we ran the normalizer and found no canonical mapping" rather than
+    "we never ran the normalizer", which the timestamp also captures.
+
+    Args:
+        session: Active SQLAlchemy session.
+        artist: The :class:`Artist` row being updated.
+        canonical_genres: Ordered list of canonical genre labels.
+            Empty list when no canonical mapping was possible.
+        genre_confidence: Per-genre confidence map mirroring
+            ``canonical_genres``. Empty dict when no mapping was
+            possible.
+
+    Returns:
+        The updated :class:`Artist` row (same instance, for convenience).
+    """
+    artist.canonical_genres = canonical_genres
+    artist.genre_confidence = genre_confidence
+    artist.genres_normalized_at = datetime.now(UTC)
+    session.flush()
+    return artist
+
+
 def mark_artist_enriched(
     session: Session,
     artist: Artist,
