@@ -1,0 +1,15 @@
+{
+  "results": {
+    "opensearch:Query": {
+      "#text": "",
+      "role": "request",
+      "searchTerms": "nobody at all",
+      "startPage": "1"
+    },
+    "opensearch:totalResults": "0",
+    "opensearch:startIndex": "0",
+    "opensearch:itemsPerPage": "5",
+    "artistmatches": {"artist": []},
+    "@attr": {"for": "nobody at all"}
+  }
+}
