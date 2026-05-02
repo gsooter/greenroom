@@ -69,6 +69,9 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     delete_mock = MagicMock(name="delete_recommendations_for_user")
     create_mock = MagicMock(name="create_recommendation")
     fetch_mock = MagicMock(name="_fetch_scoreable_events", return_value=[])
+    canonical_genres_mock = MagicMock(
+        name="_fetch_artist_canonical_genres", return_value={}
+    )
     affinity_mock = MagicMock(name="list_saved_venue_affinity", return_value={})
     followed_artists_mock = MagicMock(
         name="list_followed_artist_signals",
@@ -95,10 +98,14 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
         followed_venues_mock,
     )
     monkeypatch.setattr(engine_module, "_fetch_scoreable_events", fetch_mock)
+    monkeypatch.setattr(
+        engine_module, "_fetch_artist_canonical_genres", canonical_genres_mock
+    )
     return {
         "delete": delete_mock,
         "create": create_mock,
         "fetch": fetch_mock,
+        "canonical_genres": canonical_genres_mock,
         "affinity": affinity_mock,
         "followed_artists": followed_artists_mock,
         "followed_venues": followed_venues_mock,
@@ -132,6 +139,7 @@ def test_generate_runs_for_user_with_only_genre_preferences(
     user = _FakeUser(genre_preferences=["indie-rock"])
     event = _FakeEvent(artists=["Unknown"], genres=["indie rock"])
     patched_engine["fetch"].return_value = [event]
+    patched_engine["canonical_genres"].return_value = {"unknown": ["Indie Rock"]}
 
     result = generate_for_user(session, user)  # type: ignore[arg-type]
 

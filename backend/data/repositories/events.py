@@ -18,6 +18,7 @@ from backend.data.models.events import (
     EventType,
     TicketPricingSnapshot,
 )
+from backend.data.repositories import artists as artists_repo
 
 # ---------------------------------------------------------------------------
 # Event queries
@@ -236,7 +237,19 @@ def list_events(
         )
 
     if genres is not None:
-        base = base.where(Event.genres.overlap(genres))
+        # Filter via the canonical genres on the artists table rather
+        # than the legacy ``Event.genres`` column. Per-source genre tags
+        # land on the artist row during enrichment; the events filter
+        # just asks "which artists play any of these canonical labels"
+        # and intersects that name set with each event's performer list.
+        # Empty input or zero matching artists short-circuit to no rows.
+        matching_artist_names = artists_repo.list_artist_names_with_canonical_genres(
+            session, genres
+        )
+        if not matching_artist_names:
+            base = base.where(false())
+        else:
+            base = base.where(Event.artists.op("&&")(matching_artist_names))
 
     if spotify_artist_ids is not None:
         if not spotify_artist_ids:

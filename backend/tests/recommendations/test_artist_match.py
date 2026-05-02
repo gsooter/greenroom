@@ -45,8 +45,10 @@ class _FakeEvent:
     Attributes:
         artists: Performer name list as populated by scrapers.
         spotify_artist_ids: Spotify artist id list when known.
-        genres: Genre tags persisted on the event row; drives the
-            genre-overlap fallback tier.
+        genres: Legacy per-event genre tags. Kept on the model for
+            backwards compatibility but no longer read by the scorer —
+            the canonical-genre fallback flows through the artists
+            table via ``artist_canonical_genres`` instead.
     """
 
     artists: list[str] | None = field(default_factory=list)
@@ -197,83 +199,108 @@ def test_score_unions_caches_across_all_providers() -> None:
 
 
 def test_score_genre_overlap_fallback_when_no_artist_match() -> None:
-    """Event genre intersecting a top-artist genre → 0.5 fallback score."""
+    """Event canonical genres intersect top-artist genres → 0.5 fallback."""
     user = _FakeUser(
         spotify_top_artists=[
             {"name": "Phoebe Bridgers", "genres": ["indie rock", "indie pop"]},
         ],
     )
-    event = _FakeEvent(artists=["Unknown Opener"], genres=["indie rock"])
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["Unknown Opener"])
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"unknown opener": ["Indie Rock"]},
+    )
+    result = scorer.score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 0.5
     assert result["matched_artists"] == []
-    assert result["matched_genres"] == ["indie rock"]
+    assert result["matched_genres"] == ["Indie Rock"]
 
 
-def test_score_genre_overlap_is_case_insensitive() -> None:
-    """Event genre casing doesn't prevent a match against top-artist genres."""
+def test_score_genre_overlap_canonicalizes_user_raw_tags() -> None:
+    """Raw Spotify tags of any casing fold into the canonical label."""
     user = _FakeUser(
-        spotify_top_artists=[{"name": "X", "genres": ["Indie Rock"]}],
+        spotify_top_artists=[{"name": "X", "genres": ["INDIE ROCK"]}],
     )
-    event = _FakeEvent(artists=["Nobody"], genres=["INDIE ROCK", "Shoegaze"])
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["Nobody"])
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"nobody": ["Indie Rock"]},
+    )
+    result = scorer.score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 0.5
-    assert result["matched_genres"] == ["INDIE ROCK"]
+    assert result["matched_genres"] == ["Indie Rock"]
 
 
 def test_score_artist_match_outranks_genre_overlap() -> None:
-    """When an artist matches, genre overlap is ignored (no downgrade)."""
+    """When an artist matches, canonical-genre overlap is ignored."""
     user = _FakeUser(
         spotify_top_artists=[
             {"id": "abc", "name": "Phoebe Bridgers", "genres": ["indie rock"]},
         ],
     )
-    event = _FakeEvent(spotify_artist_ids=["abc"], genres=["indie rock"])
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    event = _FakeEvent(spotify_artist_ids=["abc"], artists=["Phoebe Bridgers"])
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"phoebe bridgers": ["Indie Rock"]},
+    )
+    result = scorer.score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 1.0
     assert "matched_genres" not in result
 
 
 def test_score_no_genre_overlap_still_returns_none() -> None:
-    """No artist + disjoint genres → scorer abstains."""
+    """No artist + disjoint canonical genres → scorer abstains."""
     user = _FakeUser(
         spotify_top_artists=[{"name": "X", "genres": ["indie rock"]}],
     )
-    event = _FakeEvent(artists=["Nobody"], genres=["reggaeton"])
-    assert ArtistMatchScorer(user).score(event) is None  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["Nobody"])
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"nobody": ["Hip Hop"]},
+    )
+    assert scorer.score(event) is None  # type: ignore[arg-type]
 
 
-def test_score_no_genre_fallback_when_event_has_no_genres() -> None:
-    """Empty event.genres → no fallback match."""
+def test_score_no_genre_fallback_when_event_artist_unknown() -> None:
+    """No canonical genres recorded for any event artist → no fallback."""
     user = _FakeUser(
         spotify_top_artists=[{"name": "X", "genres": ["indie rock"]}],
     )
-    event = _FakeEvent(artists=["Nobody"], genres=[])
-    assert ArtistMatchScorer(user).score(event) is None  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["Nobody"])
+    # Empty lookup map — the artist hasn't been normalized yet.
+    scorer = ArtistMatchScorer(user, artist_canonical_genres={})  # type: ignore[arg-type]
+    assert scorer.score(event) is None  # type: ignore[arg-type]
 
 
-def test_score_genre_fallback_ignores_malformed_genre_entries() -> None:
-    """Non-string / whitespace-only entries in event.genres are skipped."""
+def test_score_genre_fallback_ignores_malformed_artist_entries() -> None:
+    """Non-string entries in event.artists don't break the lookup."""
     user = _FakeUser(
         spotify_top_artists=[{"name": "X", "genres": ["indie rock"]}],
     )
     event = _FakeEvent(
-        artists=["Nobody"],
-        genres=[None, 42, "  ", "indie rock"],  # type: ignore[list-item]
+        artists=[None, 42, "  ", "Real Band"],  # type: ignore[list-item]
     )
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"real band": ["Indie Rock"]},
+    )
+    result = scorer.score(event)  # type: ignore[arg-type]
     assert result is not None
-    assert result["matched_genres"] == ["indie rock"]
+    assert result["matched_genres"] == ["Indie Rock"]
 
 
 def test_score_genre_preference_match_without_music_service() -> None:
     """Onboarding genre picks alone trigger the 0.5 fallback tier."""
     user = _FakeUser(genre_preferences=["indie-rock"])
-    event = _FakeEvent(artists=["Unknown Opener"], genres=["Indie Rock"])
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["Unknown Opener"])
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"unknown opener": ["Indie Rock"]},
+    )
+    result = scorer.score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 0.5
     assert result["matched_artists"] == []
@@ -283,62 +310,73 @@ def test_score_genre_preference_match_without_music_service() -> None:
     ]
 
 
-def test_score_genre_preference_substring_alias_matches() -> None:
-    """An alias embedded inside a richer event tag still matches."""
-    user = _FakeUser(genre_preferences=["punk"])
-    event = _FakeEvent(artists=["Nobody"], genres=["post-punk revival"])
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
-    assert result is not None
-    assert result["matched_preferences"][0]["slug"] == "punk"
-
-
 def test_score_genre_preference_dedupes_per_slug() -> None:
-    """A slug with multiple matching event genres emits one preference hit."""
+    """A slug whose label appears once in the canonical set emits one hit."""
     user = _FakeUser(genre_preferences=["electronic"])
-    event = _FakeEvent(artists=["X"], genres=["house", "techno"])
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["X"])
+    # The artist's canonical set contains "Electronic" once even if many
+    # raw tags ("house", "techno") rolled up into it.
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"x": ["Electronic"]},
+    )
+    result = scorer.score(event)  # type: ignore[arg-type]
     assert result is not None
     assert len(result["matched_preferences"]) == 1
     assert result["matched_preferences"][0]["slug"] == "electronic"
 
 
 def test_score_genre_preference_and_top_artist_genres_both_surface() -> None:
-    """Top-artist genre overlap and preference overlap can coexist."""
+    """Top-artist canonical overlap and preference overlap can coexist."""
     user = _FakeUser(
+        # "shoegaze" canonicalizes to Indie Rock via the genre mapping.
         spotify_top_artists=[{"name": "X", "genres": ["shoegaze"]}],
-        genre_preferences=["indie-rock"],
+        genre_preferences=["folk"],
     )
-    event = _FakeEvent(artists=["Nobody"], genres=["shoegaze", "indie rock"])
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["Nobody"])
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"nobody": ["Indie Rock", "Folk"]},
+    )
+    result = scorer.score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 0.5
-    assert result["matched_genres"] == ["shoegaze"]
+    assert "Indie Rock" in result["matched_genres"]
     preference_slugs = {p["slug"] for p in result["matched_preferences"]}
-    assert preference_slugs == {"indie-rock"}
+    assert preference_slugs == {"folk"}
 
 
 def test_score_unknown_genre_preference_slug_is_ignored() -> None:
     """A stale or unmapped slug can't produce spurious matches."""
     user = _FakeUser(genre_preferences=["not-a-real-slug"])
-    event = _FakeEvent(artists=["Nobody"], genres=["indie rock"])
-    assert ArtistMatchScorer(user).score(event) is None  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["Nobody"])
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"nobody": ["Indie Rock"]},
+    )
+    assert scorer.score(event) is None  # type: ignore[arg-type]
 
 
 def test_score_artist_match_outranks_preference_overlap() -> None:
-    """When artists match, preference overlap is suppressed (no downgrade)."""
+    """When artists match, preference overlap is suppressed."""
     user = _FakeUser(
         spotify_top_artists=[{"id": "abc", "name": "Phoebe Bridgers"}],
         genre_preferences=["indie-rock"],
     )
-    event = _FakeEvent(spotify_artist_ids=["abc"], genres=["indie rock"])
-    result = ArtistMatchScorer(user).score(event)  # type: ignore[arg-type]
+    event = _FakeEvent(spotify_artist_ids=["abc"], artists=["Phoebe Bridgers"])
+    scorer = ArtistMatchScorer(
+        user,  # type: ignore[arg-type]
+        artist_canonical_genres={"phoebe bridgers": ["Indie Rock"]},
+    )
+    result = scorer.score(event)  # type: ignore[arg-type]
     assert result is not None
     assert result["score"] == 1.0
     assert "matched_preferences" not in result
 
 
-def test_score_preference_without_event_genres_returns_none() -> None:
-    """Event with no genre tags can't fall back to preference matching."""
+def test_score_preference_without_event_canonical_returns_none() -> None:
+    """Event whose artist has no canonical genres can't fall back."""
     user = _FakeUser(genre_preferences=["indie-rock"])
-    event = _FakeEvent(artists=["Nobody"], genres=[])
-    assert ArtistMatchScorer(user).score(event) is None  # type: ignore[arg-type]
+    event = _FakeEvent(artists=["Nobody"])
+    scorer = ArtistMatchScorer(user, artist_canonical_genres={})  # type: ignore[arg-type]
+    assert scorer.score(event) is None  # type: ignore[arg-type]

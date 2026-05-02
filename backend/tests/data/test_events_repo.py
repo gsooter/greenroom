@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from backend.data.models.artists import Artist
 from backend.data.models.cities import City
 from backend.data.models.events import Event, EventStatus, EventType
 from backend.data.models.users import User
@@ -106,24 +107,46 @@ def test_list_events_genre_overlap_and_type_and_status(
     make_venue: Callable[..., Venue],
     make_event: Callable[..., Event],
 ) -> None:
+    """Genre filter goes through artists.canonical_genres → events.artists.
+
+    Sprint 1C moved the source of truth for event genre off the scraped
+    ``events.genres`` column onto the curated ``artists.canonical_genres``
+    column. The repo layer fetches matching artist names and overlaps
+    them against ``events.artists``.
+    """
     city = make_city()
     venue = make_venue(city=city)
-    make_event(venue=venue, title="Rock", genres=["rock", "indie"])
-    make_event(venue=venue, title="Jazz", genres=["jazz"])
+    session.add_all(
+        [
+            Artist(
+                name="Rock Band",
+                normalized_name="rock band",
+                canonical_genres=["Rock", "Indie Rock"],
+            ),
+            Artist(
+                name="Jazz Trio",
+                normalized_name="jazz trio",
+                canonical_genres=["Jazz"],
+            ),
+        ]
+    )
+    session.flush()
+    make_event(venue=venue, title="Rock", artists=["Rock Band"])
+    make_event(venue=venue, title="Jazz", artists=["Jazz Trio"])
     make_event(
         venue=venue,
         title="Comedy",
         event_type=EventType.COMEDY,
-        genres=["standup"],
+        artists=["Some Comedian"],
     )
     make_event(
         venue=venue,
         title="Cancelled",
         status=EventStatus.CANCELLED,
-        genres=["rock"],
+        artists=["Rock Band"],
     )
 
-    rows, total = events_repo.list_events(session, genres=["rock"])
+    rows, total = events_repo.list_events(session, genres=["Rock"])
     assert {e.title for e in rows} == {"Rock", "Cancelled"}
     assert total == 2
 
@@ -132,6 +155,11 @@ def test_list_events_genre_overlap_and_type_and_status(
 
     rows, total = events_repo.list_events(session, status=EventStatus.CANCELLED)
     assert total == 1 and rows[0].title == "Cancelled"
+
+    # No matching artist rows → empty result, regardless of legacy event genres.
+    rows, total = events_repo.list_events(session, genres=["Reggae"])
+    assert rows == []
+    assert total == 0
 
 
 def test_list_events_per_page_cap_and_ordering(

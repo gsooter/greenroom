@@ -356,6 +356,74 @@ def list_artists_for_genre_normalization(
     return list(session.execute(stmt).scalars().all())
 
 
+def list_artist_names_with_canonical_genres(
+    session: Session, genres: list[str]
+) -> list[str]:
+    """Return display names of artists whose canonical genres overlap input.
+
+    Backs the ``GET /api/v1/events?genres=`` filter — the events query
+    asks "which artists play any of these canonical genres" first, then
+    matches those names against ``Event.artists``. The GIN index on
+    ``canonical_genres`` makes the overlap check cheap even at full
+    catalog scale.
+
+    Args:
+        session: Active SQLAlchemy session.
+        genres: Canonical genre labels to match against
+            :attr:`Artist.canonical_genres`.
+
+    Returns:
+        Display names of every artist whose canonical genre list
+        intersects ``genres``. Empty list when ``genres`` is empty or no
+        artist matches.
+    """
+    if not genres:
+        return []
+    stmt = (
+        select(Artist.name)
+        .where(Artist.canonical_genres.is_not(None))
+        .where(Artist.canonical_genres.op("&&")(genres))
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def get_canonical_genres_by_normalized_name(
+    session: Session, normalized_names: list[str]
+) -> dict[str, list[str]]:
+    """Return a normalized-name → canonical genres map for the given names.
+
+    Used by the recommendation engine to pre-fetch the canonical genres
+    of every artist named on a candidate event. The scorer reads this
+    map keyed by :func:`backend.core.text.normalize_artist_name` so it
+    can collapse "Phoebe Bridgers" / "phoebe bridgers" / "PHOEBE
+    BRIDGERS" to one lookup.
+
+    Only rows with a non-empty ``canonical_genres`` are returned —
+    artists that have been normalized but produced no canonical mapping
+    are omitted, since they can't contribute to genre overlap anyway.
+
+    Args:
+        session: Active SQLAlchemy session.
+        normalized_names: Already-normalized artist lookup keys.
+
+    Returns:
+        Mapping of normalized name to canonical genres list. Empty dict
+        when ``normalized_names`` is empty or no matching artist has any
+        canonical genres.
+    """
+    if not normalized_names:
+        return {}
+    stmt = select(Artist.normalized_name, Artist.canonical_genres).where(
+        Artist.normalized_name.in_(normalized_names),
+        Artist.canonical_genres.is_not(None),
+    )
+    out: dict[str, list[str]] = {}
+    for normalized, canonical in session.execute(stmt).all():
+        if canonical:
+            out[normalized] = list(canonical)
+    return out
+
+
 def mark_artist_genres_normalized(
     session: Session,
     artist: Artist,
