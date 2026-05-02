@@ -40,6 +40,7 @@ def _build_app() -> Celery:
             "backend.scraper.watchdogs.dc9_dice_widget",
             "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
+            "backend.services.lastfm_tasks",
             "backend.services.musicbrainz_tasks",
             "backend.services.notification_tasks",
             "backend.services.pricing_tasks",
@@ -108,6 +109,15 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
                 "backend.services.musicbrainz_tasks.backfill_musicbrainz_enrichment"
             ),
             "schedule": crontab(hour=4, minute=30),
+            "options": {"expires": 60 * 60 * 3},
+        },
+        # Drains the Last.fm enrichment backlog. Runs at 04:45 ET, the
+        # 15-minute gap after MusicBrainz at 04:30 lets that pass write
+        # ``musicbrainz_id`` before Last.fm tries to use it on the
+        # MBID-first lookup path.
+        "backfill-lastfm-enrichment-nightly": {
+            "task": "backend.services.lastfm_tasks.backfill_lastfm_enrichment",
+            "schedule": crontab(hour=4, minute=45),
             "options": {"expires": 60 * 60 * 3},
         },
         # Posts the daily fleet-health digest at 07:30 ET, after the

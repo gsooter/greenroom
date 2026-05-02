@@ -54,6 +54,7 @@ the alternatives and reasoning months later.
 044 — Apple Music signals: library + recently played + heavy rotation.
 052 — Recommendation engine powers both digest ranking and `?sort=for_you`.
 056 — MusicBrainz is the first genre enrichment source (free, community-maintained, comprehensive).
+057 — Last.fm is the second genre enrichment source; uses MBID lookup when available, name search as fallback.
 
 ## Maps & Community
 
