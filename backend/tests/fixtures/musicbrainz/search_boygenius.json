@@ -1,0 +1,28 @@
+{
+  "created": "2026-05-01T12:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "artists": [
+    {
+      "id": "9c0bd8b6-1c1d-49ec-9cb3-0fd9f9d6b3e3",
+      "type": "Group",
+      "score": 100,
+      "name": "boygenius",
+      "sort-name": "boygenius",
+      "country": "US",
+      "disambiguation": "American indie rock supergroup",
+      "tags": [
+        {"count": 4, "name": "indie rock"},
+        {"count": 2, "name": "supergroup"}
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "type": "Group",
+      "score": 55,
+      "name": "Boygenius Tribute Project",
+      "country": "GB",
+      "disambiguation": "tribute act"
+    }
+  ]
+}

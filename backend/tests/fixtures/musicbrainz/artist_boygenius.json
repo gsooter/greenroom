@@ -1,0 +1,18 @@
+{
+  "id": "9c0bd8b6-1c1d-49ec-9cb3-0fd9f9d6b3e3",
+  "type": "Group",
+  "name": "boygenius",
+  "sort-name": "boygenius",
+  "country": "US",
+  "disambiguation": "American indie rock supergroup",
+  "genres": [
+    {"count": 12, "name": "indie rock", "id": "g1"},
+    {"count": 8, "name": "indie folk", "id": "g2"},
+    {"count": 3, "name": "alternative rock", "id": "g3"}
+  ],
+  "tags": [
+    {"count": 4, "name": "supergroup"},
+    {"count": 2, "name": "female vocalists"},
+    {"count": 1, "name": ""}
+  ]
+}

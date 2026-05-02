@@ -53,6 +53,7 @@ the alternatives and reasoning months later.
 039 — Genre catalog is canonical on backend, fetched over HTTP.
 044 — Apple Music signals: library + recently played + heavy rotation.
 052 — Recommendation engine powers both digest ranking and `?sort=for_you`.
+056 — MusicBrainz is the first genre enrichment source (free, community-maintained, comprehensive).
 
 ## Maps & Community
 
