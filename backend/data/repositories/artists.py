@@ -236,6 +236,86 @@ def mark_artist_musicbrainz_enriched(
     return artist
 
 
+def list_artists_for_lastfm_enrichment(
+    session: Session,
+    *,
+    limit: int,
+    stale_after: timedelta | None = None,
+) -> list[Artist]:
+    """Return artists that need a Last.fm enrichment pass.
+
+    Selects artists whose ``lastfm_enriched_at`` is NULL — the primary
+    backfill case — or whose timestamp is older than ``stale_after``
+    if a refresh interval is provided. Ordered by creation time so
+    older artists drain first.
+
+    Args:
+        session: Active SQLAlchemy session.
+        limit: Maximum number of artists to return.
+        stale_after: Optional age threshold; rows enriched longer ago
+            than this are considered for re-enrichment. ``None`` (the
+            default) selects only rows that have never been enriched.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows due for enrichment.
+    """
+    condition: ColumnElement[bool]
+    if stale_after is None:
+        condition = Artist.lastfm_enriched_at.is_(None)
+    else:
+        cutoff = datetime.now(UTC) - stale_after
+        condition = or_(
+            Artist.lastfm_enriched_at.is_(None),
+            Artist.lastfm_enriched_at < cutoff,
+        )
+    stmt = (
+        select(Artist).where(condition).order_by(Artist.created_at.asc()).limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def mark_artist_lastfm_enriched(
+    session: Session,
+    artist: Artist,
+    *,
+    tags: list[dict[str, Any]] | None,
+    listener_count: int | None,
+    url: str | None,
+    bio_summary: str | None,
+    confidence: Decimal | None,
+) -> Artist:
+    """Persist the result of a Last.fm enrichment attempt.
+
+    Always stamps ``lastfm_enriched_at`` so the nightly task does not
+    re-check the same row on its next pass; callers indicate "no match
+    found" by passing ``tags=None``. The tags blob is stored verbatim
+    (preserving order and URLs) because normalization happens in a
+    separate sprint.
+
+    Args:
+        session: Active SQLAlchemy session.
+        artist: The :class:`Artist` row being updated.
+        tags: Raw ``tag`` array from Last.fm. ``None`` or ``[]`` when
+            there was no match.
+        listener_count: Last.fm listener count for the matched artist,
+            or None when no match.
+        url: Canonical Last.fm artist page URL, or None when no match.
+        bio_summary: Short artist bio blurb returned by Last.fm, or None.
+        confidence: Match confidence in 0.00-1.00, or None for no match.
+
+    Returns:
+        The updated :class:`Artist` row (same instance, for convenience).
+    """
+    artist.lastfm_tags = tags
+    artist.lastfm_listener_count = listener_count
+    artist.lastfm_url = url
+    artist.lastfm_bio_summary = bio_summary
+    artist.lastfm_match_confidence = confidence
+    artist.lastfm_enriched_at = datetime.now(UTC)
+    session.flush()
+    return artist
+
+
 def mark_artist_enriched(
     session: Session,
     artist: Artist,

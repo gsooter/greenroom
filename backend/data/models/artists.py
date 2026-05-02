@@ -4,11 +4,12 @@ Artists are a normalized projection of the names scraped onto
 :class:`backend.data.models.events.Event` rows. Each row carries a
 normalized lookup key so duplicate spellings collapse, a set of
 genre tags pulled from Spotify during nightly enrichment
-(:mod:`backend.services.artist_enrichment`), and the raw MusicBrainz
+(:mod:`backend.services.artist_enrichment`), the raw MusicBrainz
 genre and tag payloads pulled by
-:mod:`backend.services.musicbrainz_tasks`. Together they feed the
-genre-overlap branch of the artist-match recommendation scorer when no
-direct artist match exists.
+:mod:`backend.services.musicbrainz_tasks`, and the raw Last.fm tags
+pulled by :mod:`backend.services.lastfm_tasks`. Together they feed
+the genre-overlap branch of the artist-match recommendation scorer
+when no direct artist match exists.
 """
 
 import uuid
@@ -16,7 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Numeric, String
+from sqlalchemy import DateTime, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,6 +62,23 @@ class Artist(TimestampMixin, Base):
         musicbrainz_match_confidence: Confidence score 0.00-1.00 of the
             chosen MusicBrainz candidate. None when no candidate cleared
             the threshold.
+        lastfm_tags: Raw Last.fm ``tag`` array (user-applied tags ordered
+            by popularity). Each entry preserves ``name`` and ``url``.
+            None when never enriched, ``[]`` when enriched but no match.
+        lastfm_listener_count: Last.fm listener count, captured as a
+            popularity signal for future scoring. None when no match.
+        lastfm_url: Canonical Last.fm artist page URL. Useful for
+            debugging matches and powering "more on Last.fm" links.
+        lastfm_bio_summary: Short biography blurb returned by Last.fm's
+            ``artist.getInfo``. Stored eagerly because the call returns
+            it for free; lets us surface bios later without re-enriching.
+        lastfm_enriched_at: UTC timestamp of the most recent Last.fm
+            enrichment attempt. None means the row has never been
+            considered. Set on every attempt — including no-match
+            outcomes — so we don't repeatedly re-search.
+        lastfm_match_confidence: Confidence score 0.00-1.00 of the
+            chosen Last.fm candidate. ``1.00`` for MBID-based lookups
+            (exact match), blended name/listener score otherwise.
     """
 
     __tablename__ = "artists"
@@ -68,6 +86,7 @@ class Artist(TimestampMixin, Base):
         Index("ix_artists_genres_gin", "genres", postgresql_using="gin"),
         Index("ix_artists_spotify_enriched_at", "spotify_enriched_at"),
         Index("ix_artists_musicbrainz_enriched_at", "musicbrainz_enriched_at"),
+        Index("ix_artists_lastfm_enriched_at", "lastfm_enriched_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -99,6 +118,18 @@ class Artist(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     musicbrainz_match_confidence: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=3, scale=2), nullable=True
+    )
+    lastfm_tags: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    lastfm_listener_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lastfm_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    lastfm_bio_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lastfm_enriched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lastfm_match_confidence: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=3, scale=2), nullable=True
     )
 
