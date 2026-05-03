@@ -153,6 +153,16 @@ class Settings(BaseSettings):
     # production should set its own to keep token compromise scoped.
     email_token_secret: str = ""
 
+    # Web Push (VAPID). Empty in dev disables the push pipeline:
+    # the subscribe endpoint refuses to accept new subscriptions and
+    # the dispatcher's push channel short-circuits to a no-op.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    # ``mailto:`` URI per the Web Push spec; identifies the sender to
+    # push services so they have someone to contact about abuse.
+    # Empty in dev — the dispatcher refuses to send when missing.
+    vapid_subject: str = ""
+
     # Last.fm — empty in dev disables the enrichment client.
     lastfm_api_key: str = ""
 

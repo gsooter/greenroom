@@ -28,6 +28,7 @@ from backend.api.v1 import (  # noqa: F401, E402
     notification_preferences as _notification_preferences,
 )
 from backend.api.v1 import onboarding as _onboarding  # noqa: F401, E402
+from backend.api.v1 import push as _push  # noqa: F401, E402
 from backend.api.v1 import recommendations as _recommendations  # noqa: F401, E402
 from backend.api.v1 import saved_events as _saved_events  # noqa: F401, E402
 from backend.api.v1 import unsubscribe as _unsubscribe  # noqa: F401, E402
