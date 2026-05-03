@@ -4,6 +4,7 @@ Import all models here so they register with Base.metadata
 for Alembic autogenerate and relationship resolution.
 """
 
+from backend.data.models.artist_similarity import ArtistSimilarity
 from backend.data.models.artists import Artist
 from backend.data.models.cities import City
 from backend.data.models.events import (
@@ -42,6 +43,7 @@ from backend.data.models.venues import Venue
 
 __all__ = [
     "Artist",
+    "ArtistSimilarity",
     "City",
     "DigestFrequency",
     "EmailDigestLog",

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import or_, select
 
 from backend.core.text import normalize_artist_name
+from backend.data.models.artist_similarity import ArtistSimilarity
 from backend.data.models.artists import Artist
 
 if TYPE_CHECKING:
@@ -456,6 +457,148 @@ def mark_artist_genres_normalized(
     artist.genres_normalized_at = datetime.now(UTC)
     session.flush()
     return artist
+
+
+def list_artists_for_lastfm_similar_enrichment(
+    session: Session,
+    *,
+    limit: int,
+    stale_after: timedelta | None = None,
+) -> list[Artist]:
+    """Return artists that need a Last.fm similar-artists enrichment pass.
+
+    Selects artists whose ``lastfm_similar_enriched_at`` is NULL — the
+    primary backfill case — or whose timestamp is older than
+    ``stale_after`` if a refresh interval is provided. Ordered by
+    creation time so older artists drain first.
+
+    Args:
+        session: Active SQLAlchemy session.
+        limit: Maximum number of artists to return.
+        stale_after: Optional age threshold; rows enriched longer ago
+            than this are considered for re-enrichment. ``None`` (the
+            default) selects only rows that have never been enriched.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows due for similarity
+        enrichment.
+    """
+    condition: ColumnElement[bool]
+    if stale_after is None:
+        condition = Artist.lastfm_similar_enriched_at.is_(None)
+    else:
+        cutoff = datetime.now(UTC) - stale_after
+        condition = or_(
+            Artist.lastfm_similar_enriched_at.is_(None),
+            Artist.lastfm_similar_enriched_at < cutoff,
+        )
+    stmt = (
+        select(Artist).where(condition).order_by(Artist.created_at.asc()).limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def mark_artist_lastfm_similar_enriched(
+    session: Session,
+    artist: Artist,
+) -> Artist:
+    """Stamp the Last.fm similarity enrichment timestamp on an artist row.
+
+    Called on every enrichment attempt — including no-match outcomes —
+    so the nightly task does not re-search the same row on its next
+    pass. The actual similarity rows are written by
+    :func:`backend.services.artist_similarity.store_similar_artists`;
+    this helper only flips the gating column.
+
+    Args:
+        session: Active SQLAlchemy session.
+        artist: The :class:`Artist` row being updated.
+
+    Returns:
+        The updated :class:`Artist` row (same instance, for convenience).
+    """
+    artist.lastfm_similar_enriched_at = datetime.now(UTC)
+    session.flush()
+    return artist
+
+
+def list_similar_artists_for_anchors(
+    session: Session,
+    anchor_artist_ids: list[uuid.UUID],
+    *,
+    minimum_score: float = 0.0,
+) -> list[tuple[uuid.UUID, str, float]]:
+    """Return similarity edges for a batch of anchor artist UUIDs.
+
+    Used by the recommendation engine to assemble the per-anchor
+    similar-artist lookup map the
+    :class:`backend.recommendations.scorers.similar_artist.SimilarArtistScorer`
+    needs. A single query covers every anchor; the engine fans the
+    result back out into a per-anchor dict.
+
+    Args:
+        session: Active SQLAlchemy session.
+        anchor_artist_ids: UUIDs of the user's anchor artists (followed
+            artists plus connected music-service top artists). Empty
+            list returns an empty list without hitting the database.
+        minimum_score: Drop edges below this similarity score before
+            returning. Defaults to 0.0 (return everything).
+
+    Returns:
+        List of ``(source_artist_id, similar_artist_name,
+        similarity_score)`` tuples ordered by source then similarity
+        score descending. Empty when the input is empty or no rows
+        match the threshold.
+    """
+    if not anchor_artist_ids:
+        return []
+    from decimal import Decimal
+
+    threshold = Decimal(f"{minimum_score:.3f}")
+    stmt = (
+        select(
+            ArtistSimilarity.source_artist_id,
+            ArtistSimilarity.similar_artist_name,
+            ArtistSimilarity.similarity_score,
+        )
+        .where(ArtistSimilarity.source_artist_id.in_(anchor_artist_ids))
+        .where(ArtistSimilarity.similarity_score >= threshold)
+        .order_by(
+            ArtistSimilarity.source_artist_id,
+            ArtistSimilarity.similarity_score.desc(),
+        )
+    )
+    return [
+        (source_id, name, float(score))
+        for source_id, name, score in session.execute(stmt).all()
+    ]
+
+
+def list_artist_ids_by_normalized_names(
+    session: Session,
+    normalized_names: list[str],
+) -> dict[str, uuid.UUID]:
+    """Map normalized artist names to their UUIDs in one round-trip.
+
+    Used by the recommendation engine to attach UUIDs to the user's
+    music-service top-artist names so they can be looked up in the
+    similarity table. Names are matched against ``normalized_name``
+    only; case/diacritic normalization is the caller's responsibility.
+
+    Args:
+        session: Active SQLAlchemy session.
+        normalized_names: Pre-normalized lookup keys.
+
+    Returns:
+        Mapping of normalized name → artist UUID. Empty when the input
+        is empty or no matches exist.
+    """
+    if not normalized_names:
+        return {}
+    stmt = select(Artist.normalized_name, Artist.id).where(
+        Artist.normalized_name.in_(normalized_names)
+    )
+    return {name: artist_id for name, artist_id in session.execute(stmt).all()}
 
 
 def mark_artist_enriched(

@@ -129,6 +129,31 @@ class LastFMArtistInfo:
     bio_summary: str | None
 
 
+@dataclass(frozen=True)
+class LastFMSimilarArtist:
+    """One similar artist returned by ``artist.getSimilar``.
+
+    Attributes:
+        name: Display name of the similar artist as Last.fm has it.
+        mbid: MusicBrainz ID when Last.fm has linked one to the artist,
+            else None. Last.fm returns an empty string when none is
+            known; we normalize that to None.
+        match_score: Last.fm's relevance score in 0.0-1.0 (1.0 = the
+            most-similar artist in the result set). Parsed from the
+            string representation Last.fm returns.
+        url: Canonical Last.fm artist page URL.
+        image_url: First non-empty image URL from the response, or
+            None when no image is available. Last.fm returns multiple
+            sizes; we keep the first one and let the consumer resize.
+    """
+
+    name: str
+    mbid: str | None
+    match_score: float
+    url: str
+    image_url: str | None
+
+
 def _get_api_key() -> str:
     """Return the configured Last.fm API key.
 
@@ -437,6 +462,186 @@ def fetch_artist_info_by_name(
         session=session,
     )
     return _parse_artist_info(payload)
+
+
+def _parse_similar_artist(entry: dict[str, Any]) -> LastFMSimilarArtist | None:
+    """Parse one entry from a Last.fm ``artist.getSimilar`` response.
+
+    Drops entries without a usable name and entries whose match score
+    cannot be parsed or falls outside ``[0.0, 1.0]``. A logged warning
+    fires for invalid scores so on-call has a paper trail when Last.fm
+    starts returning weird values, but the row is still excluded so the
+    rest of the list is salvageable.
+
+    Args:
+        entry: One element from ``payload["similarartists"]["artist"]``.
+
+    Returns:
+        A :class:`LastFMSimilarArtist`, or None when the entry is
+        unparseable.
+    """
+    name = entry.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+
+    raw_match = entry.get("match")
+    try:
+        score = float(raw_match) if raw_match is not None else None
+    except (TypeError, ValueError):
+        score = None
+    if score is None or not 0.0 <= score <= 1.0:
+        logger.warning(
+            "lastfm_similar_invalid_match_score",
+            extra={"artist_name": name.strip(), "raw_match": raw_match},
+        )
+        return None
+
+    mbid_raw = entry.get("mbid")
+    mbid: str | None = (
+        mbid_raw.strip() if isinstance(mbid_raw, str) and mbid_raw.strip() else None
+    )
+
+    url_raw = entry.get("url")
+    url = url_raw.strip() if isinstance(url_raw, str) else ""
+
+    image_url: str | None = None
+    images = entry.get("image")
+    if isinstance(images, list):
+        for img in images:
+            if not isinstance(img, dict):
+                continue
+            candidate = img.get("#text")
+            if isinstance(candidate, str) and candidate.strip():
+                image_url = candidate.strip()
+                break
+
+    return LastFMSimilarArtist(
+        name=name.strip(),
+        mbid=mbid,
+        match_score=score,
+        url=url,
+        image_url=image_url,
+    )
+
+
+def _parse_similar_artists(payload: dict[str, Any]) -> list[LastFMSimilarArtist]:
+    """Walk a Last.fm ``artist.getSimilar`` response into typed records.
+
+    Treats the not-found error code as an empty list so the task layer
+    can mark the row enriched without retry. Otherwise iterates the
+    embedded ``artist`` list (or a single bare dict) and keeps every
+    entry that :func:`_parse_similar_artist` accepts.
+
+    Args:
+        payload: The raw decoded JSON body.
+
+    Returns:
+        Similar-artist records sorted in Last.fm's response order
+        (which is already match-score descending). Empty list when
+        the artist is unknown or has no similar artists.
+    """
+    if payload.get("error") == _ERROR_NOT_FOUND:
+        return []
+    section = payload.get("similarartists")
+    if not isinstance(section, dict):
+        return []
+    raw_entries = _as_list(section.get("artist"))
+
+    out: list[LastFMSimilarArtist] = []
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            continue
+        parsed = _parse_similar_artist(entry)
+        if parsed is not None:
+            out.append(parsed)
+    return out
+
+
+def fetch_similar_artists_by_name(
+    artist_name: str,
+    limit: int = 20,
+    *,
+    session: requests.Session | None = None,
+) -> list[LastFMSimilarArtist]:
+    """Fetch similar artists from Last.fm by artist name.
+
+    Uses the ``artist.getSimilar`` endpoint with autocorrect enabled.
+    Returns up to ``limit`` similar artists ranked by match score
+    descending. Empty list when the artist has no similar artists or
+    is not found.
+
+    Args:
+        artist_name: The artist to find similar artists for. Stripped
+            before sending; blank input returns an empty list without
+            calling the API.
+        limit: Maximum number of similar artists to return. Last.fm
+            caps this at 100; values higher than that are still sent
+            verbatim and Last.fm does the clamping.
+        session: Optional ``requests.Session`` for HTTP injection in
+            tests.
+
+    Returns:
+        List of :class:`LastFMSimilarArtist` records sorted by match
+        score descending. Empty when there are no results or the
+        artist is not found.
+
+    Raises:
+        LastFMAPIError: Last.fm returned a non-2xx response or the
+            request itself failed.
+    """
+    cleaned = artist_name.strip()
+    if not cleaned:
+        return []
+    payload = _request_json(
+        {
+            "method": "artist.getSimilar",
+            "artist": cleaned,
+            "autocorrect": 1,
+            "limit": limit,
+        },
+        session=session,
+    )
+    return _parse_similar_artists(payload)
+
+
+def fetch_similar_artists_by_mbid(
+    mbid: str,
+    limit: int = 20,
+    *,
+    session: requests.Session | None = None,
+) -> list[LastFMSimilarArtist]:
+    """Fetch similar artists from Last.fm by MusicBrainz ID.
+
+    More accurate than name-based lookup when an MBID is available
+    because it bypasses fuzzy matching entirely. Returns an empty list
+    when the MBID is not in Last.fm's database.
+
+    Args:
+        mbid: MusicBrainz artist ID. Stripped before sending; blank
+            input returns an empty list without calling the API.
+        limit: Maximum number of similar artists to return.
+        session: Optional ``requests.Session`` used by tests.
+
+    Returns:
+        List of :class:`LastFMSimilarArtist` records sorted by match
+        score descending. Empty when the MBID is unknown or has no
+        similar artists.
+
+    Raises:
+        LastFMAPIError: Any non-404 transport or HTTP failure.
+    """
+    cleaned = mbid.strip()
+    if not cleaned:
+        return []
+    payload = _request_json(
+        {
+            "method": "artist.getSimilar",
+            "mbid": cleaned,
+            "limit": limit,
+        },
+        session=session,
+    )
+    return _parse_similar_artists(payload)
 
 
 def fetch_artist_info_by_mbid(

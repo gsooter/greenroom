@@ -20,8 +20,11 @@ from backend.services.lastfm import (
     CONFIDENCE_THRESHOLD,
     LastFMAPIError,
     LastFMCandidate,
+    LastFMSimilarArtist,
     fetch_artist_info_by_mbid,
     fetch_artist_info_by_name,
+    fetch_similar_artists_by_mbid,
+    fetch_similar_artists_by_name,
     find_best_match,
     search_lastfm_artist,
 )
@@ -429,3 +432,191 @@ def test_lastfm_api_error_default_status_code() -> None:
     err = LastFMAPIError("boom")
     assert err.status_code == 0
     assert "boom" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# fetch_similar_artists_by_name
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_similar_by_name_parses_correct_fields_from_fixture() -> None:
+    payload = _load_fixture("similar_phoebe_bridgers.json")
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    similar = fetch_similar_artists_by_name("Phoebe Bridgers", session=fake_session)
+
+    assert len(similar) == 4
+    first = similar[0]
+    assert isinstance(first, LastFMSimilarArtist)
+    assert first.name == "Lucy Dacus"
+    assert first.mbid == "f8a06d20-5fc6-4ad0-9ce4-69e3d6dee3da"
+    assert first.match_score == pytest.approx(1.0)
+    assert first.url.endswith("/Lucy+Dacus")
+    assert first.image_url is not None and "lucy.png" in first.image_url
+
+    # boygenius — empty mbid string normalizes to None
+    boygenius = next(s for s in similar if s.name == "boygenius")
+    assert boygenius.match_score == pytest.approx(0.821414)
+    assert boygenius.mbid == "9c0bd8b6-1c1d-49ec-9cb3-0fd9f9d6b3e3"
+
+    soccer_mommy = next(s for s in similar if s.name == "Soccer Mommy")
+    assert soccer_mommy.mbid is None
+    assert soccer_mommy.image_url is None
+
+
+def test_fetch_similar_by_name_sends_correct_params() -> None:
+    payload = _load_fixture("similar_empty.json")
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    fetch_similar_artists_by_name("Phoebe Bridgers", session=fake_session, limit=15)
+
+    call = fake_session.get.call_args
+    assert call.kwargs["params"]["method"] == "artist.getSimilar"
+    assert call.kwargs["params"]["artist"] == "Phoebe Bridgers"
+    assert call.kwargs["params"]["autocorrect"] == 1
+    assert call.kwargs["params"]["limit"] == 15
+    assert "Greenroom" in call.kwargs["headers"]["User-Agent"]
+
+
+def test_fetch_similar_by_name_handles_empty_results_gracefully() -> None:
+    payload = _load_fixture("similar_empty.json")
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    assert fetch_similar_artists_by_name("Nobody Local", session=fake_session) == []
+
+
+def test_fetch_similar_by_name_returns_empty_for_blank_name() -> None:
+    fake_session = MagicMock()
+    assert fetch_similar_artists_by_name("   ", session=fake_session) == []
+    fake_session.get.assert_not_called()
+
+
+def test_fetch_similar_by_name_filters_out_invalid_match_scores() -> None:
+    """Match score must be between 0 and 1 — anything else is dropped."""
+    payload = {
+        "similarartists": {
+            "artist": [
+                {
+                    "name": "Valid",
+                    "mbid": "",
+                    "match": "0.95",
+                    "url": "https://x",
+                },
+                {
+                    "name": "TooHigh",
+                    "mbid": "",
+                    "match": "1.5",
+                    "url": "https://x",
+                },
+                {
+                    "name": "Negative",
+                    "mbid": "",
+                    "match": "-0.1",
+                    "url": "https://x",
+                },
+                {
+                    "name": "NotANumber",
+                    "mbid": "",
+                    "match": "wat",
+                    "url": "https://x",
+                },
+            ]
+        }
+    }
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    similar = fetch_similar_artists_by_name("anyone", session=fake_session)
+    assert [s.name for s in similar] == ["Valid"]
+
+
+def test_fetch_similar_by_name_handles_single_artist_dict() -> None:
+    """A one-result list collapsed to a bare dict still parses."""
+    payload = {
+        "similarartists": {
+            "artist": {
+                "name": "Solo",
+                "mbid": "abc",
+                "match": "0.6",
+                "url": "https://www.last.fm/music/Solo",
+            }
+        }
+    }
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    similar = fetch_similar_artists_by_name("anyone", session=fake_session)
+    assert len(similar) == 1
+    assert similar[0].name == "Solo"
+
+
+def test_fetch_similar_by_name_returns_empty_when_artist_unknown() -> None:
+    """``artist.getSimilar`` returns the same not-found error code."""
+    payload = _load_fixture("artist_not_found.json")
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    assert fetch_similar_artists_by_name("nobody", session=fake_session) == []
+
+
+def test_fetch_similar_by_name_raises_api_error_on_503() -> None:
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(status_code=503, json_payload={})
+
+    with pytest.raises(LastFMAPIError):
+        fetch_similar_artists_by_name("Phoebe Bridgers", session=fake_session)
+
+
+def test_fetch_similar_by_name_skips_entries_without_name() -> None:
+    payload = {
+        "similarartists": {
+            "artist": [
+                {"name": "Good", "mbid": "", "match": "0.8", "url": "u"},
+                {"name": "  ", "mbid": "", "match": "0.7", "url": "u"},
+                {"name": None, "mbid": "", "match": "0.7", "url": "u"},
+                "string-not-dict",
+            ]
+        }
+    }
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    similar = fetch_similar_artists_by_name("anyone", session=fake_session)
+    assert [s.name for s in similar] == ["Good"]
+
+
+# ---------------------------------------------------------------------------
+# fetch_similar_artists_by_mbid
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_similar_by_mbid_parses_correctly() -> None:
+    payload = _load_fixture("similar_phoebe_bridgers.json")
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    similar = fetch_similar_artists_by_mbid("phoebe-mbid-1", session=fake_session)
+
+    assert len(similar) == 4
+    assert similar[0].name == "Lucy Dacus"
+    call = fake_session.get.call_args
+    assert call.kwargs["params"]["method"] == "artist.getSimilar"
+    assert call.kwargs["params"]["mbid"] == "phoebe-mbid-1"
+    assert "artist" not in call.kwargs["params"]
+
+
+def test_fetch_similar_by_mbid_returns_empty_for_blank_mbid() -> None:
+    fake_session = MagicMock()
+    assert fetch_similar_artists_by_mbid("   ", session=fake_session) == []
+    fake_session.get.assert_not_called()
+
+
+def test_fetch_similar_by_mbid_returns_empty_when_mbid_unknown() -> None:
+    payload = _load_fixture("artist_not_found.json")
+    fake_session = MagicMock()
+    fake_session.get.return_value = _fake_response(json_payload=payload)
+
+    assert fetch_similar_artists_by_mbid("missing", session=fake_session) == []

@@ -93,6 +93,11 @@ class Artist(TimestampMixin, Base):
             considered. Set on every attempt — including no-match
             outcomes — so the nightly task can skip already-normalized
             rows whose source enrichment hasn't changed.
+        lastfm_similar_enriched_at: UTC timestamp of the most recent
+            Last.fm similar-artists enrichment attempt. None means the
+            row has never been considered. Set on every attempt —
+            including no-match outcomes — so the nightly task can skip
+            already-enriched rows.
     """
 
     __tablename__ = "artists"
@@ -101,6 +106,10 @@ class Artist(TimestampMixin, Base):
         Index("ix_artists_spotify_enriched_at", "spotify_enriched_at"),
         Index("ix_artists_musicbrainz_enriched_at", "musicbrainz_enriched_at"),
         Index("ix_artists_lastfm_enriched_at", "lastfm_enriched_at"),
+        Index(
+            "idx_artists_lastfm_similar_enriched_at",
+            "lastfm_similar_enriched_at",
+        ),
         Index(
             "ix_artists_canonical_genres_gin",
             "canonical_genres",
@@ -159,6 +168,9 @@ class Artist(TimestampMixin, Base):
         JSONB, nullable=True
     )
     genres_normalized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lastfm_similar_enriched_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
