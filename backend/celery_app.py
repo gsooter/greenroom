@@ -40,6 +40,7 @@ def _build_app() -> Celery:
             "backend.scraper.watchdogs.dc9_dice_widget",
             "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
+            "backend.services.genre_normalization_tasks",
             "backend.services.lastfm_tasks",
             "backend.services.musicbrainz_tasks",
             "backend.services.notification_tasks",
@@ -118,6 +119,19 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
         "backfill-lastfm-enrichment-nightly": {
             "task": "backend.services.lastfm_tasks.backfill_lastfm_enrichment",
             "schedule": crontab(hour=4, minute=45),
+            "options": {"expires": 60 * 60 * 3},
+        },
+        # Normalizes per-source MusicBrainz + Last.fm signals into the
+        # canonical GREENROOM genre list. Runs at 05:00 ET, 15 minutes
+        # after Last.fm (04:45) so both upstream enrichments have landed
+        # their fresh rows before we fold them in. Pure-Python compute,
+        # no API calls — drains the full backlog inline.
+        "normalize-artist-genres-nightly": {
+            "task": (
+                "backend.services.genre_normalization_tasks"
+                ".backfill_genre_normalization"
+            ),
+            "schedule": crontab(hour=5, minute=0),
             "options": {"expires": 60 * 60 * 3},
         },
         # Posts the daily fleet-health digest at 07:30 ET, after the

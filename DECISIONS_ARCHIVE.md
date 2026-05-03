@@ -2652,6 +2652,86 @@ deleted along with its test file.
 
 ---
 
+### 058 — Genre Normalization Merges MusicBrainz And Last.fm Tags Through A Curated Mapping Into ~20 GREENROOM Canonical Labels With Confidence Scoring
+
+**Date:** 2026-05-02
+**Status:** Decided
+
+**Decision:** A nightly normalization pass collapses each artist's
+raw enrichment signals — `musicbrainz_genres`, `musicbrainz_tags`, and
+`lastfm_tags` — into an ordered list of GREENROOM canonical genre
+labels stored on `artists.canonical_genres` with a per-label
+confidence score on `artists.genre_confidence`. The mapping from raw
+tag → canonical label is a hand-curated dictionary in
+`backend.services.genre_normalization.GENRE_MAPPING`, applied with
+substring matching on cleaned tag strings. MusicBrainz signals are
+weighted 1.5× over Last.fm signals; the union is rescaled by softmax
+so the strongest matched genre lands at confidence 1.0 and the rest
+fall in 0.0-1.0 relative to it. Genres below a 0.5 confidence floor
+are discarded; the top five survivors are written to
+`canonical_genres`. The artist-match scorer's genre fallback and the
+`GET /api/v1/events?genres=` filter both read from this column going
+forward — the raw scraped `events.genres` array is no longer authoritative.
+
+**Rationale:**
+- Scraped event genres are inconsistent ("indie rock" vs "indie/rock"
+  vs "Indie/Rock" vs missing entirely) and short-circuit the
+  canonical-label model the recommender wants to operate on.
+- A curated mapping is honest about what we are doing — labeling
+  artists in our taxonomy, not learning one. ~20 labels keep the
+  reason-chip UI ("Because you like Indie Rock") legible and bound
+  the surface area of taste preferences.
+- Substring matching on tags catches the long tail of variations
+  ("alternative rock" / "modern rock" / "rock" / "alternative" all
+  map to Rock and/or Alternative) without an ML model or fuzzy-string
+  matcher to maintain.
+- MusicBrainz wins ties because its `genres` table is human-curated
+  and structured ("indie rock" is one entry, not a free-form tag);
+  Last.fm's user tags are noisier ("seen live", "favorite") so they
+  earn a lower weight even when popular.
+- Softmax rescaling produces relative confidences without a global
+  threshold to tune; a soft 0.5 floor + max-of-five cap is enough to
+  keep the output tight and the recommender chip list readable.
+
+**Alternatives considered:**
+- *ML-based genre classification (text or audio features).* Rejected
+  for the MVP — a curated mapping is auditable, reversible, and
+  ships in an afternoon. Revisit when the catalog of GREENROOM labels
+  needs to grow past ~30 or when scraped tag noise overwhelms the
+  curated rules.
+- *Trust MusicBrainz `genres` alone, ignore Last.fm.* Rejected
+  because MusicBrainz coverage falls off for newer / smaller acts;
+  Last.fm fills the gap at the cost of more noise, which the lower
+  weight + floor mitigate.
+- *Equal MB/Last.fm weighting.* Rejected — Last.fm's free-form tags
+  produced false-positive labels in spot checks ("seen live" mapping
+  is dropped by the cleanup, but "british" or "8-bit" leak in if
+  weighted equally).
+- *Continue overlapping `events.genres` directly.* Rejected — the
+  array is sparse and inconsistent across scrapers. Lifting the
+  filter onto `artists.canonical_genres` lets the same curated label
+  set drive both filtering and recommendation reason chips.
+
+**Consequences:**
+- A new nightly Celery task runs at 05:00 ET (one hour after the main
+  scraper window) to (re)normalize artists whose enrichment is newer
+  than the last normalization run.
+- `GET /api/v1/events?genres=` now responds based on artist labels;
+  events with no recognized artists return zero rows under any genre
+  filter even if their scraped `genres` array overlaps. This is the
+  intended behavior — the canonical pipeline is the source of truth.
+- The recommender pre-fetches a normalized name → canonical genres
+  lookup once per scoring pass; per-event scoring stays session-free.
+- Substring/alias matching on Spotify user genres is gone —
+  `map_tags_to_canonical` puts user-side and event-side labels in the
+  same space.
+- **Revisit trigger:** when `GENRE_MAPPING` exceeds ~200 entries, or
+  when more than 15% of normalized artists land with empty
+  `canonical_genres` despite having enrichment data, evaluate
+  switching to a learned classifier.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

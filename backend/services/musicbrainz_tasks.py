@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-BACKFILL_BATCH_SIZE = 100
+BACKFILL_BATCH_SIZE = 2000
 ENRICHED_FRESHNESS = timedelta(days=30)
 RATE_LIMIT_LOCK_KEY = "musicbrainz_rate_limit"
 # Lock timeout is short — only long enough to cover the sleep + the
@@ -287,10 +287,12 @@ def backfill_musicbrainz_enrichment() -> dict[str, Any]:
 
     Selects up to :data:`BACKFILL_BATCH_SIZE` artists whose
     ``musicbrainz_enriched_at`` is NULL and queues an
-    :func:`enrich_artist_from_musicbrainz` task for each. The 100-row
-    cap is matched to MusicBrainz's 1 req/sec ceiling: 100 artists
-    times ~2 requests each at 1.1s spacing is ~220 seconds total,
-    comfortably inside one overnight beat fire.
+    :func:`enrich_artist_from_musicbrainz` task for each. The 2000-row
+    cap drains the current artist backlog in a single nightly fire,
+    paced by MusicBrainz's 1 req/sec ceiling: 2000 artists times ~2
+    requests each at 1.1s spacing is ~73 minutes total — still inside
+    one overnight beat fire and finishing well before the 05:00
+    normalization sweep.
 
     Returns:
         Summary dict with ``queued`` (count of tasks dispatched).

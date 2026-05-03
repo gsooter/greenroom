@@ -504,6 +504,10 @@ def test_backfill_passes_batch_size_to_repo_lookup(
     assert list_mock.call_args.kwargs.get("limit") == tasks.BACKFILL_BATCH_SIZE
 
 
-def test_backfill_batch_size_is_200() -> None:
-    """Higher batch size than MusicBrainz because Last.fm pacing is faster."""
-    assert tasks.BACKFILL_BATCH_SIZE == 200
+def test_backfill_batch_size_drains_current_backlog() -> None:
+    """Sized to clear the full artist set in one nightly fire.
+
+    Set high enough that one beat run drains the unenriched backlog,
+    paced naturally by the Last.fm rate limiter (~250 ms/request).
+    """
+    assert tasks.BACKFILL_BATCH_SIZE == 2000

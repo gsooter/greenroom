@@ -316,6 +316,148 @@ def mark_artist_lastfm_enriched(
     return artist
 
 
+def list_artists_for_genre_normalization(
+    session: Session,
+    *,
+    limit: int,
+    force: bool = False,
+) -> list[Artist]:
+    """Return artists whose canonical genre output is stale or missing.
+
+    Three buckets qualify under default selection: rows that have never
+    been normalized, rows whose MusicBrainz enrichment is more recent
+    than the last normalization, and rows whose Last.fm enrichment is
+    more recent than the last normalization. ``force=True`` ignores the
+    timestamp comparisons and returns up to ``limit`` rows in creation
+    order — useful when the canonical mapping dictionary changes and
+    every artist needs a re-run.
+
+    Args:
+        session: Active SQLAlchemy session.
+        limit: Maximum number of artists to return.
+        force: When True, return any artist (oldest first) regardless
+            of whether their canonical genres are already current.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows due for normalization.
+    """
+    if force:
+        stmt = select(Artist).order_by(Artist.created_at.asc()).limit(limit)
+        return list(session.execute(stmt).scalars().all())
+
+    condition = or_(
+        Artist.genres_normalized_at.is_(None),
+        Artist.musicbrainz_enriched_at > Artist.genres_normalized_at,
+        Artist.lastfm_enriched_at > Artist.genres_normalized_at,
+    )
+    stmt = (
+        select(Artist).where(condition).order_by(Artist.created_at.asc()).limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def list_artist_names_with_canonical_genres(
+    session: Session, genres: list[str]
+) -> list[str]:
+    """Return display names of artists whose canonical genres overlap input.
+
+    Backs the ``GET /api/v1/events?genres=`` filter — the events query
+    asks "which artists play any of these canonical genres" first, then
+    matches those names against ``Event.artists``. The GIN index on
+    ``canonical_genres`` makes the overlap check cheap even at full
+    catalog scale.
+
+    Args:
+        session: Active SQLAlchemy session.
+        genres: Canonical genre labels to match against
+            :attr:`Artist.canonical_genres`.
+
+    Returns:
+        Display names of every artist whose canonical genre list
+        intersects ``genres``. Empty list when ``genres`` is empty or no
+        artist matches.
+    """
+    if not genres:
+        return []
+    stmt = (
+        select(Artist.name)
+        .where(Artist.canonical_genres.is_not(None))
+        .where(Artist.canonical_genres.op("&&")(genres))
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def get_canonical_genres_by_normalized_name(
+    session: Session, normalized_names: list[str]
+) -> dict[str, list[str]]:
+    """Return a normalized-name → canonical genres map for the given names.
+
+    Used by the recommendation engine to pre-fetch the canonical genres
+    of every artist named on a candidate event. The scorer reads this
+    map keyed by :func:`backend.core.text.normalize_artist_name` so it
+    can collapse "Phoebe Bridgers" / "phoebe bridgers" / "PHOEBE
+    BRIDGERS" to one lookup.
+
+    Only rows with a non-empty ``canonical_genres`` are returned —
+    artists that have been normalized but produced no canonical mapping
+    are omitted, since they can't contribute to genre overlap anyway.
+
+    Args:
+        session: Active SQLAlchemy session.
+        normalized_names: Already-normalized artist lookup keys.
+
+    Returns:
+        Mapping of normalized name to canonical genres list. Empty dict
+        when ``normalized_names`` is empty or no matching artist has any
+        canonical genres.
+    """
+    if not normalized_names:
+        return {}
+    stmt = select(Artist.normalized_name, Artist.canonical_genres).where(
+        Artist.normalized_name.in_(normalized_names),
+        Artist.canonical_genres.is_not(None),
+    )
+    out: dict[str, list[str]] = {}
+    for normalized, canonical in session.execute(stmt).all():
+        if canonical:
+            out[normalized] = list(canonical)
+    return out
+
+
+def mark_artist_genres_normalized(
+    session: Session,
+    artist: Artist,
+    *,
+    canonical_genres: list[str],
+    genre_confidence: dict[str, float],
+) -> Artist:
+    """Persist the result of a genre normalization pass.
+
+    Always stamps ``genres_normalized_at`` so the nightly task does not
+    re-process the same row until either source enrichment moves on.
+    Empty results (``[]`` and ``{}``) are stored verbatim — they encode
+    "we ran the normalizer and found no canonical mapping" rather than
+    "we never ran the normalizer", which the timestamp also captures.
+
+    Args:
+        session: Active SQLAlchemy session.
+        artist: The :class:`Artist` row being updated.
+        canonical_genres: Ordered list of canonical genre labels.
+            Empty list when no canonical mapping was possible.
+        genre_confidence: Per-genre confidence map mirroring
+            ``canonical_genres``. Empty dict when no mapping was
+            possible.
+
+    Returns:
+        The updated :class:`Artist` row (same instance, for convenience).
+    """
+    artist.canonical_genres = canonical_genres
+    artist.genre_confidence = genre_confidence
+    artist.genres_normalized_at = datetime.now(UTC)
+    session.flush()
+    return artist
+
+
 def mark_artist_enriched(
     session: Session,
     artist: Artist,

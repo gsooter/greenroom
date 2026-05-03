@@ -219,3 +219,133 @@ def test_mark_artist_musicbrainz_enriched_records_null_match(
     assert updated.musicbrainz_tags is None
     assert updated.musicbrainz_match_confidence is None
     assert updated.musicbrainz_enriched_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Genre normalization helpers
+# ---------------------------------------------------------------------------
+
+
+def test_list_artists_for_genre_normalization_includes_never_normalized(
+    session: Session,
+) -> None:
+    """Rows with ``genres_normalized_at IS NULL`` are always pending."""
+    never = Artist(
+        name="Never",
+        normalized_name="never",
+        genres=[],
+        musicbrainz_enriched_at=datetime.now(UTC),
+    )
+    fresh = Artist(
+        name="Fresh",
+        normalized_name="fresh",
+        genres=[],
+        musicbrainz_enriched_at=datetime.now(UTC) - timedelta(hours=2),
+        genres_normalized_at=datetime.now(UTC),
+        canonical_genres=["Indie Rock"],
+    )
+    session.add_all([never, fresh])
+    session.flush()
+
+    results = artists_repo.list_artists_for_genre_normalization(session, limit=10)
+    names = [a.normalized_name for a in results]
+    assert "never" in names
+    assert "fresh" not in names
+
+
+def test_list_artists_for_genre_normalization_includes_stale_after_mb_refresh(
+    session: Session,
+) -> None:
+    """A MusicBrainz refresh newer than the last normalization re-queues."""
+    now = datetime.now(UTC)
+    stale = Artist(
+        name="Stale",
+        normalized_name="stale",
+        genres=[],
+        musicbrainz_enriched_at=now,
+        genres_normalized_at=now - timedelta(days=2),
+        canonical_genres=["Pop"],
+    )
+    session.add(stale)
+    session.flush()
+
+    results = artists_repo.list_artists_for_genre_normalization(session, limit=10)
+    assert any(a.normalized_name == "stale" for a in results)
+
+
+def test_list_artists_for_genre_normalization_includes_stale_after_lastfm_refresh(
+    session: Session,
+) -> None:
+    """A Last.fm refresh newer than the last normalization re-queues."""
+    now = datetime.now(UTC)
+    stale = Artist(
+        name="Stale Lastfm",
+        normalized_name="stale lastfm",
+        genres=[],
+        lastfm_enriched_at=now,
+        genres_normalized_at=now - timedelta(days=1),
+        canonical_genres=["Folk"],
+    )
+    session.add(stale)
+    session.flush()
+
+    results = artists_repo.list_artists_for_genre_normalization(session, limit=10)
+    assert any(a.normalized_name == "stale lastfm" for a in results)
+
+
+def test_list_artists_for_genre_normalization_force_returns_everything(
+    session: Session,
+) -> None:
+    """``force=True`` ignores the timestamp comparison entirely."""
+    now = datetime.now(UTC)
+    already = Artist(
+        name="Already",
+        normalized_name="already",
+        genres=[],
+        musicbrainz_enriched_at=now - timedelta(days=2),
+        genres_normalized_at=now,
+        canonical_genres=["Pop"],
+    )
+    session.add(already)
+    session.flush()
+
+    default = artists_repo.list_artists_for_genre_normalization(session, limit=10)
+    assert all(a.normalized_name != "already" for a in default)
+
+    forced = artists_repo.list_artists_for_genre_normalization(
+        session, limit=10, force=True
+    )
+    assert any(a.normalized_name == "already" for a in forced)
+
+
+def test_mark_artist_genres_normalized_persists_canonical_output(
+    session: Session,
+) -> None:
+    artist = artists_repo.upsert_artist_by_name(session, "Boygenius")
+    canonical = ["Indie Rock", "Folk"]
+    confidence = {"Indie Rock": 1.0, "Folk": 0.6}
+
+    updated = artists_repo.mark_artist_genres_normalized(
+        session,
+        artist,
+        canonical_genres=canonical,
+        genre_confidence=confidence,
+    )
+
+    assert updated.canonical_genres == canonical
+    assert updated.genre_confidence == confidence
+    assert updated.genres_normalized_at is not None
+
+
+def test_mark_artist_genres_normalized_stamps_empty_result(session: Session) -> None:
+    """Empty output still bumps the timestamp so we don't re-process."""
+    artist = artists_repo.upsert_artist_by_name(session, "Niche Act")
+    updated = artists_repo.mark_artist_genres_normalized(
+        session,
+        artist,
+        canonical_genres=[],
+        genre_confidence={},
+    )
+    assert updated.canonical_genres == []
+    assert updated.genre_confidence == {}
+    assert updated.genres_normalized_at is not None

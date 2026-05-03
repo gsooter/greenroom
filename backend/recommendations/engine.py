@@ -21,7 +21,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy import select
 
+from backend.core.text import normalize_artist_name as _normalize
 from backend.data.models.events import Event, EventStatus
+from backend.data.repositories import artists as artists_repo
 from backend.data.repositories import follows as follows_repo
 from backend.data.repositories import users as users_repo
 from backend.recommendations.scorers.artist_match import ArtistMatchScorer
@@ -114,11 +116,13 @@ def generate_for_user(
         return 0
 
     events = _fetch_scoreable_events(session)
+    artist_canonical_genres = _fetch_artist_canonical_genres(session, events)
     scorers = _build_scorers(
         user,
         venue_affinity,
         followed_artists=followed_artists,
         followed_venues=followed_venues,
+        artist_canonical_genres=artist_canonical_genres,
     )
 
     scored: list[tuple[float, dict[str, Any], Event]] = []
@@ -186,6 +190,7 @@ def _build_scorers(
     *,
     followed_artists: dict[str, Any] | None = None,
     followed_venues: dict[Any, str] | None = None,
+    artist_canonical_genres: dict[str, list[str]] | None = None,
 ) -> list[Scorer]:
     """Instantiate the active scorer set for a user.
 
@@ -207,16 +212,49 @@ def _build_scorers(
         followed_venues: Precomputed ``venue_id`` → display name map for
             venues the user follows. Pass ``None`` or an empty mapping
             for users who follow no venues.
+        artist_canonical_genres: Pre-fetched normalized name → canonical
+            genres map covering every artist named on the candidate
+            event set. Drives the genre fallback inside
+            :class:`ArtistMatchScorer` without any per-event lookup.
 
     Returns:
         List of scorer instances ready to call :meth:`Scorer.score`.
     """
     return [
-        ArtistMatchScorer(user),
+        ArtistMatchScorer(user, artist_canonical_genres=artist_canonical_genres or {}),
         FollowedArtistScorer(followed_artists or {}),
         FollowedVenueScorer(followed_venues or {}),
         VenueAffinityScorer(venue_affinity),
     ]
+
+
+def _fetch_artist_canonical_genres(
+    session: Session, events: list[Event]
+) -> dict[str, list[str]]:
+    """Build a normalized name → canonical genres map for the candidate set.
+
+    Walks every artist name referenced by the candidate events,
+    normalizes each one, and asks the artists repo for the canonical
+    genres recorded against any matching row. Artists with no canonical
+    genres recorded are omitted — they can't contribute to the genre
+    fallback.
+
+    Args:
+        session: Active SQLAlchemy session.
+        events: The scoreable event set.
+
+    Returns:
+        Lookup map from normalized artist name to canonical genres
+        list, ready to inject into :class:`ArtistMatchScorer`.
+    """
+    names: set[str] = set()
+    for event in events:
+        for artist_name in event.artists or []:
+            if isinstance(artist_name, str) and artist_name.strip():
+                names.add(_normalize(artist_name))
+    if not names:
+        return {}
+    return artists_repo.get_canonical_genres_by_normalized_name(session, sorted(names))
 
 
 def _dedupe_by_show(

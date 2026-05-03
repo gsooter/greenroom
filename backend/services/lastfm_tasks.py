@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-BACKFILL_BATCH_SIZE = 200
+BACKFILL_BATCH_SIZE = 2000
 ENRICHED_FRESHNESS = timedelta(days=30)
 RATE_LIMIT_LOCK_KEY = "lastfm_rate_limit"
 # Lock timeout is short — only long enough to cover the sleep + the
@@ -307,9 +307,9 @@ def backfill_lastfm_enrichment() -> dict[str, Any]:
 
     Selects up to :data:`BACKFILL_BATCH_SIZE` artists whose
     ``lastfm_enriched_at`` is NULL and queues an
-    :func:`enrich_artist_from_lastfm` task for each. The 200-row cap
-    fits inside one beat fire: 200 artists at ~250 ms pacing each
-    runs ~50 seconds end to end.
+    :func:`enrich_artist_from_lastfm` task for each. The 2000-row cap
+    drains the current artist backlog in a single nightly fire: 2000
+    artists at ~250 ms pacing runs ~8 minutes end to end.
 
     Returns:
         Summary dict with ``queued`` (count of tasks dispatched).
