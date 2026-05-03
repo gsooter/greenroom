@@ -10,10 +10,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
 from backend.recommendations.scorers.similar_artist import (
     DIRECT_FOLLOW_WEIGHT,
+    MATCH_KIND_LASTFM,
+    MATCH_KIND_TAG_OVERLAP,
     MINIMUM_SIMILARITY_SCORE,
+    MINIMUM_TAG_JACCARD,
     RECENT_LISTEN_WEIGHT,
+    TAG_SIMILARITY_WEIGHT,
     TOP_ARTIST_WEIGHT,
     SimilarArtistScorer,
 )
@@ -176,3 +182,114 @@ def test_skips_self_match_when_event_artist_equals_anchor_name() -> None:
     )
     event = _FakeEvent(artists=["Phoebe Bridgers"])
     assert scorer.score(event) is None  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Tag-overlap signal (Decision 060)
+# ---------------------------------------------------------------------------
+
+
+def test_tag_overlap_alone_produces_a_match() -> None:
+    """Anchor with only tag-overlap data still scores."""
+    scorer = SimilarArtistScorer(
+        anchor_signals={"phoebe bridgers": ("Phoebe Bridgers", DIRECT_FOLLOW_WEIGHT)},
+        similar_by_anchor={},
+        tag_similar_by_anchor={
+            "phoebe bridgers": [_payload("Local Indie Band", 0.5)],
+        },
+    )
+    event = _FakeEvent(artists=["Local Indie Band"])
+    result = scorer.score(event)  # type: ignore[arg-type]
+    assert result is not None
+    assert result["matched_similar_artists"][0]["match_kind"] == MATCH_KIND_TAG_OVERLAP
+    expected = 0.5 * DIRECT_FOLLOW_WEIGHT * TAG_SIMILARITY_WEIGHT
+    assert result["score"] == pytest.approx(expected)
+
+
+def test_lastfm_match_outscores_comparable_tag_overlap_match() -> None:
+    """Tag-overlap is discounted so a comparable LFM edge wins."""
+    scorer = SimilarArtistScorer(
+        anchor_signals={"anchor": ("Anchor", DIRECT_FOLLOW_WEIGHT)},
+        similar_by_anchor={"anchor": [_payload("Common", 0.9)]},
+        tag_similar_by_anchor={"anchor": [_payload("Common", 0.9)]},
+    )
+    event = _FakeEvent(artists=["Common"])
+    result = scorer.score(event)  # type: ignore[arg-type]
+    assert result is not None
+    assert result["matched_similar_artists"][0]["match_kind"] == MATCH_KIND_LASTFM
+    # LFM contribution: 0.9 * DIRECT_FOLLOW_WEIGHT.
+    # Tag contribution: 0.9 * DIRECT_FOLLOW_WEIGHT * TAG_SIMILARITY_WEIGHT.
+    # Best = LFM since TAG_SIMILARITY_WEIGHT < 1.
+    assert result["score"] == pytest.approx(0.9 * DIRECT_FOLLOW_WEIGHT)
+
+
+def test_strong_tag_match_can_outscore_weak_lastfm_match() -> None:
+    """An overwhelming tag overlap beats a borderline Last.fm edge."""
+    scorer = SimilarArtistScorer(
+        anchor_signals={"anchor": ("Anchor", DIRECT_FOLLOW_WEIGHT)},
+        similar_by_anchor={"anchor": [_payload("Weak LFM", MINIMUM_SIMILARITY_SCORE)]},
+        tag_similar_by_anchor={
+            "anchor": [_payload("Strong Tag", 1.0)],
+        },
+    )
+    event = _FakeEvent(artists=["Weak LFM", "Strong Tag"])
+    result = scorer.score(event)  # type: ignore[arg-type]
+    assert result is not None
+    # Strong Tag contribution = 1.0 * DIRECT * TAG = 0.42
+    # Weak LFM contribution    = 0.5 * DIRECT       = 0.35
+    # The peak (best_total) reflects the stronger of the two.
+    expected_peak = 1.0 * DIRECT_FOLLOW_WEIGHT * TAG_SIMILARITY_WEIGHT
+    assert result["score"] == pytest.approx(expected_peak)
+
+
+def test_tag_overlap_below_jaccard_threshold_is_filtered() -> None:
+    """Edges below MINIMUM_TAG_JACCARD don't enter the index."""
+    weak_jaccard = MINIMUM_TAG_JACCARD - 0.05
+    scorer = SimilarArtistScorer(
+        anchor_signals={"anchor": ("Anchor", DIRECT_FOLLOW_WEIGHT)},
+        similar_by_anchor={},
+        tag_similar_by_anchor={
+            "anchor": [_payload("Weak Match", weak_jaccard)],
+        },
+    )
+    event = _FakeEvent(artists=["Weak Match"])
+    assert scorer.score(event) is None  # type: ignore[arg-type]
+
+
+def test_tag_overlap_signal_omitted_when_argument_missing() -> None:
+    """Constructing without tag_similar_by_anchor is backwards compatible."""
+    scorer = SimilarArtistScorer(
+        anchor_signals={"anchor": ("Anchor", DIRECT_FOLLOW_WEIGHT)},
+        similar_by_anchor={"anchor": [_payload("Lucy", 0.9)]},
+    )
+    event = _FakeEvent(artists=["Lucy"])
+    result = scorer.score(event)  # type: ignore[arg-type]
+    assert result is not None
+    assert result["matched_similar_artists"][0]["match_kind"] == MATCH_KIND_LASTFM
+
+
+def test_tag_similarity_weight_constant_is_below_one() -> None:
+    """A tag-overlap match must always be discounted vs Last.fm."""
+    assert 0 < TAG_SIMILARITY_WEIGHT < 1.0
+
+
+def test_match_kind_constants_are_distinct() -> None:
+    """Frontend dispatch on the kind label assumes unique values."""
+    assert MATCH_KIND_LASTFM != MATCH_KIND_TAG_OVERLAP
+
+
+def test_tag_overlap_match_for_anchor_with_no_lastfm_data() -> None:
+    """Reproduce the spec case: anchor has only tag-overlap edges."""
+    scorer = SimilarArtistScorer(
+        anchor_signals={"new band": ("New Band", DIRECT_FOLLOW_WEIGHT)},
+        similar_by_anchor={},
+        tag_similar_by_anchor={
+            "new band": [_payload("Other Local", 0.4)],
+        },
+    )
+    event = _FakeEvent(artists=["Other Local"])
+    result = scorer.score(event)  # type: ignore[arg-type]
+    assert result is not None
+    matched = result["matched_similar_artists"][0]
+    assert matched["match_kind"] == MATCH_KIND_TAG_OVERLAP
+    assert matched["anchor_name"] == "New Band"

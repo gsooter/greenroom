@@ -39,11 +39,13 @@ from backend.recommendations.scorers.followed_venue import FollowedVenueScorer
 from backend.recommendations.scorers.similar_artist import (
     DIRECT_FOLLOW_WEIGHT,
     MINIMUM_SIMILARITY_SCORE,
+    MINIMUM_TAG_JACCARD,
     RECENT_LISTEN_WEIGHT,
     TOP_ARTIST_WEIGHT,
     SimilarArtistScorer,
 )
 from backend.recommendations.scorers.venue_affinity import VenueAffinityScorer
+from backend.services.artist_similarity import find_artists_by_tag_similarity
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -131,10 +133,20 @@ def generate_for_user(
 
     events = _fetch_scoreable_events(session)
     artist_canonical_genres = _fetch_artist_canonical_genres(session, events)
-    anchor_signals, similar_by_anchor = _fetch_similar_artist_signals(
+    (
+        anchor_signals,
+        similar_by_anchor,
+        anchor_artist_ids,
+    ) = _fetch_similar_artist_signals(
         session,
         user=user,
         followed_artists=followed_artists,
+    )
+    tag_similar_by_anchor = _fetch_tag_similar_signals(
+        session,
+        anchor_signals=anchor_signals,
+        anchor_artist_ids=anchor_artist_ids,
+        candidate_events=events,
     )
     scorers = _build_scorers(
         user,
@@ -144,6 +156,7 @@ def generate_for_user(
         artist_canonical_genres=artist_canonical_genres,
         anchor_signals=anchor_signals,
         similar_by_anchor=similar_by_anchor,
+        tag_similar_by_anchor=tag_similar_by_anchor,
     )
 
     scored: list[tuple[float, dict[str, Any], Event]] = []
@@ -214,6 +227,7 @@ def _build_scorers(
     artist_canonical_genres: dict[str, list[str]] | None = None,
     anchor_signals: dict[str, tuple[str, float]] | None = None,
     similar_by_anchor: dict[str, list[dict[str, Any]]] | None = None,
+    tag_similar_by_anchor: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[Scorer]:
     """Instantiate the active scorer set for a user.
 
@@ -249,6 +263,7 @@ def _build_scorers(
         SimilarArtistScorer(
             anchor_signals=anchor_signals or {},
             similar_by_anchor=similar_by_anchor or {},
+            tag_similar_by_anchor=tag_similar_by_anchor or {},
         ),
         FollowedVenueScorer(followed_venues or {}),
         VenueAffinityScorer(venue_affinity),
@@ -289,7 +304,11 @@ def _fetch_similar_artist_signals(
     *,
     user: User,
     followed_artists: dict[str, Any],
-) -> tuple[dict[str, tuple[str, float]], dict[str, list[dict[str, Any]]]]:
+) -> tuple[
+    dict[str, tuple[str, float]],
+    dict[str, list[dict[str, Any]]],
+    dict[str, Any],
+]:
     """Build the anchor signal map and similarity lookup for the scorer.
 
     Anchors come from three sources in priority order:
@@ -313,13 +332,17 @@ def _fetch_similar_artist_signals(
             :func:`follows_repo.list_followed_artist_signals`.
 
     Returns:
-        A tuple of ``(anchor_signals, similar_by_anchor)``:
+        A tuple of ``(anchor_signals, similar_by_anchor,
+        anchor_artist_ids)``:
 
             * ``anchor_signals``: ``{normalized_anchor_name: (display,
               weight)}`` covering every anchor with a matching artist
               row.
             * ``similar_by_anchor``: ``{normalized_anchor_name:
               [{similar_artist_name, similarity_score}, ...]}``.
+            * ``anchor_artist_ids``: ``{normalized_anchor_name:
+              artist_uuid}`` for downstream consumers (today, the
+              tag-overlap query path).
     """
     # Build candidate (normalized name → (display, weight)) honoring the
     # priority order: a name that appears as both followed and top
@@ -361,25 +384,27 @@ def _fetch_similar_artist_signals(
         candidates[normalized] = (name, RECENT_LISTEN_WEIGHT)
 
     if not candidates:
-        return {}, {}
+        return {}, {}, {}
 
     name_to_artist_id = artists_repo.list_artist_ids_by_normalized_names(
         session, list(candidates.keys())
     )
     if not name_to_artist_id:
-        return {}, {}
+        return {}, {}, {}
 
     artist_id_to_anchor_key: dict[Any, str] = {}
     anchor_signals: dict[str, tuple[str, float]] = {}
+    anchor_artist_ids: dict[str, Any] = {}
     for normalized, (display, weight) in candidates.items():
         artist_id = name_to_artist_id.get(normalized)
         if artist_id is None:
             continue
         artist_id_to_anchor_key[artist_id] = normalized
         anchor_signals[normalized] = (display, weight)
+        anchor_artist_ids[normalized] = artist_id
 
     if not anchor_signals:
-        return {}, {}
+        return {}, {}, {}
 
     edges = artists_repo.list_similar_artists_for_anchors(
         session,
@@ -394,7 +419,85 @@ def _fetch_similar_artist_signals(
         similar_by_anchor.setdefault(anchor_key, []).append(
             {"similar_artist_name": similar_name, "similarity_score": score}
         )
-    return anchor_signals, similar_by_anchor
+    return anchor_signals, similar_by_anchor, anchor_artist_ids
+
+
+def _fetch_tag_similar_signals(
+    session: Session,
+    *,
+    anchor_signals: dict[str, tuple[str, float]],
+    anchor_artist_ids: dict[str, Any],
+    candidate_events: list[Event],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build the tag-overlap similarity map for the SimilarArtistScorer.
+
+    For each anchor with a matching artist row, queries
+    :func:`backend.services.artist_similarity.find_artists_by_tag_similarity`
+    and keeps only entries whose artist name is named on at least one
+    candidate event — irrelevant overlap rows are filtered out so the
+    flattened scoring index stays small.
+
+    Tag overlap is computed at query time off the GIN-indexed
+    ``granular_tags`` column, so the per-anchor cost is one query
+    against a pre-filtered candidate set. Anchors with no granular
+    tags or no candidates contribute nothing.
+
+    Args:
+        session: Active SQLAlchemy session.
+        anchor_signals: ``{normalized_anchor_name: (display, weight)}``
+            from :func:`_fetch_similar_artist_signals`.
+        anchor_artist_ids: ``{normalized_anchor_name: artist_uuid}``
+            companion map keyed by the same anchor names.
+        candidate_events: The scoreable event set; used to build the
+            set of performer names worth fetching tag-similar matches
+            for.
+
+    Returns:
+        Mapping from normalized anchor name to a list of payloads in
+        the same shape as ``similar_by_anchor`` — each entry has
+        ``similar_artist_name`` and ``similarity_score`` (Jaccard
+        ratio in 0.0-1.0). Empty dict when no anchor has tag-overlap
+        matches against the event set.
+    """
+    if not anchor_signals or not anchor_artist_ids or not candidate_events:
+        return {}
+
+    candidate_names: set[str] = set()
+    for event in candidate_events:
+        for performer in event.artists or []:
+            if isinstance(performer, str) and performer.strip():
+                candidate_names.add(_normalize(performer))
+    if not candidate_names:
+        return {}
+
+    # Drop anchors that are themselves in candidate_names to mirror the
+    # scorer's anchor-skip behavior — we never want to score an event
+    # artist against the user's own anchor as "tag-similar."
+    out: dict[str, list[dict[str, Any]]] = {}
+    for anchor_key, anchor_id in anchor_artist_ids.items():
+        results = find_artists_by_tag_similarity(
+            session,
+            anchor_id,
+            min_overlap=3,
+        )
+        if not results:
+            continue
+        payloads: list[dict[str, Any]] = []
+        for result in results:
+            normalized = _normalize(result.artist_name)
+            if not normalized or normalized not in candidate_names:
+                continue
+            if result.jaccard_score < MINIMUM_TAG_JACCARD:
+                continue
+            payloads.append(
+                {
+                    "similar_artist_name": result.artist_name,
+                    "similarity_score": result.jaccard_score,
+                }
+            )
+        if payloads:
+            out[anchor_key] = payloads
+    return out
 
 
 def _dedupe_by_show(
@@ -502,11 +605,18 @@ def _build_match_reasons(breakdown: dict[str, Any]) -> list[dict[str, Any]]:
             if not anchor_name:
                 continue
             seen_artist_names.add(name.lower())
+            match_kind = matched.get("match_kind", "lastfm")
+            if match_kind == "tag_overlap":
+                similar_kind = "tag_overlap"
+                similar_label = f"Shares tags with {anchor_name}"
+            else:
+                similar_kind = "similar_artist"
+                similar_label = f"Similar to {anchor_name}"
             reasons.append(
                 {
                     "scorer": "similar_artist",
-                    "kind": "similar_artist",
-                    "label": f"Similar to {anchor_name}",
+                    "kind": similar_kind,
+                    "label": similar_label,
                     "artist_name": name,
                     "anchor_name": anchor_name,
                 }

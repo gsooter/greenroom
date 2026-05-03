@@ -98,6 +98,18 @@ class Artist(TimestampMixin, Base):
             row has never been considered. Set on every attempt —
             including no-match outcomes — so the nightly task can skip
             already-enriched rows.
+        granular_tags: Deduplicated, filtered, frequency-trimmed list of
+            discriminative tags consolidated from MusicBrainz and
+            Last.fm sources (Decision 060). Drives the tag-overlap
+            similarity query that complements the Last.fm collaborative
+            similarity signal for artists with thin Last.fm coverage.
+            Defaults to an empty array so similarity queries never need
+            a None check.
+        granular_tags_consolidated_at: UTC timestamp of the most recent
+            tag consolidation pass. None means the row has never been
+            consolidated. Set on every attempt so the nightly task can
+            skip already-consolidated rows whose source data has not
+            changed.
     """
 
     __tablename__ = "artists"
@@ -116,6 +128,15 @@ class Artist(TimestampMixin, Base):
             postgresql_using="gin",
         ),
         Index("ix_artists_genres_normalized_at", "genres_normalized_at"),
+        Index(
+            "idx_artists_granular_tags",
+            "granular_tags",
+            postgresql_using="gin",
+        ),
+        Index(
+            "idx_artists_granular_tags_consolidated_at",
+            "granular_tags_consolidated_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -171,6 +192,15 @@ class Artist(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     lastfm_similar_enriched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    granular_tags: Mapped[list[str]] = mapped_column(
+        ARRAY(Text),
+        nullable=False,
+        default=list,
+        server_default="{}",
+    )
+    granular_tags_consolidated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

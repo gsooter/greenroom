@@ -26,6 +26,8 @@ from backend.data.models.events import Event, EventStatus
 from backend.data.models.venues import Venue
 from backend.services.artist_similarity import (
     ArtistSimilarityResult,
+    TagSimilarityResult,
+    find_artists_by_tag_similarity,
     get_similar_artists,
     resolve_similarity_links,
     store_similar_artists,
@@ -38,6 +40,7 @@ def _make_artist(
     *,
     name: str,
     musicbrainz_id: str | None = None,
+    granular_tags: list[str] | None = None,
 ) -> Artist:
     """Insert and return a minimal :class:`Artist` row."""
     artist = Artist(
@@ -45,6 +48,7 @@ def _make_artist(
         normalized_name=name.lower().strip(),
         genres=[],
         musicbrainz_id=musicbrainz_id,
+        granular_tags=granular_tags or [],
     )
     session.add(artist)
     session.flush()
@@ -450,3 +454,284 @@ def test_minimum_score_filter_drops_low_score_rows(session: Session) -> None:
     )
     high_only = get_similar_artists(session, source.id, minimum_score=0.5)
     assert [r.similar_artist_name for r in high_only] == ["High"]
+
+
+# ---------------------------------------------------------------------------
+# find_artists_by_tag_similarity
+# ---------------------------------------------------------------------------
+
+
+def test_tag_similarity_returns_results_sorted_by_jaccard_descending(
+    session: Session,
+) -> None:
+    """Higher overlap → higher Jaccard → higher rank."""
+    source = _make_artist(
+        session,
+        name="Phoebe",
+        granular_tags=["indie folk", "indie rock", "singer-songwriter", "sad"],
+    )
+    high_overlap = _make_artist(
+        session,
+        name="Lucy",
+        granular_tags=["indie folk", "indie rock", "singer-songwriter"],
+    )
+    low_overlap = _make_artist(
+        session,
+        name="Distant",
+        granular_tags=["indie folk", "punk", "hardcore", "noise"],
+    )
+
+    results = find_artists_by_tag_similarity(session, source.id, min_overlap=1)
+
+    names = [r.artist_name for r in results]
+    assert names.index("Lucy") < names.index("Distant")
+    assert results[0].artist_id == high_overlap.id
+    assert results[0].jaccard_score > results[-1].jaccard_score
+    assert all(isinstance(r, TagSimilarityResult) for r in results)
+    assert low_overlap.id in {r.artist_id for r in results}
+
+
+def test_tag_similarity_excludes_source_artist(session: Session) -> None:
+    source = _make_artist(
+        session,
+        name="Source",
+        granular_tags=["indie folk", "indie rock", "shoegaze"],
+    )
+    _make_artist(
+        session,
+        name="Other",
+        granular_tags=["indie folk", "indie rock", "shoegaze"],
+    )
+    results = find_artists_by_tag_similarity(session, source.id, min_overlap=1)
+    assert source.id not in {r.artist_id for r in results}
+
+
+def test_tag_similarity_excludes_artists_with_empty_tags(session: Session) -> None:
+    source = _make_artist(
+        session,
+        name="Source",
+        granular_tags=["indie folk", "indie rock"],
+    )
+    _make_artist(session, name="NoTags", granular_tags=[])
+    matched = _make_artist(
+        session, name="Match", granular_tags=["indie folk", "indie rock"]
+    )
+
+    results = find_artists_by_tag_similarity(session, source.id, min_overlap=1)
+    artist_ids = {r.artist_id for r in results}
+    assert matched.id in artist_ids
+    assert all(
+        r.artist_name != "NoTags" for r in results
+    )  # the empty-tags artist is excluded
+
+
+def test_tag_similarity_respects_min_overlap(session: Session) -> None:
+    """Artists below min_overlap shared tags are filtered out."""
+    source = _make_artist(
+        session,
+        name="Source",
+        granular_tags=["indie folk", "indie rock", "shoegaze", "dream pop"],
+    )
+    _make_artist(
+        session,
+        name="OneShared",
+        granular_tags=["indie folk", "punk", "hardcore"],
+    )
+    _make_artist(
+        session,
+        name="ThreeShared",
+        granular_tags=["indie folk", "indie rock", "shoegaze", "noise"],
+    )
+
+    results = find_artists_by_tag_similarity(session, source.id, min_overlap=3)
+    names = [r.artist_name for r in results]
+    assert "ThreeShared" in names
+    assert "OneShared" not in names
+
+
+def test_tag_similarity_jaccard_score_matches_manual_computation(
+    session: Session,
+) -> None:
+    """Jaccard score (intersect over union) is computed correctly for known inputs."""
+    source = _make_artist(
+        session, name="A", granular_tags=["one", "two", "three", "four"]
+    )
+    _make_artist(
+        session,
+        name="B",
+        granular_tags=["two", "three", "five"],
+    )
+
+    results = find_artists_by_tag_similarity(session, source.id, min_overlap=1)
+    assert len(results) == 1
+    # Intersect = {two, three}, size 2; union = {one,two,three,four,five}, size 5.
+    assert results[0].shared_tag_count == 2
+    assert results[0].total_tag_union == 5
+    assert results[0].jaccard_score == pytest.approx(2 / 5)
+
+
+def test_tag_similarity_returns_empty_for_unknown_source(session: Session) -> None:
+    assert find_artists_by_tag_similarity(session, uuid.uuid4()) == []
+
+
+def test_tag_similarity_returns_empty_when_source_has_no_tags(
+    session: Session,
+) -> None:
+    """A source artist with no granular tags has nothing to compare against."""
+    source = _make_artist(session, name="Empty", granular_tags=[])
+    _make_artist(session, name="Other", granular_tags=["indie folk"])
+
+    assert find_artists_by_tag_similarity(session, source.id) == []
+
+
+def test_tag_similarity_respects_limit(session: Session) -> None:
+    source = _make_artist(
+        session, name="Source", granular_tags=["a", "b", "c", "d", "e"]
+    )
+    for i in range(10):
+        _make_artist(
+            session,
+            name=f"Match{i}",
+            granular_tags=["a", "b", "c"],
+        )
+
+    results = find_artists_by_tag_similarity(session, source.id, min_overlap=1, limit=4)
+    assert len(results) == 4
+
+
+def test_tag_similarity_only_with_upcoming_shows_filters_correctly(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    source = _make_artist(
+        session,
+        name="Source",
+        granular_tags=["indie folk", "indie rock", "shoegaze"],
+    )
+    has_show = _make_artist(
+        session, name="Has Show", granular_tags=["indie folk", "indie rock", "shoegaze"]
+    )
+    _make_artist(
+        session, name="No Show", granular_tags=["indie folk", "indie rock", "shoegaze"]
+    )
+
+    city = make_city()
+    venue = make_venue(city=city)
+    make_event(venue=venue, artists=["Has Show"])
+
+    results = find_artists_by_tag_similarity(
+        session,
+        source.id,
+        min_overlap=2,
+        only_with_upcoming_shows=True,
+        city_id=city.id,
+    )
+    names = [r.artist_name for r in results]
+    assert names == ["Has Show"]
+    assert results[0].artist_id == has_show.id
+    assert results[0].upcoming_show_count == 1
+
+
+def test_tag_similarity_only_with_upcoming_shows_requires_city(
+    session: Session,
+) -> None:
+    source = _make_artist(session, name="S", granular_tags=["a", "b"])
+    _make_artist(session, name="O", granular_tags=["a", "b"])
+    assert (
+        find_artists_by_tag_similarity(
+            session, source.id, only_with_upcoming_shows=True, city_id=None
+        )
+        == []
+    )
+
+
+def test_tag_similarity_excludes_past_events_in_magic_query(
+    session: Session,
+    make_city: Callable[..., City],
+    make_venue: Callable[..., Venue],
+    make_event: Callable[..., Event],
+) -> None:
+    source = _make_artist(
+        session, name="Source", granular_tags=["indie", "folk", "rock"]
+    )
+    _make_artist(session, name="Past", granular_tags=["indie", "folk", "rock"])
+    city = make_city()
+    venue = make_venue(city=city)
+    make_event(
+        venue=venue,
+        artists=["Past"],
+        starts_at=datetime.now(UTC) - timedelta(days=7),
+    )
+    results = find_artists_by_tag_similarity(
+        session,
+        source.id,
+        min_overlap=2,
+        only_with_upcoming_shows=True,
+        city_id=city.id,
+    )
+    assert results == []
+
+
+def test_tag_similarity_result_dataclass_fields() -> None:
+    fields: Any = TagSimilarityResult.__dataclass_fields__  # type: ignore[attr-defined]
+    assert "artist_id" in fields
+    assert "artist_name" in fields
+    assert "shared_tag_count" in fields
+    assert "total_tag_union" in fields
+    assert "jaccard_score" in fields
+    assert "upcoming_show_count" in fields
+
+
+# ---------------------------------------------------------------------------
+# Integration-style: full pipeline through consolidate + similarity
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_consolidate_then_query_for_indie_folk_artist(
+    session: Session,
+) -> None:
+    """End-to-end smoke: consolidation output drives a meaningful query."""
+    from backend.services.tag_consolidation import consolidate_artist_tags
+
+    def mb_genre(name: str, count: int = 6) -> dict[str, Any]:
+        return {"name": name, "count": count}
+
+    def lfm_tag(name: str) -> dict[str, Any]:
+        return {"name": name, "url": f"https://last.fm/tag/{name}"}
+
+    # Three artists in the same indie-folk neighborhood, plus one
+    # outlier that should not surface.
+    source = Artist(
+        name="Phoebe",
+        normalized_name="phoebe",
+        genres=[],
+        musicbrainz_genres=[mb_genre("indie folk", 12), mb_genre("indie rock", 8)],
+        lastfm_tags=[lfm_tag("indie folk"), lfm_tag("singer-songwriter")],
+    )
+    near = Artist(
+        name="Lucy",
+        normalized_name="lucy",
+        genres=[],
+        musicbrainz_genres=[mb_genre("indie rock", 6)],
+        lastfm_tags=[lfm_tag("indie folk"), lfm_tag("singer-songwriter")],
+    )
+    outlier = Artist(
+        name="Hardcore",
+        normalized_name="hardcore-band",
+        genres=[],
+        lastfm_tags=[lfm_tag("hardcore"), lfm_tag("punk"), lfm_tag("metalcore")],
+    )
+    session.add_all([source, near, outlier])
+    session.flush()
+
+    consolidate_artist_tags(session, source.id)
+    consolidate_artist_tags(session, near.id)
+    consolidate_artist_tags(session, outlier.id)
+    session.flush()
+
+    results = find_artists_by_tag_similarity(session, source.id, min_overlap=1)
+    names = [r.artist_name for r in results]
+    assert "Lucy" in names
+    assert "Hardcore" not in names
