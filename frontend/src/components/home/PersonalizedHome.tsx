@@ -13,9 +13,11 @@
  * * Authenticated, payload still loading → skeleton placeholders.
  * * Authenticated, ``has_signal === false`` → welcome prompt to
  *   connect a music service or follow some artists.
- * * Authenticated, ``has_signal === true`` → Section 1
- *   (recommendations w/ reasons) and Section 2 (new-since-last-visit
- *   w/ NEW badges) above the SSR'd browse view.
+ * * Authenticated, ``has_signal === true`` → "New since your last
+ *   visit" leads (so returning users see what's actually new at the
+ *   top), followed by "Coming up that you'll care about" with reason
+ *   chips. The card density toggle lives at the top of the
+ *   personalized area and threads through both sections.
  */
 
 "use client";
@@ -23,11 +25,13 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import CompactModeToggle from "@/components/home/CompactModeToggle";
 import EventCard from "@/components/events/EventCard";
 import RecommendationCard from "@/components/recommendations/RecommendationCard";
 import RecommendationGridSkeleton from "@/components/recommendations/RecommendationGridSkeleton";
 import { getHome } from "@/lib/api/home";
 import { useAuth } from "@/lib/auth";
+import { useCompactMode } from "@/lib/home-preferences";
 import type { EventSummary, HomePayload, Recommendation } from "@/types";
 
 type Status = "idle" | "loading" | "ready" | "error";
@@ -38,6 +42,7 @@ export default function PersonalizedHome(): JSX.Element | null {
   const { isAuthenticated, isLoading: authLoading, token, user } = useAuth();
   const [status, setStatus] = useState<Status>("idle");
   const [payload, setPayload] = useState<HomePayload | null>(null);
+  const [compact] = useCompactMode();
 
   useEffect(() => {
     if (authLoading) return;
@@ -98,13 +103,20 @@ export default function PersonalizedHome(): JSX.Element | null {
 
   return (
     <>
+      <div className="flex justify-end pb-2">
+        <CompactModeToggle />
+      </div>
+      {payload.new_since_last_visit.length > 0 ? (
+        <NewSinceLastVisitSection
+          events={payload.new_since_last_visit}
+          compact={compact}
+        />
+      ) : null}
       <RecommendationsSection
         recommendations={payload.recommendations}
         popularityFallback={payload.popularity_fallback}
+        compact={compact}
       />
-      {payload.new_since_last_visit.length > 0 ? (
-        <NewSinceLastVisitSection events={payload.new_since_last_visit} />
-      ) : null}
     </>
   );
 }
@@ -112,10 +124,16 @@ export default function PersonalizedHome(): JSX.Element | null {
 function RecommendationsSection({
   recommendations,
   popularityFallback,
+  compact,
 }: {
   recommendations: Recommendation[];
   popularityFallback: EventSummary[];
+  compact: boolean;
 }): JSX.Element {
+  const gridClasses = compact
+    ? "flex flex-col gap-2"
+    : "grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3";
+
   return (
     <section className="flex flex-col gap-4 pb-10" data-testid="home-section-recs">
       <header className="flex flex-wrap items-end justify-between gap-2">
@@ -135,15 +153,15 @@ function RecommendationsSection({
         </Link>
       </header>
 
-      <ul className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <ul className={gridClasses} data-compact={compact ? "true" : "false"}>
         {recommendations.map((rec) => (
           <li key={rec.id}>
-            <RecommendationCard recommendation={rec} />
+            <RecommendationCard recommendation={rec} compact={compact} />
           </li>
         ))}
         {popularityFallback.map((event) => (
           <li key={`fallback-${event.id}`} className="flex flex-col gap-2">
-            <EventCard event={event} />
+            <EventCard event={event} compact={compact} />
             <span className="self-start rounded-full bg-bg-surface px-3 py-1 text-xs font-medium text-text-secondary">
               Popular in DC
             </span>
@@ -156,11 +174,19 @@ function RecommendationsSection({
 
 function NewSinceLastVisitSection({
   events,
+  compact,
 }: {
   events: EventSummary[];
+  compact: boolean;
 }): JSX.Element {
   const inline = events.slice(0, NEW_SECTION_INLINE_LIMIT);
   const remaining = Math.max(0, events.length - NEW_SECTION_INLINE_LIMIT);
+
+  const listClasses = compact
+    ? "flex flex-col gap-2"
+    : inline.length <= 3
+      ? "flex flex-wrap gap-4"
+      : "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4";
 
   return (
     <section
@@ -184,25 +210,26 @@ function NewSinceLastVisitSection({
         ) : null}
       </header>
 
-      <ul
-        className={
-          inline.length <= 3
-            ? "flex flex-wrap gap-4"
-            : "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
-        }
-      >
+      <ul className={listClasses} data-compact={compact ? "true" : "false"}>
         {inline.map((event) => (
           <li
             key={event.id}
-            className={`relative ${inline.length <= 3 ? "min-w-[260px] flex-1" : ""}`}
+            className={`relative ${
+              !compact && inline.length <= 3 ? "min-w-[260px] flex-1" : ""
+            }`}
           >
             <span
-              className="absolute left-3 top-3 z-30 rounded-full bg-blush-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blush-accent"
+              className={
+                "absolute z-30 rounded-full bg-blush-soft font-bold uppercase tracking-wider text-blush-accent " +
+                (compact
+                  ? "left-2 top-2 px-1.5 py-px text-[9px]"
+                  : "left-3 top-3 px-2 py-0.5 text-[10px]")
+              }
               data-testid="home-new-badge"
             >
               New
             </span>
-            <EventCard event={event} />
+            <EventCard event={event} compact={compact} />
           </li>
         ))}
       </ul>
@@ -242,7 +269,7 @@ function WelcomePrompt({
           Connect Tidal
         </Link>
         <Link
-          href="/welcome"
+          href="/welcome?step=taste&return=/"
           className="rounded-md border border-border bg-bg-white px-4 py-2 text-sm font-semibold text-text-primary hover:border-green-primary"
         >
           Browse artists to follow →
@@ -270,7 +297,7 @@ function ThinSignalPrompt(): JSX.Element {
           Connect Apple Music
         </Link>
         <Link
-          href="/welcome"
+          href="/welcome?step=taste&return=/"
           className="rounded-md border border-border bg-bg-white px-4 py-2 text-sm font-semibold text-text-primary hover:border-green-primary"
         >
           Browse artists →

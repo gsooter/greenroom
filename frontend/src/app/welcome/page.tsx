@@ -7,14 +7,19 @@
  * connect, passkey register) and calls back with done/skip so this
  * page only owns the state-machine transitions.
  *
- * Task #72 adds the post-auth gate that redirects brand-new users
- * here automatically; for now /welcome is reachable directly.
+ * Revisit mode (``?step=<name>``): completed users coming back from
+ * settings or the home page's "Browse artists to follow" links land
+ * here to add more taste signal. When ``?step=`` is present we render
+ * that specific step regardless of ``state.completed`` and exit to the
+ * URL in ``?return=`` (defaulting to /settings) on done/skip — the
+ * normal onboarding flow leaves both query params unset and keeps its
+ * existing redirect-to-/for-you behavior.
  */
 
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import { MusicServicesStep } from "@/components/welcome/MusicServicesStep";
 import { PasskeyStep } from "@/components/welcome/PasskeyStep";
@@ -37,13 +42,59 @@ const STEP_ORDER: readonly OnboardingStepName[] = [
   "passkey",
 ];
 
+const DEFAULT_REVISIT_RETURN = "/settings";
+
+/**
+ * Coerce a raw ``?step=`` value into a valid step name.
+ *
+ * Returns null for missing or unknown values so the page can fall
+ * through to its server-state-driven flow.
+ */
+function parseRequestedStep(raw: string | null): OnboardingStepName | null {
+  if (!raw) return null;
+  return STEP_ORDER.includes(raw as OnboardingStepName)
+    ? (raw as OnboardingStepName)
+    : null;
+}
+
+/**
+ * Sanitize the ``?return=`` value to avoid open-redirect issues.
+ *
+ * Only same-origin paths starting with ``/`` are accepted, mirroring
+ * the convention the auth callbacks use for post-login routing.
+ */
+function parseReturnUrl(raw: string | null): string {
+  if (!raw) return DEFAULT_REVISIT_RETURN;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return DEFAULT_REVISIT_RETURN;
+  return raw;
+}
+
+/**
+ * Default export wraps the inner page in a Suspense boundary because
+ * ``useSearchParams`` opts the route into Next.js's dynamic rendering
+ * pipeline. Without the boundary, ``next build`` fails the entire
+ * /welcome prerender pass.
+ */
 export default function WelcomePage(): JSX.Element {
+  return (
+    <Suspense fallback={<Shell>Loading…</Shell>}>
+      <WelcomePageInner />
+    </Suspense>
+  );
+}
+
+function WelcomePageInner(): JSX.Element {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, token, isLoading, isAuthenticated, refreshUser } =
     useRequireAuth();
 
   const [state, setState] = useState<OnboardingState | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
+
+  const requestedStep = parseRequestedStep(searchParams.get("step"));
+  const returnUrl = parseReturnUrl(searchParams.get("return"));
+  const isRevisit = requestedStep !== null;
 
   useEffect(() => {
     if (!token) return;
@@ -53,19 +104,23 @@ export default function WelcomePage(): JSX.Element {
   }, [token]);
 
   const currentStep = useMemo<OnboardingStepName | null>(() => {
+    if (requestedStep) return requestedStep;
     if (!state) return null;
     if (state.completed) return null;
     for (const step of STEP_ORDER) {
       if (!state.steps[step]) return step;
     }
     return null;
-  }, [state]);
+  }, [requestedStep, state]);
 
   useEffect(() => {
+    // Revisit mode never auto-redirects — the user is here on purpose
+    // even though their onboarding row says completed.
+    if (isRevisit) return;
     if (state?.completed) {
       router.replace("/for-you");
     }
-  }, [router, state]);
+  }, [isRevisit, router, state]);
 
   const completeStep = useCallback(
     async (step: OnboardingStepName) => {
@@ -74,11 +129,14 @@ export default function WelcomePage(): JSX.Element {
       try {
         const next = await markStepComplete(token, step);
         setState(next);
+        if (isRevisit) {
+          router.replace(returnUrl);
+        }
       } finally {
         setSaving(false);
       }
     },
-    [token],
+    [isRevisit, returnUrl, router, token],
   );
 
   const skipAll = useCallback(async () => {
@@ -103,13 +161,15 @@ export default function WelcomePage(): JSX.Element {
 
   return (
     <Shell>
-      <div className="mb-6">
-        <WelcomeProgress
-          steps={STEP_ORDER}
-          current={currentStep}
-          completedMap={state.steps}
-        />
-      </div>
+      {!isRevisit ? (
+        <div className="mb-6">
+          <WelcomeProgress
+            steps={STEP_ORDER}
+            current={currentStep}
+            completedMap={state.steps}
+          />
+        </div>
+      ) : null}
 
       {currentStep === "taste" ? (
         <TasteStep
@@ -146,14 +206,25 @@ export default function WelcomePage(): JSX.Element {
       ) : null}
 
       <div className="mt-10 space-y-2 border-t border-border pt-4 text-center">
-        <button
-          type="button"
-          onClick={() => void skipAll()}
-          disabled={saving}
-          className="text-xs text-text-secondary underline underline-offset-2 disabled:opacity-60"
-        >
-          Skip the whole setup
-        </button>
+        {isRevisit ? (
+          <button
+            type="button"
+            onClick={() => router.replace(returnUrl)}
+            disabled={saving}
+            className="text-xs text-text-secondary underline underline-offset-2 disabled:opacity-60"
+          >
+            Done — back to settings
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void skipAll()}
+            disabled={saving}
+            className="text-xs text-text-secondary underline underline-offset-2 disabled:opacity-60"
+          >
+            Skip the whole setup
+          </button>
+        )}
         <p className="text-xs text-text-secondary">
           Stuck? We&apos;re at{" "}
           <a

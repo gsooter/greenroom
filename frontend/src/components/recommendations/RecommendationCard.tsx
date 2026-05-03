@@ -13,14 +13,21 @@ import type { Recommendation, RecommendationMatchReason } from "@/types";
 
 interface RecommendationCardProps {
   recommendation: Recommendation;
+  /**
+   * When true, render the embedded event card in its single-row
+   * compact variant. Reason chips still appear below the card —
+   * they're already short enough to add minimal vertical space.
+   */
+  compact?: boolean;
 }
 
 export default function RecommendationCard({
   recommendation,
+  compact = false,
 }: RecommendationCardProps): JSX.Element {
   return (
     <div className="flex flex-col gap-2">
-      <EventCard event={recommendation.event} />
+      <EventCard event={recommendation.event} compact={compact} />
       <ReasonChips reasons={recommendation.match_reasons} />
     </div>
   );

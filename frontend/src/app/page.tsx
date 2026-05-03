@@ -21,7 +21,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
-import EventCard from "@/components/events/EventCard";
+import BrowseCardGrid from "@/components/home/BrowseCardGrid";
 import PersonalizedHome from "@/components/home/PersonalizedHome";
 import EmptyState from "@/components/ui/EmptyState";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
@@ -174,11 +174,7 @@ export default async function HomePage() {
             description="The overnight scraper will populate events shortly. Check back soon."
           />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {upcoming.map((event) => (
-              <EventCard key={event.id} event={event} />
-            ))}
-          </div>
+          <BrowseCardGrid events={upcoming} />
         )}
       </section>
     </>
