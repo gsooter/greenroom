@@ -33,15 +33,32 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/components/events/EventCard", () => ({
   __esModule: true,
-  default: ({ event }: { event: { id: string; title: string } }) => (
-    <div data-testid="event-card">{event.title}</div>
+  default: ({
+    event,
+    compact,
+  }: {
+    event: { id: string; title: string };
+    compact?: boolean;
+  }) => (
+    <div data-testid="event-card" data-compact={compact ? "true" : "false"}>
+      {event.title}
+    </div>
   ),
 }));
 
 vi.mock("@/components/recommendations/RecommendationCard", () => ({
   __esModule: true,
-  default: ({ recommendation }: { recommendation: Recommendation }) => (
-    <div data-testid="recommendation-card">
+  default: ({
+    recommendation,
+    compact,
+  }: {
+    recommendation: Recommendation;
+    compact?: boolean;
+  }) => (
+    <div
+      data-testid="recommendation-card"
+      data-compact={compact ? "true" : "false"}
+    >
       <span>{recommendation.event.title}</span>
       <ul>
         {recommendation.match_reasons.map((r) => (
@@ -123,10 +140,12 @@ const mockUser: User = {
 beforeEach(() => {
   getHomeMock.mockReset();
   useAuthMock.mockReset();
+  window.localStorage.clear();
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
 });
 
 describe("PersonalizedHome", () => {
@@ -312,6 +331,116 @@ describe("PersonalizedHome", () => {
       expect(screen.getByTestId("home-section-thin-signal")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("home-section-recs")).toBeNull();
+  });
+
+  it("renders the new-since section above the recommendations section", async () => {
+    useAuthMock.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      token: "tok",
+      user: mockUser,
+    });
+    getHomeMock.mockResolvedValue(
+      payloadWith({
+        has_signal: true,
+        recommendations: [
+          buildRecommendation({ id: "rec-A" }),
+          buildRecommendation({
+            id: "rec-B",
+            event: buildEvent({ id: "rec-B-evt", title: "Show B" }),
+          }),
+          buildRecommendation({
+            id: "rec-C",
+            event: buildEvent({ id: "rec-C-evt", title: "Show C" }),
+          }),
+        ],
+        new_since_last_visit: [buildEvent({ id: "n1", title: "Newly Announced" })],
+      }),
+    );
+
+    render(<PersonalizedHome />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-section-new")).toBeInTheDocument();
+    });
+
+    const newSection = screen.getByTestId("home-section-new");
+    const recsSection = screen.getByTestId("home-section-recs");
+    // Document order: new-since must come before recommendations.
+    expect(
+      newSection.compareDocumentPosition(recsSection) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("threads the compact preference through to recommendation and event cards", async () => {
+    window.localStorage.setItem("greenroom.home.compact", "true");
+    useAuthMock.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      token: "tok",
+      user: mockUser,
+    });
+    getHomeMock.mockResolvedValue(
+      payloadWith({
+        has_signal: true,
+        recommendations: [
+          buildRecommendation({ id: "rec-A" }),
+          buildRecommendation({
+            id: "rec-B",
+            event: buildEvent({ id: "evt-B", title: "Show B" }),
+          }),
+          buildRecommendation({
+            id: "rec-C",
+            event: buildEvent({ id: "evt-C", title: "Show C" }),
+          }),
+        ],
+        new_since_last_visit: [buildEvent({ id: "n1", title: "New Show" })],
+      }),
+    );
+
+    render(<PersonalizedHome />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-section-recs")).toBeInTheDocument();
+    });
+    const recCards = screen.getAllByTestId("recommendation-card");
+    expect(recCards.length).toBeGreaterThan(0);
+    recCards.forEach((card) =>
+      expect(card).toHaveAttribute("data-compact", "true"),
+    );
+    expect(
+      within(screen.getByTestId("home-section-new")).getByTestId("event-card"),
+    ).toHaveAttribute("data-compact", "true");
+  });
+
+  it("renders the compact-mode toggle when the personalized layout shows", async () => {
+    useAuthMock.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      token: "tok",
+      user: mockUser,
+    });
+    getHomeMock.mockResolvedValue(
+      payloadWith({
+        has_signal: true,
+        recommendations: [
+          buildRecommendation({ id: "r1" }),
+          buildRecommendation({
+            id: "r2",
+            event: buildEvent({ id: "e2", title: "Show 2" }),
+          }),
+          buildRecommendation({
+            id: "r3",
+            event: buildEvent({ id: "e3", title: "Show 3" }),
+          }),
+        ],
+      }),
+    );
+    render(<PersonalizedHome />);
+    await waitFor(() =>
+      expect(screen.getByTestId("home-compact-toggle")).toBeInTheDocument(),
+    );
   });
 
   it("shows the skeleton while the home payload is in flight", async () => {
