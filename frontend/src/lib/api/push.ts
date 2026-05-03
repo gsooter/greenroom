@@ -89,7 +89,7 @@ export async function getVapidPublicKey(): Promise<string> {
 }
 
 export async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
-  if (!("serviceWorker" in navigator)) {
+  if (typeof navigator === "undefined" || !navigator.serviceWorker) {
     throw new Error("Service workers are not supported in this browser.");
   }
   const existing = await navigator.serviceWorker.getRegistration("/");
@@ -171,16 +171,19 @@ export async function enablePush(token: string): Promise<PushSubscription> {
       "Push notifications aren't configured for this environment yet.",
     );
   }
-  if (!("Notification" in window)) {
+  const NotificationApi = (
+    globalThis as { Notification?: typeof Notification }
+  ).Notification;
+  if (!NotificationApi) {
     throw new PushUnavailableError(
       "browser_unsupported",
       "This browser doesn't support push notifications.",
     );
   }
   const permission =
-    Notification.permission === "default"
-      ? await Notification.requestPermission()
-      : Notification.permission;
+    NotificationApi.permission === "default"
+      ? await NotificationApi.requestPermission()
+      : NotificationApi.permission;
   if (permission !== "granted") {
     throw new PushUnavailableError(
       "permission_denied",
@@ -196,7 +199,7 @@ export async function enablePush(token: string): Promise<PushSubscription> {
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = window.atob(base64);
+  const raw = globalThis.atob(base64);
   const output = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; ++i) output[i] = raw.charCodeAt(i);
   return output;
