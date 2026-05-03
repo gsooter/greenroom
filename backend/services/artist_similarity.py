@@ -32,7 +32,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import String, cast, func, select, update
+from sqlalchemy import String, bindparam, cast, func, select, text, update
+from sqlalchemy.dialects.postgresql import ARRAY
 
 from backend.core.logging import get_logger
 from backend.data.models.artist_similarity import ArtistSimilarity
@@ -51,6 +52,18 @@ logger = get_logger(__name__)
 
 DEFAULT_SOURCE = "lastfm"
 DEFAULT_LIMIT = 20
+
+# Source label written to ``artist_similarity.source`` (or returned by
+# the tag-overlap query) to distinguish tag-derived similarity from
+# Last.fm collaborative similarity. The source enum on
+# :class:`ArtistSimilarity` is informal (Decision 059), so adding a
+# new value does not require a schema change.
+TAG_OVERLAP_SOURCE = "tag_overlap"
+
+# Default minimum number of shared tags required for a tag-overlap
+# match to be useful. Below three, the Jaccard score becomes too noisy
+# — two artists sharing one tag is a coincidence, three is a pattern.
+DEFAULT_TAG_OVERLAP_MIN = 3
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -80,6 +93,33 @@ class ArtistSimilarityResult:
     similar_artist_mbid: str | None
     similarity_score: float
     source: str
+    upcoming_show_count: int
+
+
+@dataclass(frozen=True)
+class TagSimilarityResult:
+    """One artist returned by :func:`find_artists_by_tag_similarity`.
+
+    Computed at query time from :attr:`Artist.granular_tags` overlap
+    with the source artist; never persisted.
+
+    Attributes:
+        artist_id: UUID of the matching :class:`Artist` row.
+        artist_name: Display name of the matching artist.
+        shared_tag_count: Size of the tag intersection.
+        total_tag_union: Size of the tag union — denominator of the
+            Jaccard score.
+        jaccard_score: ``|A ∩ B| / |A U B|`` in 0.0-1.0.
+        upcoming_show_count: Count of upcoming non-cancelled events
+            featuring the matching artist in the requested city. Zero
+            when ``only_with_upcoming_shows`` was not requested.
+    """
+
+    artist_id: uuid.UUID
+    artist_name: str
+    shared_tag_count: int
+    total_tag_union: int
+    jaccard_score: float
     upcoming_show_count: int
 
 
@@ -477,3 +517,181 @@ def _event_features_artist_clause(artist_name: str) -> Any:
         A SQLAlchemy boolean expression suitable for ``.where(...)``.
     """
     return cast(artist_name, String) == func.any(Event.artists)
+
+
+def find_artists_by_tag_similarity(
+    session: Session,
+    source_artist_id: uuid.UUID,
+    *,
+    min_overlap: int = DEFAULT_TAG_OVERLAP_MIN,
+    limit: int = DEFAULT_LIMIT,
+    only_with_upcoming_shows: bool = False,
+    city_id: uuid.UUID | None = None,
+) -> list[TagSimilarityResult]:
+    """Find artists with overlapping granular tags, ranked by Jaccard similarity.
+
+    Computes ``|A ∩ B| / |A U B|`` between the source artist's
+    ``granular_tags`` and every other artist's ``granular_tags`` at
+    query time. The GIN index on ``granular_tags`` keeps the
+    ``&&``-overlap pre-filter sub-linear; the per-row intersection
+    cost is then bounded by the small candidate set that survives the
+    pre-filter.
+
+    The query passes the source artist's tags as a parameterized
+    ``text[]`` rather than self-joining the artists table — this is
+    measurably cheaper at scale and lets us short-circuit when the
+    source has empty tags.
+
+    Args:
+        session: Active SQLAlchemy session.
+        source_artist_id: UUID of the artist whose tag-similar peers
+            we want.
+        min_overlap: Minimum number of shared tags. Below this
+            threshold, similarity is too weak to be useful — three
+            shared tags is the floor where the signal beats noise.
+        limit: Maximum number of results to return.
+        only_with_upcoming_shows: When True with ``city_id``, restricts
+            results to artists with at least one upcoming non-
+            cancelled event in that city. This is the magic query —
+            "tag-similar artists with shows in DC."
+        city_id: Required when ``only_with_upcoming_shows`` is True.
+            ``None`` returns an empty list without hitting the DB —
+            without a city scope the magic query loses its locality.
+
+    Returns:
+        List of :class:`TagSimilarityResult` sorted by Jaccard score
+        descending, then by ``upcoming_show_count`` descending as a
+        tiebreaker. Results exclude the source artist, exclude artists
+        with empty granular tags, and exclude rows below
+        ``min_overlap``.
+    """
+    if only_with_upcoming_shows and city_id is None:
+        return []
+
+    source = session.get(Artist, source_artist_id)
+    if source is None:
+        return []
+    source_tags: list[str] = list(source.granular_tags or [])
+    if not source_tags:
+        return []
+
+    # PostgreSQL set operations on text arrays — uses ``unnest`` plus
+    # ``INTERSECT`` for the intersection, then derives the union size
+    # from ``|A| + |B| - |A ∩ B|``. The ``&&`` overlap predicate is
+    # what the GIN index actually services; the intersection
+    # cardinality is computed only on rows that survive the pre-filter.
+    base_sql = """
+        SELECT
+          a.id,
+          a.name,
+          (SELECT COUNT(*) FROM (
+              SELECT UNNEST(a.granular_tags)
+              INTERSECT
+              SELECT UNNEST(CAST(:source_tags AS text[]))
+          ) AS shared_tags)::int AS shared_count,
+          (
+              cardinality(a.granular_tags)
+              + cardinality(CAST(:source_tags AS text[]))
+              - (SELECT COUNT(*) FROM (
+                  SELECT UNNEST(a.granular_tags)
+                  INTERSECT
+                  SELECT UNNEST(CAST(:source_tags AS text[]))
+              ) AS shared_for_union)
+          )::int AS union_count
+        FROM artists a
+        WHERE a.id != :source_id
+          AND a.granular_tags && CAST(:source_tags AS text[])
+          AND cardinality(a.granular_tags) > 0
+    """
+    stmt = text(base_sql).bindparams(
+        bindparam("source_tags", type_=ARRAY(String)),
+        bindparam("source_id"),
+    )
+    rows = session.execute(
+        stmt, {"source_tags": source_tags, "source_id": source_artist_id}
+    ).all()
+
+    candidates: list[TagSimilarityResult] = []
+    for row in rows:
+        shared = int(row.shared_count or 0)
+        union = int(row.union_count or 0)
+        if shared < min_overlap or union <= 0:
+            continue
+        jaccard = shared / union
+        candidates.append(
+            TagSimilarityResult(
+                artist_id=row.id,
+                artist_name=row.name,
+                shared_tag_count=shared,
+                total_tag_union=union,
+                jaccard_score=jaccard,
+                upcoming_show_count=0,
+            )
+        )
+
+    if not candidates:
+        return []
+
+    if only_with_upcoming_shows:
+        # Filter to only artists with upcoming events in the city, and
+        # capture the count for tiebreaking.
+        candidates = _attach_upcoming_show_counts(session, candidates, city_id=city_id)
+        candidates = [c for c in candidates if c.upcoming_show_count > 0]
+
+    candidates.sort(
+        key=lambda r: (-r.jaccard_score, -r.upcoming_show_count, r.artist_name)
+    )
+    return candidates[:limit]
+
+
+def _attach_upcoming_show_counts(
+    session: Session,
+    results: list[TagSimilarityResult],
+    *,
+    city_id: uuid.UUID | None,
+) -> list[TagSimilarityResult]:
+    """Replace each result with one carrying its upcoming-show count.
+
+    Iterates the candidates sequentially because the input list is
+    already small (capped by the GIN-prefiltered overlap query). For
+    larger result sets this would warrant a single batched SQL pass,
+    but at the query's natural scale a per-row count keeps the code
+    readable.
+
+    Args:
+        session: Active SQLAlchemy session.
+        results: Candidates produced by the tag-overlap pre-filter.
+        city_id: City to scope the upcoming-shows filter to. ``None``
+            returns the input unchanged with show counts left at zero.
+
+    Returns:
+        New list of :class:`TagSimilarityResult`, each carrying the
+        count of upcoming non-cancelled events at venues in
+        ``city_id`` whose performer list contains the artist's
+        display name.
+    """
+    if city_id is None:
+        return results
+
+    out: list[TagSimilarityResult] = []
+    for result in results:
+        count_stmt = (
+            select(func.count(Event.id))
+            .join(Venue, Event.venue_id == Venue.id)
+            .where(Venue.city_id == city_id)
+            .where(Event.starts_at >= func.now())
+            .where(Event.status != EventStatus.CANCELLED)
+            .where(_event_features_artist_clause(result.artist_name))
+        )
+        show_count = int(session.execute(count_stmt).scalar_one() or 0)
+        out.append(
+            TagSimilarityResult(
+                artist_id=result.artist_id,
+                artist_name=result.artist_name,
+                shared_tag_count=result.shared_tag_count,
+                total_tag_union=result.total_tag_union,
+                jaccard_score=result.jaccard_score,
+                upcoming_show_count=show_count,
+            )
+        )
+    return out
