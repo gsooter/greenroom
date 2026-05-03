@@ -93,7 +93,7 @@ function FollowedArtistsList({ token }: Props): JSX.Element {
           <p className="text-sm text-text-secondary">
             You aren&apos;t following any artists yet.{" "}
             <Link
-              href="/welcome"
+              href="/welcome?step=taste&return=/settings"
               className="text-text-primary underline underline-offset-2"
             >
               Pick a few from onboarding
