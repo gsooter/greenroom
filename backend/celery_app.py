@@ -41,6 +41,7 @@ def _build_app() -> Celery:
             "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
             "backend.services.genre_normalization_tasks",
+            "backend.services.home_tasks",
             "backend.services.lastfm_similarity_tasks",
             "backend.services.lastfm_tasks",
             "backend.services.musicbrainz_tasks",

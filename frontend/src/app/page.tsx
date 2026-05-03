@@ -1,16 +1,28 @@
 /**
  * Home page — `/` (server-side rendered).
  *
- * Highlights upcoming DMV shows, links into the Events and Venues
- * indexes, and emits site-level JSON-LD so Google and AI crawlers can
- * identify Greenroom as the DMV concert calendar. Public browse — no
- * auth required.
+ * Two-layer experience driven by Decision 063:
+ *
+ * * SSR shell: hero copy + the demoted "Browse all DMV shows" section.
+ *   This is what AI crawlers and unauthenticated visitors see, and it
+ *   is what a signed-in user sees while their personalized payload is
+ *   still in flight.
+ * * Client island (``<PersonalizedHome />``): for signed-in users,
+ *   renders the welcome prompt or the two personalized sections
+ *   ("Coming up that you'll care about" + "New since your last visit")
+ *   above the SSR'd browse view.
+ *
+ * Auth state lives in localStorage so the SSR layer cannot branch on
+ * it — keeping the SSR shell anonymous-first preserves SEO and lets
+ * the personalized island hydrate over the top without flashes of
+ * generic content for users with signal.
  */
 
 import Link from "next/link";
 import type { Metadata } from "next";
 
 import EventCard from "@/components/events/EventCard";
+import PersonalizedHome from "@/components/home/PersonalizedHome";
 import EmptyState from "@/components/ui/EmptyState";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
 import SiteStructuredData from "@/components/seo/SiteStructuredData";
@@ -104,9 +116,21 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-4 pb-10">
+      <PersonalizedHome />
+
+      <hr className="border-border" />
+
+      <section
+        className="flex flex-col gap-4 pb-10 pt-6"
+        data-testid="home-section-browse"
+      >
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <h2 className="text-xl font-semibold">Upcoming across the DMV</h2>
+          <div className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Browse all DMV shows</h2>
+            <p className="text-sm text-text-secondary">
+              Or explore everything happening across the region.
+            </p>
+          </div>
           <div className="flex items-center gap-4">
             <Link
               href="/venues"
@@ -121,6 +145,27 @@ export default async function HomePage() {
               See all →
             </Link>
           </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Link
+            href="/events?window=tonight"
+            className="rounded-full border border-border bg-surface px-3 py-1 text-sm font-medium text-foreground transition hover:border-accent hover:text-accent"
+          >
+            Tonight
+          </Link>
+          <Link
+            href="/events?window=weekend"
+            className="rounded-full border border-border bg-surface px-3 py-1 text-sm font-medium text-foreground transition hover:border-accent hover:text-accent"
+          >
+            This weekend
+          </Link>
+          <Link
+            href="/events?window=week"
+            className="rounded-full border border-border bg-surface px-3 py-1 text-sm font-medium text-foreground transition hover:border-accent hover:text-accent"
+          >
+            Next 7 days
+          </Link>
         </div>
 
         {upcoming.length === 0 ? (

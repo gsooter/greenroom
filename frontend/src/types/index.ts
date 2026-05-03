@@ -260,6 +260,18 @@ export interface Recommendation {
   event: EventSummary;
 }
 
+/**
+ * Composite payload returned by `GET /api/v1/me/home`. Drives the
+ * three-section signed-in home page layout (Decision 063).
+ */
+export interface HomePayload {
+  has_signal: boolean;
+  last_home_visit_at: string | null;
+  recommendations: Recommendation[];
+  popularity_fallback: EventSummary[];
+  new_since_last_visit: EventSummary[];
+}
+
 export interface SpotifyTopArtist {
   id: string | null;
   name: string;
