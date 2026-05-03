@@ -20,7 +20,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/lib/auth";
 import { isAppInstalled } from "@/lib/pwa-detection";
-import { enablePush } from "@/lib/api/push";
+import { enablePush, PushUnavailableError } from "@/lib/api/push";
 
 const DISMISSAL_KEY = "greenroom_push_prompt_dismissed_at";
 const ENABLED_KEY = "greenroom_push_enabled";
@@ -82,11 +82,14 @@ export function NotificationPermissionPrompt(): JSX.Element | null {
       }
       setHidden(true);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Could not enable notifications.",
-      );
+      // PushUnavailableError carries a friendly message already; for
+      // any other error fall back to a generic line so we never leak
+      // raw HTTP status text into the UI.
+      if (err instanceof PushUnavailableError) {
+        setError(err.message);
+      } else {
+        setError("Could not enable notifications. Try again in a moment.");
+      }
     } finally {
       setBusy(false);
     }
