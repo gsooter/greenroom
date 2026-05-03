@@ -296,7 +296,9 @@ def _ensure_synthetic_user(
     Returns:
         The persisted User row.
     """
-    user = session.execute(select(User).where(User.email == email)).scalar_one_or_none()
+    user: User | None = session.execute(
+        select(User).where(User.email == email)
+    ).scalar_one_or_none()
     if user is None:
         user = User(
             id=uuid.uuid4(),

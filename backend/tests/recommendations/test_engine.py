@@ -800,10 +800,10 @@ def test_overlay_sort_respects_combined_score(
     far = _FakeEvent(spotify_artist_ids=["id-a"], title="Far")
     patched_engine["fetch"].return_value = [far, local]
 
-    def actionability_side_effect(event, *_args, **_kwargs):
+    def actionability_side_effect(event: Any, *_args: Any, **_kwargs: Any) -> float:
         return 1.0 if event.title == "Local" else 0.4
 
-    def time_window_side_effect(event, *_args, **_kwargs):
+    def time_window_side_effect(event: Any, *_args: Any, **_kwargs: Any) -> float:
         return 1.0 if event.title == "Local" else 0.5
 
     patched_engine["actionability"].side_effect = actionability_side_effect
