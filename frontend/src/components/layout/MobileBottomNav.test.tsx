@@ -1,11 +1,14 @@
 /**
  * Tests for MobileBottomNav.
  *
- * The bottom nav is iOS-native shaped: four tabs for authenticated
- * visitors ([Home][Events][Map][Me]) and three for anonymous visitors
- * ([Home][Events][Map]). The Me tab routes straight to the consolidated
- * /me dashboard — no popover, no inline menu — so each tab is a single
- * tap. The nav also hides itself entirely on the /welcome flow so the
+ * The bottom nav is iOS-native shaped with four tabs in both auth
+ * states. The fourth slot swaps based on session: signed-in visitors
+ * see Me (the consolidated /me dashboard), anonymous visitors see
+ * Login (the /login entry point). While the auth context is still
+ * hydrating the slot is omitted so the bar doesn't flash Login → Me
+ * for an already-signed-in user on first render.
+ *
+ * The nav also hides itself entirely on the /welcome flow so the
  * onboarding sheet can own the screen.
  */
 
@@ -76,11 +79,13 @@ describe("MobileBottomNav", () => {
     mockPathname = "/";
   });
 
-  it("renders Home, Events, and Map for anonymous visitors (3 tabs)", () => {
+  it("renders Home, Events, Map, and Login for anonymous visitors (4 tabs)", () => {
     render(<MobileBottomNav />);
     expect(screen.getByRole("link", { name: /home/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /events/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /map/i })).toBeInTheDocument();
+    const loginLink = screen.getByRole("link", { name: /^login$/i });
+    expect(loginLink.getAttribute("href")).toBe("/login");
     expect(screen.queryByRole("link", { name: /^me$/i })).toBeNull();
   });
 
@@ -97,6 +102,7 @@ describe("MobileBottomNav", () => {
     expect(screen.getByRole("link", { name: /map/i })).toBeInTheDocument();
     const meLink = screen.getByRole("link", { name: /^me$/i });
     expect(meLink.getAttribute("href")).toBe("/me");
+    expect(screen.queryByRole("link", { name: /^login$/i })).toBeNull();
   });
 
   it("points the Map tab at /map", () => {
@@ -114,6 +120,7 @@ describe("MobileBottomNav", () => {
     };
     render(<MobileBottomNav />);
     expect(screen.queryByRole("link", { name: /^me$/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^login$/i })).toBeNull();
   });
 
   it("hides itself entirely on the /welcome onboarding flow", () => {

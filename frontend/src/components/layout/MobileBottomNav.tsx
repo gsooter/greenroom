@@ -2,9 +2,11 @@
  * Mobile bottom navigation bar — client component.
  *
  * Rendered only below the ``sm`` breakpoint as an iOS-native four-tab
- * bar. Authenticated visitors see [Home][Events][Map][Me]; anonymous
- * visitors see [Home][Events][Map] (the auth-specific tab is dropped
- * rather than swapped, so the bar stays uncluttered for guests).
+ * bar. The fourth slot is the auth-aware tab: signed-in visitors see
+ * Me (the consolidated dashboard), anonymous visitors see Login (the
+ * sign-in entry point). Keeping the slot present in both states gives
+ * guests an obvious affordance to sign in without sending them
+ * hunting through the desktop top nav.
  *
  * Two routing notes shape the structure:
  *
@@ -107,6 +109,23 @@ const ICONS = {
       <path d="M5 20c1.5-3.5 4-5 7-5s5.5 1.5 7 5" />
     </svg>
   ),
+  login: (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4" />
+      <path d="M10 16l4-4-4-4" />
+      <path d="M14 12H4" />
+    </svg>
+  ),
 } as const;
 
 const BASE_ITEMS: NavItem[] = [
@@ -121,6 +140,11 @@ const BASE_ITEMS: NavItem[] = [
 ];
 
 const ME_ITEM: NavItem = { href: "/me", label: "Me", icon: ICONS.me };
+const LOGIN_ITEM: NavItem = {
+  href: "/login",
+  label: "Login",
+  icon: ICONS.login,
+};
 
 const HIDDEN_PATH_PREFIXES: readonly string[] = ["/welcome"];
 
@@ -132,8 +156,16 @@ export default function MobileBottomNav(): JSX.Element | null {
     return null;
   }
 
-  const showAuthed = !isLoading && isAuthenticated;
-  const items: NavItem[] = showAuthed ? [...BASE_ITEMS, ME_ITEM] : BASE_ITEMS;
+  // Pick the fourth slot based on auth state. While the auth context
+  // is still hydrating we omit the auth-dependent tab so the bar
+  // doesn't flash Login → Me on first render for an already-signed-in
+  // user. Once hydration completes (within ~1 frame) the slot snaps
+  // in. The grid stays at three columns during that brief window.
+  const authTabResolved = !isLoading;
+  let items: NavItem[] = BASE_ITEMS;
+  if (authTabResolved) {
+    items = [...BASE_ITEMS, isAuthenticated ? ME_ITEM : LOGIN_ITEM];
+  }
   const gridClass = items.length === 4 ? "grid-cols-4" : "grid-cols-3";
 
   return (
