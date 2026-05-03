@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 #
 # Greenroom frontend image — Next.js 14 (App Router).
 #
