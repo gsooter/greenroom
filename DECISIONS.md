@@ -43,6 +43,7 @@ the alternatives and reasoning months later.
 043 — Dice.fm scraper uses JSON-LD parsing, not CSS selectors.
 045 — Venue coverage audited against Discovery API event counts as ground truth.
 046 — Scraper alerts: six independent signals with per-severity cooldowns.
+061 — Cities belong to regions; regions table supports multi-market expansion without code changes.
 
 ## Recommendations & Personalization
 
@@ -58,6 +59,7 @@ the alternatives and reasoning months later.
 058 — Genre normalization merges MusicBrainz and Last.fm tags through a curated mapping into ~20 GREENROOM canonical labels with confidence scoring.
 059 — Last.fm similar artists are stored in `artist_similarity` join table; resolution links to existing artists by MBID or exact name only.
 060 — Granular tag overlap supplements Last.fm collaborative similarity; complementary signal for new and local artists with thin Last.fm coverage.
+062 — Recommendations apply DMV-aware overlay (actionability x time-window x availability) on top of base scoring; preserves taste signal while prioritizing local, soon, available shows.
 
 ## Maps & Community
 

@@ -2732,6 +2732,95 @@ forward — the raw scraped `events.genres` array is no longer authoritative.
 
 ---
 
+### 062 — Recommendations Apply A DMV-Aware Overlay (Actionability x Time-Window x Availability) On Top Of Base Scoring
+
+**Date:** 2026-05-03
+**Status:** Decided
+
+**Decision:** After all scorers run and their outputs combine into a
+single `base` score per (user, event), the engine multiplies through
+three overlays before persisting the recommendation: an
+**actionability** multiplier based on the event's location relative
+to the user's preferred city/region (1.00 city, 0.85 same region,
+0.40 different region, 0.95 no preference), a **time-window**
+multiplier on a 4-bucket curve (1.00 within 3 months, 0.85 at 3-6,
+0.65 at 6-12, 0.40 beyond, 0.0 for past), and an **availability**
+multiplier from a per-status table (1.00 available, 0.45 sold out,
+0.0 cancelled, 0.6 postponed, 0.85 unknown). The combined
+`final_score = base x actionability x time_window x availability` is
+what the engine sorts and persists; events whose final score is 0
+are filtered before persistence.
+
+**Rationale:**
+- *Multiplicative, not additive.* Adding an actionability bonus
+  would compress the dynamic range and make weak local matches
+  outrank strong regional ones. Multiplying preserves the relative
+  ranking each scorer produces while letting locality / timing /
+  availability shape the final order across scorers.
+- *Single overlay per (user, event), not per scorer.* Applying the
+  overlay inside the scorer combine loop would compound the
+  multipliers (0.4^N → near-zero for any user who matches multiple
+  scorers). The spec calls this out as the "subtle but important"
+  failure mode and the test suite locks the order explicitly.
+- *Sold-out shows are downweighted, not filtered.* Users still want
+  awareness of shows they could chase via resale, waitlist signups,
+  or simply to know what they missed. A 0.45 multiplier is enough
+  to drop them below comparable available shows but never below a
+  weak match.
+- *Time-window has a flat 1.0 zone from tonight through ~3 months.*
+  Most ticket purchases happen 2-12 weeks before show date. Within
+  that range, ranking should be driven by taste-match strength, not
+  by date — a great show 8 weeks out shouldn't lose to a mediocre
+  show next week.
+- *Multipliers are tunable, not learned.* The constants live at the
+  top of each overlay module as named values so they can be
+  adjusted without code changes elsewhere. If user feedback signals
+  the recommendations feel too local, too short-term, or too
+  conservative on sold-out shows, the knob to turn is the relevant
+  module-level constant.
+
+**Alternatives considered:**
+- *Filter sold-out and out-of-region events outright.* Rejected for
+  the reasons above — users want awareness, and a hard filter
+  removes the long-tail discovery the engine produces today.
+- *Apply overlays inside each scorer's `score()` method.* Rejected —
+  compounds the multipliers and ties overlay tuning to scorer
+  internals. The current shape lets a new scorer ship without ever
+  touching the overlay code.
+- *Hardcode DMV city slugs in the overlay (skip the regions table).*
+  Rejected — the regions abstraction (Decision 061) is small and
+  pays for itself the moment we add a second market. Without it,
+  every multi-market PR has to find and update every hardcoded
+  list.
+- *Cache invalidation on every availability change.* Considered for
+  the upstream pricing/availability writer but deferred — flagging
+  affected user caches for refresh on the next read is sufficient
+  for the overlay's accuracy budget. A 6-hour TTL also bounds time-
+  window staleness without a per-event push path.
+
+**Consequences:**
+- Every persisted recommendation now carries `base`,
+  `actionability`, `time_window`, and `availability` keys in its
+  `score_breakdown` JSONB alongside the per-scorer payloads.
+  Existing breakdown consumers (the For-You reasons UI, admin
+  tooling) keep working because the per-scorer keys are unchanged.
+- Cancelled and far-past events reaching the scoring loop drop out
+  before persistence (final_score is 0). The engine's existing
+  upstream filter still excludes cancelled and past events at fetch
+  time; this is a defense-in-depth.
+- The user's preferred-city region is resolved exactly once per
+  scoring run via `regions_repo.get_region_for_city`; the overlay
+  itself never queries the database. Per-event overlay computation
+  stays O(1).
+- **Revisit trigger:** if user feedback indicates recommendations
+  feel "too local" (Richmond/Baltimore users complaining about DC
+  bias) or "too short-term" (missing major tour announcements),
+  retune `SAME_REGION_MULTIPLIER` upward or relax the time-window
+  curve at the 6-12-month bucket. If sold-out shows feel "too
+  prominent" or "too suppressed," tune `AVAILABILITY_MULTIPLIERS["sold_out"]`.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
