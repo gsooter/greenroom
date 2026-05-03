@@ -14,6 +14,7 @@ from backend.data.models.events import (
     TicketPricingSnapshot,
 )
 from backend.data.models.feedback import Feedback, FeedbackKind
+from backend.data.models.hydration_log import HydrationLog
 from backend.data.models.map_recommendations import (
     MapRecommendation,
     MapRecommendationCategory,
@@ -55,6 +56,7 @@ __all__ = [
     "FeedbackKind",
     "FollowedArtist",
     "FollowedVenue",
+    "HydrationLog",
     "MapRecommendation",
     "MapRecommendationCategory",
     "MapRecommendationVote",
