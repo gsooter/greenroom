@@ -101,6 +101,16 @@ class User(TimestampMixin, Base):
             the column was introduced — the home service treats null
             as a 30-day lookback so the section is populated on a
             first visit rather than empty.
+        email_bounced_at: When the recipient's address last bounced or
+            was complained against. Set by the Resend webhook handler.
+            Non-null means the send pipeline must skip this user for
+            transactional and digest mail until an admin clears the
+            flag (typically after the user updates their email in
+            Knuckles).
+        email_bounce_reason: Short description of why the address was
+            marked unsendable (e.g. ``hard_bounce``, ``complaint``).
+            Used by the admin dashboard's "why are emails not sending"
+            tooltip; never shown to the recipient.
         music_connections: Relationship to connected music services.
         saved_events: Relationship to user's saved events.
         recommendations: Relationship to user's recommendations.
@@ -178,6 +188,10 @@ class User(TimestampMixin, Base):
     last_home_visit_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    email_bounced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    email_bounce_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     # Relationships
     music_connections: Mapped[list["MusicServiceConnection"]] = relationship(

@@ -34,3 +34,4 @@ from backend.api.v1 import unsubscribe as _unsubscribe  # noqa: F401, E402
 from backend.api.v1 import users as _users  # noqa: F401, E402
 from backend.api.v1 import venue_comments as _venue_comments  # noqa: F401, E402
 from backend.api.v1 import venues as _venues  # noqa: F401, E402
+from backend.api.v1 import webhooks as _webhooks  # noqa: F401, E402
