@@ -60,6 +60,7 @@ the alternatives and reasoning months later.
 059 — Last.fm similar artists are stored in `artist_similarity` join table; resolution links to existing artists by MBID or exact name only.
 060 — Granular tag overlap supplements Last.fm collaborative similarity; complementary signal for new and local artists with thin Last.fm coverage.
 062 — Recommendations apply DMV-aware overlay (actionability x time-window x availability) on top of base scoring; preserves taste signal while prioritizing local, soon, available shows.
+063 — Home page leads with personalized content for signed-in users with signals; calendar browse is demoted but accessible.
 
 ## Maps & Community
 
