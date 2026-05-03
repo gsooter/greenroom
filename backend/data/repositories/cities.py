@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.data.models.cities import City
+from backend.data.models.region import Region
 
 
 def get_city_by_id(session: Session, city_id: uuid.UUID) -> City | None:
@@ -79,6 +80,7 @@ def create_city(
     slug: str,
     state: str,
     region: str = "DMV",
+    region_id: uuid.UUID | None = None,
     timezone: str = "America/New_York",
     description: str | None = None,
 ) -> City:
@@ -89,18 +91,43 @@ def create_city(
         name: Display name of the city.
         slug: URL-safe slug identifier.
         state: US state abbreviation.
-        region: Marketing region grouping. Defaults to "DMV".
+        region: Legacy marketing region string. Defaults to "DMV".
+            Retained for back-compat with scraper config and UI
+            filters until those callers migrate to ``region_id``.
+        region_id: Foreign key to the :class:`Region` this city
+            belongs to (Decision 061). When ``None``, the function
+            resolves the ``dmv`` region by slug — which is the
+            single seeded region today, so most callers can omit
+            this kwarg and get the right answer.
         timezone: IANA timezone string. Defaults to America/New_York.
         description: Optional description for SEO.
 
     Returns:
         The newly created City instance.
+
+    Raises:
+        RuntimeError: If ``region_id`` is omitted and the ``dmv``
+            region is not seeded (this is a migration sanity issue,
+            not a runtime error a caller should be expected to
+            handle).
     """
+    if region_id is None:
+        dmv = session.execute(
+            select(Region).where(Region.slug == "dmv")
+        ).scalar_one_or_none()
+        if dmv is None:
+            raise RuntimeError(
+                "create_city() called without region_id but the 'dmv' "
+                "region is not seeded; run migrations before seeding "
+                "cities."
+            )
+        region_id = dmv.id
     city = City(
         name=name,
         slug=slug,
         state=state,
         region=region,
+        region_id=region_id,
         timezone=timezone,
         description=description,
     )

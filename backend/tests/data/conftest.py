@@ -22,12 +22,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from backend.data.models.cities import City
 from backend.data.models.events import Event, EventStatus, EventType
+from backend.data.models.region import Region
 from backend.data.models.users import User
 from backend.data.models.venues import Venue
 
@@ -76,8 +77,48 @@ def session(_engine: Engine) -> Iterator[Session]:
 
 
 @pytest.fixture
-def make_city(session: Session) -> Callable[..., City]:
+def make_region(session: Session) -> Callable[..., Region]:
+    """Factory for Region rows.
+
+    Tests that need a fresh region (for cross-region overlay scenarios)
+    take this fixture; the default city factory upserts the ``dmv``
+    region transparently so most tests never touch this directly.
+
+    Returns:
+        Callable that creates and flushes a Region with sensible defaults.
+    """
+
+    def _make(
+        *,
+        slug: str | None = None,
+        name: str | None = None,
+        display_name: str | None = None,
+        description: str | None = None,
+    ) -> Region:
+        resolved_slug = slug or f"region-{uuid.uuid4().hex[:8]}"
+        region = Region(
+            slug=resolved_slug,
+            name=name or f"Region {resolved_slug}",
+            display_name=display_name or resolved_slug.upper(),
+            description=description,
+        )
+        session.add(region)
+        session.flush()
+        return region
+
+    return _make
+
+
+@pytest.fixture
+def make_city(
+    session: Session, make_region: Callable[..., Region]
+) -> Callable[..., City]:
     """Factory for City rows.
+
+    Cities now belong to a region (Decision 061). The factory upserts
+    a ``dmv`` region row when the caller doesn't pass an explicit
+    ``region_obj`` so the legacy test surface (``make_city(region="DMV")``)
+    keeps working without each test having to manage the region.
 
     Returns:
         Callable that creates and flushes a City with sensible defaults.
@@ -89,13 +130,24 @@ def make_city(session: Session) -> Callable[..., City]:
         slug: str | None = None,
         state: str = "DC",
         region: str = "DMV",
+        region_obj: Region | None = None,
         is_active: bool = True,
     ) -> City:
+        if region_obj is None:
+            existing = session.execute(
+                select(Region).where(Region.slug == "dmv")
+            ).scalar_one_or_none()
+            region_obj = existing or make_region(
+                slug="dmv",
+                name="DC, Maryland & Virginia",
+                display_name="DMV",
+            )
         city = City(
             name=name,
             slug=slug or f"city-{uuid.uuid4().hex[:8]}",
             state=state,
             region=region,
+            region_id=region_obj.id,
             timezone="America/New_York",
             is_active=is_active,
         )

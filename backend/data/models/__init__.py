@@ -26,6 +26,7 @@ from backend.data.models.onboarding import (
     UserOnboardingState,
 )
 from backend.data.models.recommendations import Recommendation
+from backend.data.models.region import Region
 from backend.data.models.scraper import ScraperAlert, ScraperRun, ScraperRunStatus
 from backend.data.models.users import (
     DigestFrequency,
@@ -60,6 +61,7 @@ __all__ = [
     "MusicServiceConnection",
     "OAuthProvider",
     "Recommendation",
+    "Region",
     "SavedEvent",
     "ScraperAlert",
     "ScraperRun",
