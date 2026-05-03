@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 
 import AppShell from "@/components/layout/AppShell";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
+import { NotificationPermissionPrompt } from "@/components/pwa/NotificationPermissionPrompt";
 import { AppProviders } from "@/components/providers/AppProviders";
 import { brandColors } from "@/lib/brand";
 import { config } from "@/lib/config";
@@ -45,6 +47,8 @@ export default function RootLayout({
       <body className="min-h-screen antialiased">
         <AppProviders>
           <AppShell>{children}</AppShell>
+          <InstallPrompt />
+          <NotificationPermissionPrompt />
         </AppProviders>
       </body>
     </html>
