@@ -134,4 +134,5 @@ def _format_doors_label(event: Event) -> str | None:
         if event.venue and event.venue.city
         else "America/New_York"
     )
-    return doors.astimezone(ZoneInfo(tz_name)).strftime("%-I:%M %p")
+    label: str = doors.astimezone(ZoneInfo(tz_name)).strftime("%-I:%M %p")
+    return label

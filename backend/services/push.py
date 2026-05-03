@@ -224,7 +224,7 @@ def _send_one(
     # Local import: pywebpush pulls in cryptography at import time,
     # which is heavy. Keep it out of unit-test paths that never call
     # the real send.
-    from pywebpush import WebPushException, webpush
+    from pywebpush import WebPushException, webpush  # type: ignore[import-not-found]
 
     sub_info = {
         "endpoint": subscription.endpoint,

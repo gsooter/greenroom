@@ -59,9 +59,15 @@ export async function subscribeBrowserToPush(
 ): Promise<PushSubscription> {
   const existing = await registration.pushManager.getSubscription();
   if (existing) return existing;
+  // Copy into a fresh ArrayBuffer to satisfy TS's BufferSource type
+  // — the lib.dom typing rejects Uint8Array<ArrayBufferLike> and
+  // also won't accept a SharedArrayBuffer slice.
+  const keyBytes = urlBase64ToUint8Array(publicKey);
+  const keyBuffer = new ArrayBuffer(keyBytes.byteLength);
+  new Uint8Array(keyBuffer).set(keyBytes);
   return registration.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(publicKey),
+    applicationServerKey: keyBuffer,
   });
 }
 
