@@ -19,6 +19,7 @@ from backend.api.v1 import auth_identity as _auth_identity  # noqa: F401, E402
 from backend.api.v1 import auth_session as _auth_session  # noqa: F401, E402
 from backend.api.v1 import auth_tidal as _auth_tidal  # noqa: F401, E402
 from backend.api.v1 import cities as _cities  # noqa: F401, E402
+from backend.api.v1 import email_test as _email_test  # noqa: F401, E402
 from backend.api.v1 import events as _events  # noqa: F401, E402
 from backend.api.v1 import feedback as _feedback  # noqa: F401, E402
 from backend.api.v1 import home as _home  # noqa: F401, E402

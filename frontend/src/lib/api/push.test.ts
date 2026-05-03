@@ -26,6 +26,7 @@ import {
   ensureServiceWorker,
   getVapidPublicKey,
   postSubscriptionToBackend,
+  sendTestPushToSelf,
   subscribeBrowserToPush,
 } from "./push";
 
@@ -226,6 +227,29 @@ describe("subscribeBrowserToPush", () => {
     await expect(
       subscribeBrowserToPush(reg, "BCp@!#"),
     ).rejects.toThrow(/VAPID_PUBLIC_KEY/);
+  });
+});
+
+describe("sendTestPushToSelf", () => {
+  it("POSTs to /me/push/test with the bearer token and returns the SendResult", async () => {
+    fetchJson.mockResolvedValueOnce({
+      data: {
+        attempted: 1,
+        succeeded: 1,
+        disabled: 0,
+        skipped_no_vapid: false,
+      },
+    });
+    await expect(sendTestPushToSelf("tok-2")).resolves.toEqual({
+      attempted: 1,
+      succeeded: 1,
+      disabled: 0,
+      skipped_no_vapid: false,
+    });
+    expect(fetchJson).toHaveBeenCalledWith(
+      "/api/v1/me/push/test",
+      expect.objectContaining({ method: "POST", token: "tok-2" }),
+    );
   });
 });
 

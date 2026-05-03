@@ -1,19 +1,20 @@
 /**
  * Inline email-preferences card for the /settings page.
  *
- * Renders a list of email "features" each with its own boolean toggle
- * and optional follow-on controls (e.g. day-of-week + hour for the
- * weekly digest). Today the only shipped email is the weekly digest;
- * the section is structured around a feature array so adding the next
- * email type is one entry, not a new section.
+ * Renders one row per email type the dispatcher can send so users can
+ * opt in or out of each channel without leaving the main settings
+ * page. Each row maps 1:1 to a boolean column on the
+ * ``NotificationPreferences`` row, so the unsubscribe links in real
+ * outbound mail flip the same flag the user toggles here.
  *
- * The richer ``/settings/notifications`` page still exists for power
- * users — quiet hours, frequency caps, pause-all — but most users want
- * the inline simplicity, so this card is what we surface by default.
+ * The richer ``/settings/notifications`` page still exists for the
+ * advanced controls — quiet hours, frequency caps, pause-all,
+ * "send a test" buttons — and a footer link points there.
  */
 
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiRequestError } from "@/lib/api/client";
@@ -25,6 +26,7 @@ import type {
   DigestDayOfWeek,
   NotificationPreferences,
   NotificationPreferencesPatch,
+  ReminderDays,
 } from "@/types";
 
 interface Props {
@@ -46,13 +48,8 @@ interface EmailFeature {
   key: string;
   label: string;
   description: string;
-  /**
-   * Read the on/off state of this feature from the prefs row.
-   *
-   * Returning ``null`` means the feature isn't shipped yet (we render
-   * a "Coming soon" disabled row).
-   */
-  enabled: (prefs: NotificationPreferences) => boolean | null;
+  /** Read the on/off state of this feature from the prefs row. */
+  enabled: (prefs: NotificationPreferences) => boolean;
   /**
    * Build the patch sent to ``PATCH /me/notification-preferences`` when
    * the toggle flips.
@@ -68,7 +65,76 @@ interface EmailFeature {
   ) => JSX.Element;
 }
 
+const REMINDER_DAY_OPTIONS: ReminderDays[] = [1, 2, 7];
+
 const FEATURES: EmailFeature[] = [
+  {
+    key: "artist_announcements",
+    label: "Artist announcements",
+    description:
+      "Email me when an artist I follow announces a DC show.",
+    enabled: (p) => p.artist_announcements,
+    togglePatch: (next) => ({ artist_announcements: next }),
+  },
+  {
+    key: "venue_announcements",
+    label: "Venue announcements",
+    description: "Email me when a venue I follow adds a new show.",
+    enabled: (p) => p.venue_announcements,
+    togglePatch: (next) => ({ venue_announcements: next }),
+  },
+  {
+    key: "selling_fast_alerts",
+    label: "Selling fast alerts",
+    description:
+      "Email me when a saved show crosses our 'selling fast' threshold.",
+    enabled: (p) => p.selling_fast_alerts,
+    togglePatch: (next) => ({ selling_fast_alerts: next }),
+  },
+  {
+    key: "show_reminders",
+    label: "Show reminders",
+    description: "Email me before a show I've saved or RSVP'd to.",
+    enabled: (p) => p.show_reminders,
+    togglePatch: (next) => ({ show_reminders: next }),
+    detail: (prefs, apply) => (
+      <SelectField
+        label="Remind me"
+        ariaLabel="How many days before"
+        value={String(prefs.show_reminder_days_before)}
+        onChange={(v) =>
+          void apply({
+            show_reminder_days_before: Number(v) as ReminderDays,
+          })
+        }
+        options={REMINDER_DAY_OPTIONS.map((d) => ({
+          value: String(d),
+          label: d === 1 ? "1 day before" : `${d} days before`,
+        }))}
+      />
+    ),
+  },
+  {
+    key: "staff_picks",
+    label: "Staff picks",
+    description: "Hand-curated shows our editorial team is excited about.",
+    enabled: (p) => p.staff_picks,
+    togglePatch: (next) => ({ staff_picks: next }),
+  },
+  {
+    key: "artist_spotlights",
+    label: "Artist spotlights",
+    description: "Monthly deep-dives on artists touring through DC.",
+    enabled: (p) => p.artist_spotlights,
+    togglePatch: (next) => ({ artist_spotlights: next }),
+  },
+  {
+    key: "similar_artist_suggestions",
+    label: "Similar artist suggestions",
+    description: "Artists similar to the ones I already follow.",
+    enabled: (p) => p.similar_artist_suggestions,
+    togglePatch: (next) => ({ similar_artist_suggestions: next }),
+  },
   {
     key: "weekly_digest",
     label: "Weekly digest",
@@ -197,8 +263,13 @@ export function EmailPreferencesSection({ token }: Props): JSX.Element {
       ) : null}
 
       <p className="mt-3 text-[11px] text-text-secondary/80">
-        More email types — show reminders, selling-fast alerts, artist
-        spotlights — coming soon.
+        Want quiet hours, weekly caps, or to send yourself a test email?{" "}
+        <Link
+          href="/settings/notifications"
+          className="underline underline-offset-2"
+        >
+          Open the full notification settings.
+        </Link>
       </p>
     </section>
   );
@@ -214,24 +285,13 @@ function EmailFeatureRow({
   apply: (patch: NotificationPreferencesPatch) => Promise<void>;
 }): JSX.Element {
   const enabled = feature.enabled(prefs);
-  const shipped = enabled !== null;
 
   return (
     <li className="p-4">
-      <label
-        className={
-          "flex items-start justify-between gap-4 " +
-          (shipped ? "cursor-pointer" : "cursor-not-allowed opacity-60")
-        }
-      >
+      <label className="flex cursor-pointer items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-text-primary">
             {feature.label}
-            {!shipped ? (
-              <span className="ml-2 rounded-full bg-bg-surface px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-secondary">
-                Coming soon
-              </span>
-            ) : null}
           </p>
           <p className="mt-0.5 text-xs text-text-secondary">
             {feature.description}
@@ -239,16 +299,13 @@ function EmailFeatureRow({
         </div>
         <input
           type="checkbox"
-          checked={enabled === true}
-          disabled={!shipped}
-          onChange={(e) =>
-            void apply(feature.togglePatch(e.target.checked))
-          }
+          checked={enabled}
+          onChange={(e) => void apply(feature.togglePatch(e.target.checked))}
           aria-label={feature.label}
           className="mt-1 h-4 w-4 shrink-0"
         />
       </label>
-      {shipped && enabled && feature.detail ? (
+      {enabled && feature.detail ? (
         <div className="mt-4 border-t border-border/60 pt-4">
           {feature.detail(prefs, apply)}
         </div>

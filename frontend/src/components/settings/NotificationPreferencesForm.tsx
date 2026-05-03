@@ -17,6 +17,7 @@ import {
   resumeAllEmails,
   updateNotificationPreferences,
 } from "@/lib/api/notification-preferences";
+import { TestNotificationsCard } from "@/components/settings/TestNotificationsCard";
 import type {
   DigestDayOfWeek,
   MaxEmailsPerWeek,
@@ -103,6 +104,8 @@ export function NotificationPreferencesForm({
 
   return (
     <div className="space-y-8">
+      <TestNotificationsCard token={token} />
+
       <PauseBanner paused={prefs.paused} onToggle={() => void handlePause()} />
 
       <Section

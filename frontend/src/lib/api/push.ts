@@ -61,6 +61,17 @@ interface UnsubscribeResponse {
   data: { removed: boolean };
 }
 
+export interface TestPushResult {
+  attempted: number;
+  succeeded: number;
+  disabled: number;
+  skipped_no_vapid: boolean;
+}
+
+interface TestPushResponse {
+  data: TestPushResult;
+}
+
 const SERVICE_WORKER_URL = "/sw.js";
 
 export async function getVapidPublicKey(): Promise<string> {
@@ -143,6 +154,14 @@ export async function postSubscriptionToBackend(
     body: subscription.toJSON(),
     token,
   });
+}
+
+export async function sendTestPushToSelf(token: string): Promise<TestPushResult> {
+  const response = await fetchJson<TestPushResponse>("/api/v1/me/push/test", {
+    method: "POST",
+    token,
+  });
+  return response.data;
 }
 
 export async function deleteSubscriptionFromBackend(

@@ -1,6 +1,6 @@
 """Web Push subscription and test routes.
 
-Three endpoints live here:
+Endpoints:
 
 * ``GET  /api/v1/push/vapid-public-key`` — public, returns the VAPID
   public key the browser needs before calling
@@ -10,9 +10,13 @@ Three endpoints live here:
 * ``DELETE /api/v1/push/subscriptions`` — authenticated, removes a
   subscription by its endpoint (used when the user revokes
   permission).
+* ``POST /api/v1/me/push/test`` — authenticated, sends a canned
+  notification to every active subscription owned by the caller.
+  Surfaced from the settings page so users can verify their PWA
+  is receiving pushes without needing admin tools.
 * ``POST /api/v1/push/test`` — admin, sends a canned notification to
-  every active subscription belonging to a given user. Useful in
-  staging and in production support situations.
+  every active subscription belonging to a given user. Used by ops
+  for production support.
 """
 
 from __future__ import annotations
@@ -29,11 +33,23 @@ from backend.core.config import get_settings
 from backend.core.database import get_db
 from backend.core.exceptions import ValidationError
 from backend.core.logging import get_logger
+from backend.core.rate_limit import rate_limit
 from backend.core.vapid_keys import to_raw_public_key
 from backend.data.repositories import push_subscriptions as push_repo
 from backend.services import push as push_service
 
 logger = get_logger(__name__)
+
+
+def _current_user_id_key() -> str:
+    """Rate-limit subject keyed on the current user id.
+
+    Returns:
+        UUID-as-string suitable for embedding in a Redis bucket key.
+        ``require_auth`` runs before the rate-limit decorator, so the
+        current user is already resolved by the time this fires.
+    """
+    return str(get_current_user().id)
 
 
 @api_v1.route("/push/vapid-public-key", methods=["GET"])
@@ -136,6 +152,60 @@ def unsubscribe() -> tuple[dict[str, Any], int]:
     removed = push_repo.delete_for_endpoint(session, user.id, endpoint)
     session.commit()
     return {"data": {"removed": removed}}, 200
+
+
+@api_v1.route("/me/push/test", methods=["POST"])
+@require_auth
+@rate_limit(
+    "me_push_test_user",
+    limit=5,
+    window_seconds=300,
+    key_fn=_current_user_id_key,
+)
+def send_test_push_to_self() -> tuple[dict[str, Any], int]:
+    """Send a canned push notification to the caller's own devices.
+
+    Powers the "Send a test push" button on /settings/notifications so
+    users can verify their PWA is wired up end-to-end. Capped at five
+    sends per five-minute window per user — high enough for anyone
+    poking around in settings, low enough to make abuse uninteresting.
+
+    Returns:
+        Tuple of JSON response with the
+        :class:`backend.services.push.SendResult` fields plus HTTP 200.
+        Possible outcomes:
+
+        * ``attempted == 0 and skipped_no_vapid == True`` — the server
+          isn't configured for push (dev environments, broken VAPID
+          env vars). The UI should surface "push isn't set up here."
+        * ``attempted == 0 and skipped_no_vapid == False`` — the user
+          has no active subscriptions. The UI should prompt re-enable.
+        * ``attempted > 0 and succeeded > 0`` — push was accepted by
+          the push service. Banner should appear within seconds.
+        * ``attempted > 0 and disabled > 0`` — every endpoint reported
+          permanent failure (404/410). Subscription rows are now off.
+    """
+    user = get_current_user()
+    session = get_db()
+    result = push_service.send_to_user(
+        session,
+        user.id,
+        push_service.PushPayload(
+            title="Greenroom test",
+            body="Push notifications are wired up. No action needed.",
+            url=get_settings().frontend_base_url,
+            tag="greenroom-test",
+        ),
+    )
+    session.commit()
+    return {
+        "data": {
+            "attempted": result.attempted,
+            "succeeded": result.succeeded,
+            "disabled": result.disabled,
+            "skipped_no_vapid": result.skipped_no_vapid,
+        }
+    }, 200
 
 
 @api_v1.route("/push/test", methods=["POST"])

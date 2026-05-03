@@ -1,9 +1,10 @@
 /**
  * Tests for EmailPreferencesSection.
  *
- * Covers: loading the prefs row on mount, rendering only the weekly
- * digest feature today, optimistic toggle behaviour with revert on
- * failure, and showing day/hour controls when the digest is on.
+ * Covers: loading the prefs row on mount, rendering one toggle per
+ * dispatcher email type, optimistic toggle with revert on failure,
+ * showing day/hour controls when the digest is on, and the link out
+ * to the full notification settings page.
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -57,20 +58,37 @@ describe("EmailPreferencesSection", () => {
     updateNotificationPreferences.mockReset();
   });
 
-  it("renders only the weekly digest feature today", async () => {
+  it("renders one toggle per dispatcher email type so users can opt in/out of each", async () => {
     getNotificationPreferences.mockResolvedValueOnce(makePrefs());
 
     render(<EmailPreferencesSection token="jwt" />);
 
-    expect(
-      await screen.findByRole("checkbox", { name: /weekly digest/i }),
-    ).toBeInTheDocument();
-    // No other shipped email features for now.
-    expect(
-      screen.queryByRole("checkbox", { name: /show reminders/i }),
-    ).not.toBeInTheDocument();
-    // Forward-looking caption is present.
-    expect(screen.getByText(/coming soon/i)).toBeInTheDocument();
+    const expected = [
+      /artist announcements/i,
+      /venue announcements/i,
+      /selling fast alerts/i,
+      /show reminders/i,
+      /staff picks/i,
+      /artist spotlights/i,
+      /similar artist suggestions/i,
+      /weekly digest/i,
+    ];
+    for (const name of expected) {
+      expect(
+        await screen.findByRole("checkbox", { name }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("renders a link to the full notification settings page", async () => {
+    getNotificationPreferences.mockResolvedValueOnce(makePrefs());
+
+    render(<EmailPreferencesSection token="jwt" />);
+
+    const link = await screen.findByRole("link", {
+      name: /full notification settings/i,
+    });
+    expect(link).toHaveAttribute("href", "/settings/notifications");
   });
 
   it("flips weekly_digest optimistically and reveals day/hour controls", async () => {
@@ -120,6 +138,57 @@ describe("EmailPreferencesSection", () => {
         }) as HTMLInputElement
       ).checked,
     ).toBe(false);
+  });
+
+  it("PATCHes a per-type boolean when a non-digest toggle flips", async () => {
+    getNotificationPreferences.mockResolvedValueOnce(makePrefs());
+    updateNotificationPreferences.mockResolvedValueOnce(
+      makePrefs({ artist_announcements: true }),
+    );
+
+    render(<EmailPreferencesSection token="jwt" />);
+
+    const toggle = await screen.findByRole("checkbox", {
+      name: /artist announcements/i,
+    });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(updateNotificationPreferences).toHaveBeenCalledWith("jwt", {
+        artist_announcements: true,
+      });
+    });
+  });
+
+  it("reveals the show-reminder day picker when show_reminders is on", async () => {
+    getNotificationPreferences.mockResolvedValueOnce(
+      makePrefs({ show_reminders: true, show_reminder_days_before: 2 }),
+    );
+
+    render(<EmailPreferencesSection token="jwt" />);
+
+    const select = await screen.findByLabelText("How many days before");
+    expect((select as HTMLSelectElement).value).toBe("2");
+  });
+
+  it("PATCHes show_reminder_days_before as a number when the picker changes", async () => {
+    getNotificationPreferences.mockResolvedValueOnce(
+      makePrefs({ show_reminders: true }),
+    );
+    updateNotificationPreferences.mockResolvedValueOnce(
+      makePrefs({ show_reminders: true, show_reminder_days_before: 7 }),
+    );
+
+    render(<EmailPreferencesSection token="jwt" />);
+
+    const select = await screen.findByLabelText("How many days before");
+    fireEvent.change(select, { target: { value: "7" } });
+
+    await waitFor(() => {
+      expect(updateNotificationPreferences).toHaveBeenCalledWith("jwt", {
+        show_reminder_days_before: 7,
+      });
+    });
   });
 
   it("PATCHes the digest day when the day select changes", async () => {
