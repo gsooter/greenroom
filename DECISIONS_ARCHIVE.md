@@ -2821,6 +2821,80 @@ are filtered before persistence.
 
 ---
 
+### 065 — Push And Email Share Triggers But Render Channel-Specific Content
+
+**Date:** 2026-05-03
+**Status:** Decided
+
+**Decision:** A single :class:`NotificationTrigger` is dispatched
+through `backend.services.notification_dispatcher`, which routes it
+to push, email, or both based on a static `_CHANNEL_ROUTING` table.
+Each channel has its own renderer: push payloads are short, specific,
+and never hedged ("Phoebe Bridgers announced" / "Capital One Arena ·
+Sat, Jun 14"); email content goes through the existing weekly-digest
+renderer with HTML, plain-text, and Schema.org JSON-LD versions.
+Push is rate-limited at five per user per day; email is rate-limited
+by the existing `max_emails_per_week` on `NotificationPreferences`
+plus a one-week idempotency window. Both channels write to the same
+`notification_log` table for unified dedupe and observability.
+
+**Rationale:**
+- *Different cognitive cost.* Push interrupts; email waits. Pushing
+  a five-paragraph "newly announced" digest would train users to
+  swipe away. Sending a one-line "Phoebe announced" email would feel
+  like a missed opportunity. Different shape per channel respects
+  what each one is good at.
+- *Same trigger source keeps logic in one place.* When the scraper
+  ingests a new event, it raises one tour-announcement trigger per
+  matched user. The dispatcher decides what happens next. Adding a
+  third channel (in-app inbox, SMS, …) means adding a routing rule —
+  not changing every place that produces a trigger.
+- *`notification_log` as the single dedupe surface.* The unique
+  constraint on `(user_id, type, dedupe_key, channel)` is the
+  guarantee. A duplicate scraper run, a retried Celery task, or a
+  replayed trigger all hit the same lock, and the dispatcher
+  short-circuits cleanly without depending on read-then-write
+  gymnastics.
+- *Quiet hours queue, not drop.* A tour-announcement push that
+  lands at 3 AM is queued for the user's wake hour rather than
+  dropped. Time-sensitive notifications still reach the user; the
+  3 AM ping never does.
+
+**Alternatives considered:**
+- *Reuse the email content as the push body.* Rejected. Push
+  payloads must be under 80 characters; trying to fit a full-card
+  description into a notification produces ellipsis-laden bodies
+  that are worse than no body at all.
+- *Single dispatcher per channel.* Rejected. Two dispatchers would
+  duplicate the routing logic and divide the dedupe surface in two.
+  A single entry point with channel-specific renderers keeps the
+  invariants in one place.
+- *Aggregate "you have N notifications today" into one push.*
+  Rejected for tour announcements specifically — every artist has
+  a different fan base, and lumping them together loses the urgency
+  that makes the push worth interrupting for. (Aggregation may make
+  sense later for selling-fast or venue-announcement notifications;
+  the dispatcher's shape doesn't preclude it.)
+
+**Consequences:**
+- The dispatcher's `_CHANNEL_ROUTING` table is the single source of
+  truth for "what notification types fire on what channels." Adding
+  a notification type means appending to it.
+- Each renderer takes a `NotificationTrigger.payload` dict and
+  returns a `PushPayload | None`. Returning `None` surfaces as
+  `skipped:no_renderer`, which is the right behavior for a trigger
+  that's missing required keys — better than crashing the worker.
+- Channel preferences are independent: a user can enable push but
+  disable digest, or vice versa. The dispatcher respects each
+  channel's preference column.
+- **Revisit trigger:** if push notification engagement is low or
+  unsubscribe rates are high, the channel routing rules need
+  adjustment. The same is true if users complain about getting both
+  the push and the digest item for the same event — that's a sign
+  the channels feel redundant rather than complementary.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.

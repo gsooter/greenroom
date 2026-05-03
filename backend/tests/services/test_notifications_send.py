@@ -39,6 +39,10 @@ def _user(**overrides: Any) -> MagicMock:
     user.city_id = overrides.pop("city_id", uuid.uuid4())
     user.spotify_top_artist_ids = overrides.pop("spotify_top_artist_ids", None)
     user.spotify_recent_artist_ids = overrides.pop("spotify_recent_artist_ids", None)
+    # ``email_bounced_at = None`` keeps the bounce-skip guard from
+    # firing on MagicMock attribute auto-vivification (any unset
+    # attribute returns a MagicMock, which is truthy).
+    user.email_bounced_at = overrides.pop("email_bounced_at", None)
     return user
 
 
@@ -68,6 +72,7 @@ def _digest() -> notifications.WeeklyDigest:
                 "url": "https://greenroom.test/events/phoebe-bridgers",
             }
         ],
+        structured_data=[],
     )
 
 
@@ -94,6 +99,11 @@ def _wire_user_and_prefs(
         "count_recent_for_user",
         lambda *_a, **_k: 0,
     )
+    # The unified notification dispatcher's log table is now claimed
+    # before the legacy digest path runs (so the dispatcher's view of
+    # "what was sent" includes the digest). Default it to "go" — tests
+    # asserting the duplicate-claim short-circuit override this.
+    monkeypatch.setattr(notifications.log_repo, "claim", lambda *_a, **_k: True)
 
 
 def test_skip_when_assembler_returns_none(

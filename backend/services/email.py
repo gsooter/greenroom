@@ -15,6 +15,31 @@ Two entry points are exposed:
   token scoped to the right preference column, and forwards the
   result to :func:`send_email` with the ``List-Unsubscribe`` headers
   already attached.
+
+Sprint 3 audit (2026-05-03) — findings and resolutions:
+
+* Sender address: ``RESEND_FROM_EMAIL`` was previously
+  ``auth@knuckles.gstwentyseven.com`` (the identity service's domain),
+  which would surface a Knuckles-branded "from" line in every
+  Greenroom user's inbox. Production must be set to
+  ``noreply@greenroom.gstwentyseven.com`` once SPF/DKIM/DMARC are
+  verified for that domain in Resend. Dev .env updated; production
+  .env must be updated alongside the DNS work.
+* Webhook handler: ``RESEND_WEBHOOK_SECRET`` was defined in config
+  but no route consumed it, so bounced addresses kept receiving mail.
+  Added ``POST /api/v1/webhooks/resend`` (Phase 1) plus
+  ``users.email_bounced_at`` so the send pipeline can short-circuit
+  before paying for a guaranteed-fail send.
+* JSON-LD: ``base.html`` already supports a ``structured_data``
+  context key, but ``WeeklyDigest.template_context`` did not pass
+  one — Gmail's actionable cards never rendered. Now passes a
+  ``MusicEvent`` array built via :mod:`email_structured_data`.
+* Plain text + HTML: both already shipped. Audit confirms parity.
+* Frequency capping: ``is_at_weekly_cap`` + ``_has_recent_weekly_log``
+  enforce the 7-day cap and idempotency window correctly.
+* Notification preferences: model already covers every column the
+  unified dispatcher needs (artist/venue announcements, reminders,
+  digest, quiet hours, max-per-week, timezone).
 """
 
 from __future__ import annotations

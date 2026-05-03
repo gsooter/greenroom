@@ -206,6 +206,16 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "schedule": crontab(minute=0),
             "options": {"expires": 60 * 50},
         },
+        # Day-before show reminders. Runs at minute 5 of every hour so
+        # it doesn't collide with the weekly-digest fan-out at minute
+        # 0. The dispatcher handles dedupe (a show that crosses two
+        # hourly window boundaries gets one push, not two), quiet
+        # hours, and per-user rate limits.
+        "dispatch-show-reminders-hourly": {
+            "task": "backend.services.notification_tasks.dispatch_show_reminders",
+            "schedule": crontab(minute=5),
+            "options": {"expires": 60 * 50},
+        },
     }
 
 

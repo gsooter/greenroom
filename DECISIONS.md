@@ -76,6 +76,9 @@ the alternatives and reasoning months later.
 051 — Weekly digest dispatcher fires hourly; filters by user timezone in Python.
 053 — In-app feedback stores to DB, reuses Slack notifier, optional auth.
 054 — Slack alerts route to three channels (ops/digest/feedback) with ops as fallback.
+064 — PWA manifest and home-screen install supported as foundation for iOS push.
+065 — Push and email share triggers but render channel-specific content; push for high-signal real-time, email for exploratory weekly content.
+066 — Tour announcements detect via scraper ingestion hook (Celery send_task by name); users with any signal (follow, music service top, recent play) for the artist receive push within minutes.
 
 ## Pricing
 
