@@ -56,6 +56,7 @@ the alternatives and reasoning months later.
 056 — MusicBrainz is the first genre enrichment source (free, community-maintained, comprehensive).
 057 — Last.fm is the second genre enrichment source; uses MBID lookup when available, name search as fallback.
 058 — Genre normalization merges MusicBrainz and Last.fm tags through a curated mapping into ~20 GREENROOM canonical labels with confidence scoring.
+059 — Last.fm similar artists are stored in `artist_similarity` join table; resolution links to existing artists by MBID or exact name only.
 
 ## Maps & Community
 
