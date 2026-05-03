@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from backend.core.config import get_settings
 from backend.core.logging import get_logger
+from backend.core.vapid_keys import to_raw_private_key
 from backend.data.repositories import push_subscriptions as push_repo
 
 if TYPE_CHECKING:
@@ -169,13 +170,24 @@ def send_to_user(
     body = payload.to_json()
     settings = get_settings()
     vapid_claims = {"sub": settings.vapid_subject}
+    # Normalize once per fan-out — pywebpush gets the raw base64url
+    # form regardless of whether the operator pasted PEM or raw key
+    # material into the env var. A parse failure here means the env
+    # var is malformed; treat it the same as "no VAPID configured"
+    # so the dispatcher logs and skips rather than 500-ing for every
+    # downstream send.
+    try:
+        private_key = to_raw_private_key(settings.vapid_private_key)
+    except ValueError as exc:
+        logger.error("vapid_private_key_unparseable", extra={"error": str(exc)})
+        return SendResult(attempted=0, succeeded=0, disabled=0, skipped_no_vapid=True)
 
     for sub in subs:
         outcome = _send_one(
             sub,
             body=body,
             ttl=ttl_seconds,
-            vapid_private_key=settings.vapid_private_key,
+            vapid_private_key=private_key,
             vapid_claims=vapid_claims,
         )
         if outcome == "ok":

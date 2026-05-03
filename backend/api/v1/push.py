@@ -28,8 +28,12 @@ from backend.core.auth import get_current_user, require_auth
 from backend.core.config import get_settings
 from backend.core.database import get_db
 from backend.core.exceptions import ValidationError
+from backend.core.logging import get_logger
+from backend.core.vapid_keys import to_raw_public_key
 from backend.data.repositories import push_subscriptions as push_repo
 from backend.services import push as push_service
+
+logger = get_logger(__name__)
 
 
 @api_v1.route("/push/vapid-public-key", methods=["GET"])
@@ -40,9 +44,18 @@ def get_vapid_public_key() -> tuple[dict[str, Any], int]:
         Tuple of ``({"data": {"public_key": ...}}, 200)``.
         ``public_key`` is empty when VAPID has not been configured —
         the frontend treats this as "push is not available in this
-        environment" and hides the permission prompt.
+        environment" and hides the permission prompt. The configured
+        value may be PEM or raw base64url; this endpoint always emits
+        the raw form because that's what ``pushManager.subscribe``
+        accepts.
     """
-    return {"data": {"public_key": get_settings().vapid_public_key}}, 200
+    raw_value = get_settings().vapid_public_key
+    try:
+        public_key = to_raw_public_key(raw_value)
+    except ValueError as err:
+        logger.error("vapid_public_key_unparseable", extra={"error": str(err)})
+        public_key = ""
+    return {"data": {"public_key": public_key}}, 200
 
 
 @api_v1.route("/push/subscribe", methods=["POST"])
