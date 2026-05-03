@@ -601,6 +601,47 @@ def list_artist_ids_by_normalized_names(
     return {name: artist_id for name, artist_id in session.execute(stmt).all()}
 
 
+def list_artists_for_tag_consolidation(
+    session: Session,
+    *,
+    limit: int,
+    force: bool = False,
+) -> list[Artist]:
+    """Return artists whose granular-tags consolidation is stale or missing.
+
+    Default mode picks rows that have never been consolidated, plus
+    rows whose source enrichment timestamps (MusicBrainz or Last.fm)
+    have moved on since the last consolidation. ``force=True`` ignores
+    the timestamp comparisons and returns up to ``limit`` artists in
+    creation order — used by the second-pass blocklist application
+    inside :mod:`backend.services.tag_consolidation_tasks`, where every
+    artist must be re-consolidated against the freshly-built blocklist
+    even if their source data hasn't changed.
+
+    Args:
+        session: Active SQLAlchemy session.
+        limit: Maximum number of artists to return.
+        force: When True, return any artist (oldest first) regardless
+            of consolidation freshness.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows due for consolidation.
+    """
+    if force:
+        stmt = select(Artist).order_by(Artist.created_at.asc()).limit(limit)
+        return list(session.execute(stmt).scalars().all())
+
+    condition = or_(
+        Artist.granular_tags_consolidated_at.is_(None),
+        Artist.musicbrainz_enriched_at > Artist.granular_tags_consolidated_at,
+        Artist.lastfm_enriched_at > Artist.granular_tags_consolidated_at,
+    )
+    stmt = (
+        select(Artist).where(condition).order_by(Artist.created_at.asc()).limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
 def mark_artist_enriched(
     session: Session,
     artist: Artist,

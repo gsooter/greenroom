@@ -161,6 +161,20 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "schedule": crontab(hour=5, minute=0),
             "options": {"expires": 60 * 60 * 3},
         },
+        # Consolidates per-artist granular tags from MusicBrainz and
+        # Last.fm sources into the ``granular_tags`` column (Decision
+        # 060). Runs at 05:15 ET, 15 minutes after both Last.fm
+        # similarity (05:00) and genre normalization (05:00) so the
+        # latest source data is folded in. Two-pass execution —
+        # populates without DF filtering, rebuilds the blocklist, then
+        # re-consolidates — happens inside the task itself.
+        "consolidate-granular-tags-nightly": {
+            "task": (
+                "backend.services.tag_consolidation_tasks.backfill_tag_consolidation"
+            ),
+            "schedule": crontab(hour=5, minute=15),
+            "options": {"expires": 60 * 60 * 3},
+        },
         # Posts the daily fleet-health digest at 07:30 ET, after the
         # nightly scrape and artist enrichment have settled. Acts as a
         # heartbeat so a silent on-call channel still confirms the job
