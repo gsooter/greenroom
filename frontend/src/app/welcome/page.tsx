@@ -19,7 +19,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import { MusicServicesStep } from "@/components/welcome/MusicServicesStep";
 import { PasskeyStep } from "@/components/welcome/PasskeyStep";
@@ -69,7 +69,21 @@ function parseReturnUrl(raw: string | null): string {
   return raw;
 }
 
+/**
+ * Default export wraps the inner page in a Suspense boundary because
+ * ``useSearchParams`` opts the route into Next.js's dynamic rendering
+ * pipeline. Without the boundary, ``next build`` fails the entire
+ * /welcome prerender pass.
+ */
 export default function WelcomePage(): JSX.Element {
+  return (
+    <Suspense fallback={<Shell>Loading…</Shell>}>
+      <WelcomePageInner />
+    </Suspense>
+  );
+}
+
+function WelcomePageInner(): JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, token, isLoading, isAuthenticated, refreshUser } =
