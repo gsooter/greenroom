@@ -1,10 +1,11 @@
 """Recommendation engine orchestrator.
 
 Runs all registered scorers against a user's candidate event set, sums
-and normalizes the per-scorer contributions to 0.0-1.0, and persists
-the top-N results with a ``score_breakdown`` JSONB so users can see
-why a show was recommended and we can analyze scorer impact later
-(Decision 007).
+and normalizes the per-scorer contributions to 0.0-1.0, applies the
+DMV-aware overlay (actionability x time-window x availability) to the
+combined base, and persists the top-N results with a
+``score_breakdown`` JSONB so users can see why a show was recommended
+and we can analyze scorer impact later (Decision 007, 062).
 
 Current scorers:
 
@@ -19,6 +20,23 @@ Current scorers:
 
 Adding a new scorer is a matter of implementing the protocol below and
 adding it to ``_build_scorers`` — no other file changes.
+
+Overlay ordering (Decision 062): scorers run first, their outputs
+combine into a single ``base`` score, and only then do the three
+overlays multiply through. Computing the overlays per-scorer would
+compound them N times (0.4 x 0.4 x ... -> near-zero) and is wrong.
+
+Caching note: recommendations are cached per user with a 6-hour TTL.
+Two side-effects of the time-window overlay drive that choice — first,
+a recommendation computed Monday for a Friday-week show scores
+differently when re-computed Thursday, so a stale cache understates
+nearby shows. Second, availability changes (a show going from
+"available" to "sold out") should invalidate the user's cache for any
+affected event; the upstream pricing/availability writer is
+responsible for flagging affected user caches for refresh on the next
+read. We deliberately don't push updates immediately — flag-and-let-
+the-next-read-recompute is sufficient for the overlay's accuracy
+budget.
 """
 
 from __future__ import annotations
@@ -32,7 +50,17 @@ from backend.core.text import normalize_artist_name as _normalize
 from backend.data.models.events import Event, EventStatus
 from backend.data.repositories import artists as artists_repo
 from backend.data.repositories import follows as follows_repo
+from backend.data.repositories import regions as regions_repo
 from backend.data.repositories import users as users_repo
+from backend.recommendations.overlays.actionability import (
+    compute_actionability_multiplier,
+)
+from backend.recommendations.overlays.availability import (
+    compute_availability_multiplier,
+)
+from backend.recommendations.overlays.time_window import (
+    compute_time_window_multiplier,
+)
 from backend.recommendations.scorers.artist_match import ArtistMatchScorer
 from backend.recommendations.scorers.followed_artist import FollowedArtistScorer
 from backend.recommendations.scorers.followed_venue import FollowedVenueScorer
@@ -159,6 +187,10 @@ def generate_for_user(
         tag_similar_by_anchor=tag_similar_by_anchor,
     )
 
+    user_preferred_city_id = getattr(user, "city_id", None)
+    user_region_id = _resolve_user_region_id(session, user_preferred_city_id)
+    now = datetime.now(UTC)
+
     scored: list[tuple[float, dict[str, Any], Event]] = []
     for event in events:
         breakdown: dict[str, Any] = {}
@@ -171,9 +203,31 @@ def generate_for_user(
             total += float(result.get("score", 0.0))
         if not breakdown:
             continue
-        normalized = min(total, 1.0)
+        base_score = min(total, 1.0)
+
+        # Apply DMV-aware overlay once per (user, event) pair, after
+        # combining the per-scorer outputs into a single base. Doing
+        # this per-scorer would compound the multipliers (0.4^N) and
+        # would be wrong; see Decision 062.
+        actionability = compute_actionability_multiplier(
+            event,
+            user_preferred_city_id,
+            user_region_id,
+        )
+        time_window = compute_time_window_multiplier(event, now)
+        availability = compute_availability_multiplier(event)
+        final_score = base_score * actionability * time_window * availability
+        if final_score <= 0.0:
+            # Cancelled / past leak through here as 0.0 — drop them
+            # before they steal a top-N slot.
+            continue
+
+        breakdown["base"] = base_score
+        breakdown["actionability"] = actionability
+        breakdown["time_window"] = time_window
+        breakdown["availability"] = availability
         breakdown["_match_reasons"] = _build_match_reasons(breakdown)
-        scored.append((normalized, breakdown, event))
+        scored.append((final_score, breakdown, event))
 
     scored.sort(key=lambda row: (-row[0], row[2].starts_at))
     deduped = _dedupe_by_show(scored)
@@ -188,6 +242,33 @@ def generate_for_user(
             score_breakdown=breakdown,
         )
     return len(top)
+
+
+def _resolve_user_region_id(
+    session: Session,
+    user_preferred_city_id: Any,
+) -> Any:
+    """Return the region UUID for ``user_preferred_city_id``, or ``None``.
+
+    The actionability overlay needs the user's region so it can
+    classify each event as same-region vs different-region. We
+    resolve it once at the start of the scoring run and pass the
+    result into every event's overlay computation, which keeps the
+    per-event cost O(1) — no per-event database query.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user_preferred_city_id: The user's preferred city UUID, or
+            ``None`` when unset.
+
+    Returns:
+        The region's UUID, or ``None`` when the user has no
+        preferred city or the city has no region recorded.
+    """
+    if user_preferred_city_id is None:
+        return None
+    region = regions_repo.get_region_for_city(session, user_preferred_city_id)
+    return region.id if region is not None else None
 
 
 def _fetch_scoreable_events(
@@ -246,10 +327,10 @@ def _build_scorers(
             :func:`follows_repo.list_followed_artist_signals`. Pass
             ``None`` or an empty mapping for users who follow no
             artists.
-        followed_venues: Precomputed ``venue_id`` → display name map for
+        followed_venues: Precomputed ``venue_id`` -> display name map for
             venues the user follows. Pass ``None`` or an empty mapping
             for users who follow no venues.
-        artist_canonical_genres: Pre-fetched normalized name → canonical
+        artist_canonical_genres: Pre-fetched normalized name -> canonical
             genres map covering every artist named on the candidate
             event set. Drives the genre fallback inside
             :class:`ArtistMatchScorer` without any per-event lookup.
@@ -273,7 +354,7 @@ def _build_scorers(
 def _fetch_artist_canonical_genres(
     session: Session, events: list[Event]
 ) -> dict[str, list[str]]:
-    """Build a normalized name → canonical genres map for the candidate set.
+    """Build a normalized name -> canonical genres map for the candidate set.
 
     Walks every artist name referenced by the candidate events,
     normalizes each one, and asks the artists repo for the canonical
@@ -344,7 +425,7 @@ def _fetch_similar_artist_signals(
               artist_uuid}`` for downstream consumers (today, the
               tag-overlap query path).
     """
-    # Build candidate (normalized name → (display, weight)) honoring the
+    # Build candidate (normalized name -> (display, weight)) honoring the
     # priority order: a name that appears as both followed and top
     # keeps the higher (followed) weight.
     candidates: dict[str, tuple[str, float]] = {}

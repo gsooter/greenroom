@@ -35,6 +35,7 @@ class _FakeUser:
     """Minimal User stand-in exposing only the fields the engine reads."""
 
     id: uuid.UUID = field(default_factory=uuid.uuid4)
+    city_id: uuid.UUID | None = None
     spotify_top_artists: list[dict[str, Any]] | None = None
     spotify_recent_artists: list[dict[str, Any]] | None = None
     tidal_top_artists: list[dict[str, Any]] | None = None
@@ -55,16 +56,25 @@ class _FakeEvent:
     artists: list[str] | None = field(default_factory=list)
     spotify_artist_ids: list[str] | None = field(default_factory=list)
     genres: list[str] | None = field(default_factory=list)
+    venue: Any = None
+    status: Any = None
 
 
 @pytest.fixture
 def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     """Wire MagicMocks around every IO-touching engine collaborator.
 
+    The DMV-aware overlays are also stubbed to neutral 1.0 by default
+    so existing scorer-focused tests don't have to thread through
+    venue/region wiring. Tests that exercise the overlay flow mutate
+    these mocks (or use the dedicated integration tests below).
+
     Returns:
-        Dict with ``delete``, ``create``, ``fetch``, ``affinity``,
-        ``followed_artists``, and ``followed_venues`` mocks so tests
-        can assert call counts and arguments.
+        Dict with the engine collaborator mocks: scorer-side
+        (``delete``, ``create``, ``fetch``, ``canonical_genres``,
+        ``affinity``, ``followed_artists``, ``followed_venues``,
+        ``user_region``) and overlay-side (``actionability``,
+        ``time_window``, ``availability``).
     """
     delete_mock = MagicMock(name="delete_recommendations_for_user")
     create_mock = MagicMock(name="create_recommendation")
@@ -78,6 +88,16 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
         return_value={"spotify_ids": {}, "names": {}, "labels": {}},
     )
     followed_venues_mock = MagicMock(name="list_followed_venue_labels", return_value={})
+    user_region_mock = MagicMock(name="_resolve_user_region_id", return_value=None)
+    actionability_mock = MagicMock(
+        name="compute_actionability_multiplier", return_value=1.0
+    )
+    time_window_mock = MagicMock(
+        name="compute_time_window_multiplier", return_value=1.0
+    )
+    availability_mock = MagicMock(
+        name="compute_availability_multiplier", return_value=1.0
+    )
     monkeypatch.setattr(
         engine_module.users_repo,
         "delete_recommendations_for_user",
@@ -101,6 +121,16 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     monkeypatch.setattr(
         engine_module, "_fetch_artist_canonical_genres", canonical_genres_mock
     )
+    monkeypatch.setattr(engine_module, "_resolve_user_region_id", user_region_mock)
+    monkeypatch.setattr(
+        engine_module, "compute_actionability_multiplier", actionability_mock
+    )
+    monkeypatch.setattr(
+        engine_module, "compute_time_window_multiplier", time_window_mock
+    )
+    monkeypatch.setattr(
+        engine_module, "compute_availability_multiplier", availability_mock
+    )
     return {
         "delete": delete_mock,
         "create": create_mock,
@@ -109,6 +139,10 @@ def patched_engine(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
         "affinity": affinity_mock,
         "followed_artists": followed_artists_mock,
         "followed_venues": followed_venues_mock,
+        "user_region": user_region_mock,
+        "actionability": actionability_mock,
+        "time_window": time_window_mock,
+        "availability": availability_mock,
     }
 
 
@@ -610,3 +644,209 @@ def test_fetch_scoreable_events_queries_session(
     events = engine_module._fetch_scoreable_events(session, limit=5)
     assert events == ["event-1", "event-2"]
     session.execute.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# DMV-aware overlay integration (Decision 062)
+# ---------------------------------------------------------------------------
+
+
+def test_overlays_applied_once_per_event_after_combining_scorers(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """Overlays multiply the combined base, not each scorer's contribution.
+
+    Computing overlays per-scorer would compound the multipliers
+    (0.4^N -> near-zero) and is the bug the spec calls out as the
+    "subtle but important" failure mode. Lock the order here.
+    """
+    session = MagicMock()
+    user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Solo"}])
+    event = _FakeEvent(spotify_artist_ids=["id-a"])
+    patched_engine["fetch"].return_value = [event]
+    patched_engine["actionability"].return_value = 0.5
+    patched_engine["time_window"].return_value = 0.5
+    patched_engine["availability"].return_value = 0.5
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+
+    assert result == 1
+    # Each overlay should have been called exactly once for the one event,
+    # not per scorer.
+    assert patched_engine["actionability"].call_count == 1
+    assert patched_engine["time_window"].call_count == 1
+    assert patched_engine["availability"].call_count == 1
+    score = patched_engine["create"].call_args_list[0].kwargs["score"]
+    breakdown = patched_engine["create"].call_args_list[0].kwargs["score_breakdown"]
+    # 1.0 (artist_match) x 0.5 x 0.5 x 0.5 = 0.125
+    assert score == pytest.approx(0.125)
+    assert breakdown["base"] == pytest.approx(1.0)
+    assert breakdown["actionability"] == 0.5
+    assert breakdown["time_window"] == 0.5
+    assert breakdown["availability"] == 0.5
+
+
+def test_final_score_equals_base_times_three_overlays(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """Persisted score equals base x actionability x time x availability.
+
+    Property test against floating-point arithmetic — not a single
+    arrangement but the documented one. If a future refactor inlines
+    a different shape (additive bonus, partial overlay, etc.), this
+    fails immediately.
+    """
+    session = MagicMock()
+    user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Solo"}])
+    event = _FakeEvent(spotify_artist_ids=["id-a"])
+    patched_engine["fetch"].return_value = [event]
+    patched_engine["actionability"].return_value = 0.85
+    patched_engine["time_window"].return_value = 0.65
+    patched_engine["availability"].return_value = 0.45
+
+    generate_for_user(session, user)  # type: ignore[arg-type]
+    create_call = patched_engine["create"].call_args_list[0]
+    score = create_call.kwargs["score"]
+    breakdown = create_call.kwargs["score_breakdown"]
+    expected = (
+        breakdown["base"]
+        * breakdown["actionability"]
+        * breakdown["time_window"]
+        * breakdown["availability"]
+    )
+    assert score == pytest.approx(expected)
+
+
+def test_breakdown_contains_all_four_score_components(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """Breakdown carries base / actionability / time_window / availability."""
+    session = MagicMock()
+    user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Solo"}])
+    patched_engine["fetch"].return_value = [_FakeEvent(spotify_artist_ids=["id-a"])]
+    patched_engine["actionability"].return_value = 0.85
+    patched_engine["time_window"].return_value = 1.0
+    patched_engine["availability"].return_value = 1.0
+
+    generate_for_user(session, user)  # type: ignore[arg-type]
+    breakdown = patched_engine["create"].call_args_list[0].kwargs["score_breakdown"]
+    for key in ("base", "actionability", "time_window", "availability"):
+        assert key in breakdown
+
+
+def test_zero_availability_filters_event_from_recommendations(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """A score of 0 (cancelled) drops the event before persisting."""
+    session = MagicMock()
+    user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Solo"}])
+    patched_engine["fetch"].return_value = [_FakeEvent(spotify_artist_ids=["id-a"])]
+    patched_engine["availability"].return_value = 0.0
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+    assert result == 0
+    patched_engine["create"].assert_not_called()
+
+
+def test_zero_time_window_filters_event_from_recommendations(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """A score of 0 from the time-window overlay (past event) drops it."""
+    session = MagicMock()
+    user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Solo"}])
+    patched_engine["fetch"].return_value = [_FakeEvent(spotify_artist_ids=["id-a"])]
+    patched_engine["time_window"].return_value = 0.0
+
+    result = generate_for_user(session, user)  # type: ignore[arg-type]
+    assert result == 0
+
+
+def test_user_region_resolved_once_per_run(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """The engine resolves the user's region exactly once per scoring run.
+
+    Per the spec — the per-event overlay is O(1), so the region
+    lookup must not happen per event. Mocking ``_resolve_user_region_id``
+    and asserting one call lock that contract.
+    """
+    session = MagicMock()
+    user_city = uuid.uuid4()
+    user = _FakeUser(
+        city_id=user_city,
+        spotify_top_artists=[{"id": "id-a", "name": "Solo"}],
+    )
+    patched_engine["fetch"].return_value = [
+        _FakeEvent(spotify_artist_ids=["id-a"]) for _ in range(5)
+    ]
+
+    generate_for_user(session, user)  # type: ignore[arg-type]
+    assert patched_engine["user_region"].call_count == 1
+    patched_engine["user_region"].assert_called_with(session, user_city)
+
+
+def test_overlay_sort_respects_combined_score(
+    patched_engine: dict[str, MagicMock],
+) -> None:
+    """A weak match in DC outranks a strong match downweighted by overlays.
+
+    Two events tied on artist_match (1.0 each); one gets a 1.0
+    overlay product, the other a 0.2 overlay product. The 1.0 product
+    must persist first.
+    """
+    session = MagicMock()
+    user = _FakeUser(spotify_top_artists=[{"id": "id-a", "name": "Solo"}])
+    local = _FakeEvent(spotify_artist_ids=["id-a"], title="Local")
+    far = _FakeEvent(spotify_artist_ids=["id-a"], title="Far")
+    patched_engine["fetch"].return_value = [far, local]
+
+    def actionability_side_effect(event, *_args, **_kwargs):
+        return 1.0 if event.title == "Local" else 0.4
+
+    def time_window_side_effect(event, *_args, **_kwargs):
+        return 1.0 if event.title == "Local" else 0.5
+
+    patched_engine["actionability"].side_effect = actionability_side_effect
+    patched_engine["time_window"].side_effect = time_window_side_effect
+
+    generate_for_user(session, user)  # type: ignore[arg-type]
+    persisted_titles = [
+        c.kwargs["event_id"] for c in patched_engine["create"].call_args_list
+    ]
+    assert persisted_titles == [local.id, far.id]
+
+
+def test_resolve_user_region_id_returns_none_when_user_has_no_city() -> None:
+    """The helper short-circuits when the user has no preferred city."""
+    session = MagicMock()
+    assert engine_module._resolve_user_region_id(session, None) is None
+    session.execute.assert_not_called()
+
+
+def test_resolve_user_region_id_uses_regions_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The helper delegates to ``regions_repo.get_region_for_city``."""
+    session = MagicMock()
+    region = MagicMock()
+    region.id = uuid.uuid4()
+    get_region_mock = MagicMock(return_value=region)
+    monkeypatch.setattr(
+        engine_module.regions_repo, "get_region_for_city", get_region_mock
+    )
+    city_id = uuid.uuid4()
+    result = engine_module._resolve_user_region_id(session, city_id)
+    assert result == region.id
+    get_region_mock.assert_called_once_with(session, city_id)
+
+
+def test_resolve_user_region_id_returns_none_when_city_has_no_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the city resolves to no region, the helper returns ``None``."""
+    monkeypatch.setattr(
+        engine_module.regions_repo,
+        "get_region_for_city",
+        MagicMock(return_value=None),
+    )
+    assert engine_module._resolve_user_region_id(MagicMock(), uuid.uuid4()) is None
