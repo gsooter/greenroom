@@ -202,6 +202,31 @@ describe("subscribeBrowserToPush", () => {
     expect(call?.userVisibleOnly).toBe(true);
     expect(call?.applicationServerKey).toBeInstanceOf(ArrayBuffer);
   });
+
+  it("strips trailing whitespace from a key pasted with a newline", async () => {
+    const subscribe = vi.fn().mockResolvedValue({ endpoint: "https://push/x" });
+    const reg = {
+      pushManager: {
+        getSubscription: vi.fn().mockResolvedValue(null),
+        subscribe,
+      },
+    } as unknown as ServiceWorkerRegistration;
+    await expect(subscribeBrowserToPush(reg, "BCp\n")).resolves.toBeTruthy();
+  });
+
+  it("throws a clear error pointing at VAPID_PUBLIC_KEY when the key has invalid characters", async () => {
+    const reg = {
+      pushManager: {
+        getSubscription: vi.fn().mockResolvedValue(null),
+        subscribe: vi.fn(),
+      },
+    } as unknown as ServiceWorkerRegistration;
+    // "@" and "!" never appear in any base64 variant; the regex must
+    // reject before atob throws its less-helpful InvalidCharacterError.
+    await expect(
+      subscribeBrowserToPush(reg, "BCp@!#"),
+    ).rejects.toThrow(/VAPID_PUBLIC_KEY/);
+  });
 });
 
 describe("postSubscriptionToBackend", () => {

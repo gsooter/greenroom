@@ -225,8 +225,17 @@ export async function enablePush(token: string): Promise<PushSubscription> {
 }
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  // Strip whitespace first — env vars copy-pasted into deploy dashboards
+  // often pick up trailing newlines, which would survive the URL-safe
+  // substitution below and trip atob with "invalid characters."
+  const cleaned = base64String.replace(/\s+/g, "");
+  const padding = "=".repeat((4 - (cleaned.length % 4)) % 4);
+  const base64 = (cleaned + padding).replace(/-/g, "+").replace(/_/g, "/");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+    throw new Error(
+      `VAPID public key isn't valid base64url (got ${cleaned.length} chars). Check the VAPID_PUBLIC_KEY env var on the backend.`,
+    );
+  }
   const raw = globalThis.atob(base64);
   const output = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; ++i) output[i] = raw.charCodeAt(i);
