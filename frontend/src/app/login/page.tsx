@@ -286,15 +286,7 @@ function PasskeyButton({
       await onAuthenticated(token, refresh_token);
     } catch (err) {
       setStatus("error");
-      if (err instanceof DOMException && err.name === "NotAllowedError") {
-        setError("Passkey sign-in was cancelled.");
-      } else {
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Could not sign in with a passkey.",
-        );
-      }
+      setError(formatPasskeyError(err));
     }
   }
 
@@ -331,6 +323,54 @@ function PasskeyButton({
       ) : null}
     </>
   );
+}
+
+/**
+ * Map a WebAuthn / passkey failure to a sentence the user can act on.
+ *
+ * The most painful real-world failure is "InvalidStateError" inside a
+ * home-screen PWA — Safari ties passkeys to the relying party's origin,
+ * and a passkey created in a regular Safari tab against a different
+ * origin (e.g., one provisioned through Knuckles directly) won't show
+ * up inside the standalone PWA. When we detect that case we point the
+ * user back to opening Greenroom in a regular tab.
+ *
+ * Args:
+ *   err: The thrown error from the credentials API or the backend.
+ *
+ * Returns:
+ *   A short sentence suitable for inline error rendering.
+ */
+function formatPasskeyError(err: unknown): string {
+  if (err instanceof DOMException) {
+    if (err.name === "NotAllowedError") {
+      // The user cancelled, OR the platform rejected because no
+      // matching credential exists for this origin. Both surface as
+      // NotAllowedError per the WebAuthn spec; we can't tell them
+      // apart, so the message has to cover both.
+      const inPwa =
+        typeof window !== "undefined" &&
+        ((typeof window.matchMedia === "function" &&
+          window.matchMedia("(display-mode: standalone)").matches) ||
+          (window.navigator as Navigator & { standalone?: boolean })
+            .standalone === true);
+      if (inPwa) {
+        return "Passkey sign-in was cancelled or no passkey was found for this site. If you set the passkey up in Safari, try opening Greenroom in Safari instead of the home-screen app.";
+      }
+      return "Passkey sign-in was cancelled or no passkey was found for this site.";
+    }
+    if (err.name === "SecurityError") {
+      return "This browser refused the passkey because the site URL doesn't match where the passkey was created.";
+    }
+    if (err.name === "InvalidStateError") {
+      return "A passkey for this site already exists on the device but didn't authorize. Try again or use the magic-link sign-in.";
+    }
+    if (err.name === "NotSupportedError") {
+      return "This browser doesn't support passkeys for this site yet.";
+    }
+  }
+  if (err instanceof Error) return err.message;
+  return "Could not sign in with a passkey.";
 }
 
 function Divider({ children }: { children: React.ReactNode }): JSX.Element {

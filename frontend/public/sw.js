@@ -10,7 +10,17 @@
  * The `push` handler tolerates malformed payloads: if the JSON parse
  * fails we still call `showNotification` with a generic body so the
  * user gets a ping instead of silent dead air.
+ *
+ * The page sends the absolute backend base URL via postMessage right
+ * after registration (`{type: "set-api-base", apiBase: "..."}`). The
+ * worker stores it and uses it inside `pushsubscriptionchange` to
+ * re-fetch the VAPID key and re-POST the subscription. Without this
+ * handshake the worker would resolve `/api/v1/...` against its own
+ * scope (the frontend origin), which 404s in the common production
+ * case where the backend lives on a different origin.
  */
+
+let API_BASE = "";
 
 self.addEventListener("install", (event) => {
   // Activate as soon as the new worker is installed so a refresh
@@ -20,6 +30,13 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener("message", (event) => {
+  const data = event.data;
+  if (data && data.type === "set-api-base" && typeof data.apiBase === "string") {
+    API_BASE = data.apiBase.replace(/\/$/, "");
+  }
 });
 
 self.addEventListener("push", (event) => {
@@ -86,8 +103,14 @@ self.addEventListener("pushsubscriptionchange", (event) => {
   // permission flow.
   event.waitUntil(
     (async () => {
+      if (!API_BASE) {
+        // The page hasn't told us where the backend lives yet. Skip
+        // — the next visit's enablePush() call will recreate the
+        // subscription via the normal flow.
+        return;
+      }
       try {
-        const response = await fetch("/api/v1/push/vapid-public-key");
+        const response = await fetch(`${API_BASE}/api/v1/push/vapid-public-key`);
         const json = await response.json();
         const key = json && json.data && json.data.public_key;
         if (!key) return;
@@ -95,7 +118,7 @@ self.addEventListener("pushsubscriptionchange", (event) => {
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(key),
         });
-        await fetch("/api/v1/push/subscribe", {
+        await fetch(`${API_BASE}/api/v1/push/subscribe`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(newSub.toJSON()),

@@ -18,7 +18,31 @@
  * "user clicked Enable" case.
  */
 
-import { fetchJson } from "@/lib/api/client";
+import { ApiNotFoundError, ApiRequestError, fetchJson } from "@/lib/api/client";
+import { config } from "@/lib/config";
+
+/**
+ * User-facing error raised when the push pipeline isn't reachable or
+ * isn't configured. Carries a ``reason`` tag so the prompt can render
+ * a per-cause hint without parsing message strings.
+ */
+export class PushUnavailableError extends Error {
+  readonly reason:
+    | "endpoint_missing"
+    | "server_error"
+    | "not_configured"
+    | "permission_denied"
+    | "browser_unsupported";
+
+  constructor(
+    reason: PushUnavailableError["reason"],
+    message: string,
+  ) {
+    super(message);
+    this.name = "PushUnavailableError";
+    this.reason = reason;
+  }
+}
 
 interface VapidKeyResponse {
   data: { public_key: string };
@@ -35,11 +59,33 @@ interface UnsubscribeResponse {
 const SERVICE_WORKER_URL = "/sw.js";
 
 export async function getVapidPublicKey(): Promise<string> {
-  const response = await fetchJson<VapidKeyResponse>(
-    "/api/v1/push/vapid-public-key",
-    { revalidateSeconds: 0 },
-  );
-  return response.data.public_key;
+  try {
+    const response = await fetchJson<VapidKeyResponse>(
+      "/api/v1/push/vapid-public-key",
+      { revalidateSeconds: 0 },
+    );
+    return response.data.public_key;
+  } catch (err) {
+    // The most common failure mode in real deployments is "the
+    // backend hasn't been redeployed with the push routes yet" —
+    // that surfaces as a 404 (Flask's default page when the JSON
+    // parse falls through inside fetchJson). Re-raise as a typed
+    // PushUnavailableError so the prompt can show a friendly
+    // message instead of "404 NOT FOUND".
+    if (err instanceof ApiNotFoundError) {
+      throw new PushUnavailableError(
+        "endpoint_missing",
+        "Push notifications aren't ready on this server yet. Try again in a few minutes.",
+      );
+    }
+    if (err instanceof ApiRequestError) {
+      throw new PushUnavailableError(
+        "server_error",
+        "Push notifications hit a server error. Try again later.",
+      );
+    }
+    throw err;
+  }
 }
 
 export async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
@@ -47,10 +93,22 @@ export async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> 
     throw new Error("Service workers are not supported in this browser.");
   }
   const existing = await navigator.serviceWorker.getRegistration("/");
-  if (existing) return existing;
-  return navigator.serviceWorker.register(SERVICE_WORKER_URL, {
-    scope: "/",
-  });
+  const registration =
+    existing ??
+    (await navigator.serviceWorker.register(SERVICE_WORKER_URL, {
+      scope: "/",
+    }));
+  // Hand the backend's absolute base URL to the worker so its
+  // ``pushsubscriptionchange`` handler can re-fetch the VAPID key
+  // and POST a refreshed subscription, even when the backend lives
+  // on a different origin from the frontend (the common production
+  // case). Sent every call because a worker may have re-installed
+  // since the page last set this.
+  const target = registration.active ?? registration.waiting ?? registration.installing;
+  if (target) {
+    target.postMessage({ type: "set-api-base", apiBase: config.apiUrl });
+  }
+  return registration;
 }
 
 export async function subscribeBrowserToPush(
@@ -108,17 +166,26 @@ export async function deleteSubscriptionFromBackend(
 export async function enablePush(token: string): Promise<PushSubscription> {
   const publicKey = await getVapidPublicKey();
   if (!publicKey) {
-    throw new Error("Push is not configured on the server.");
+    throw new PushUnavailableError(
+      "not_configured",
+      "Push notifications aren't configured for this environment yet.",
+    );
   }
   if (!("Notification" in window)) {
-    throw new Error("This browser does not support notifications.");
+    throw new PushUnavailableError(
+      "browser_unsupported",
+      "This browser doesn't support push notifications.",
+    );
   }
   const permission =
     Notification.permission === "default"
       ? await Notification.requestPermission()
       : Notification.permission;
   if (permission !== "granted") {
-    throw new Error("Notification permission was not granted.");
+    throw new PushUnavailableError(
+      "permission_denied",
+      "Notification permission wasn't granted. Enable it in your browser settings to try again.",
+    );
   }
   const registration = await ensureServiceWorker();
   const subscription = await subscribeBrowserToPush(registration, publicKey);
