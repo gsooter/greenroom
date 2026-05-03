@@ -154,4 +154,22 @@ describe("EventCard", () => {
     render(<EventCard event={summary()} />);
     expect(screen.getByTestId("save-btn").dataset.eventId).toBe("e-1");
   });
+
+  it("renders title, venue, price, and the link in the compact layout", () => {
+    const { container } = render(<EventCard event={summary()} compact />);
+    expect(screen.getByText("Fake Show")).toBeInTheDocument();
+    expect(screen.getByText("Black Cat")).toBeInTheDocument();
+    expect(screen.getByText("$25–$55")).toBeInTheDocument();
+    const link = container.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("/events/fake-show");
+    expect(screen.getByTestId("save-btn")).toBeInTheDocument();
+  });
+
+  it("renders the placeholder thumbnail in compact mode when image_url is null", () => {
+    const { container } = render(
+      <EventCard event={summary({ image_url: null })} compact />,
+    );
+    const bg = container.querySelector('[role="presentation"]') as HTMLElement;
+    expect(bg.style.backgroundImage).toBe("");
+  });
 });
