@@ -82,11 +82,13 @@ export function NotificationPermissionPrompt(): JSX.Element | null {
       }
       setHidden(true);
     } catch (err) {
-      // PushUnavailableError carries a friendly message already; for
-      // any other error fall back to a generic line so we never leak
-      // raw HTTP status text into the UI.
+      // Log to console so the underlying cause is visible in Safari's
+      // remote inspector when diagnosing iOS PWA push issues.
+      console.error("[push] enable failed", err);
       if (err instanceof PushUnavailableError) {
         setError(err.message);
+      } else if (err instanceof Error && err.message) {
+        setError(`Could not enable notifications: ${err.message}`);
       } else {
         setError("Could not enable notifications. Try again in a moment.");
       }

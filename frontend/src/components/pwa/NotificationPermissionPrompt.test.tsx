@@ -178,7 +178,7 @@ describe("NotificationPermissionPrompt", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("falls back to a generic message for unknown errors", async () => {
+  it("surfaces the underlying error message for unknown errors so iOS PWA failures are diagnosable", async () => {
     enablePush.mockRejectedValue(new Error("network exploded"));
     render(<NotificationPermissionPrompt />);
     act(() => {
@@ -187,10 +187,23 @@ describe("NotificationPermissionPrompt", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Enable$/i }));
     await waitFor(() => {
       expect(
-        screen.getByText(/Could not enable notifications/i),
+        screen.getByText(/Could not enable notifications: network exploded/i),
       ).toBeInTheDocument();
     });
-    expect(screen.queryByText(/network exploded/i)).toBeNull();
+  });
+
+  it("falls back to a generic message when an error has no message", async () => {
+    enablePush.mockRejectedValue("non-error rejection");
+    render(<NotificationPermissionPrompt />);
+    act(() => {
+      vi.advanceTimersByTime(DWELL_MS + 100);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Enable$/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Try again in a moment/i),
+      ).toBeInTheDocument();
+    });
   });
 
   it("dismiss writes the cooldown and hides the banner", () => {

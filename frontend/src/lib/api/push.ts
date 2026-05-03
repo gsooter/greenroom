@@ -32,15 +32,20 @@ export class PushUnavailableError extends Error {
     | "server_error"
     | "not_configured"
     | "permission_denied"
-    | "browser_unsupported";
+    | "browser_unsupported"
+    | "subscribe_failed"
+    | "subscribe_post_failed";
+  readonly cause?: unknown;
 
   constructor(
     reason: PushUnavailableError["reason"],
     message: string,
+    cause?: unknown,
   ) {
     super(message);
     this.name = "PushUnavailableError";
     this.reason = reason;
+    this.cause = cause;
   }
 }
 
@@ -191,8 +196,31 @@ export async function enablePush(token: string): Promise<PushSubscription> {
     );
   }
   const registration = await ensureServiceWorker();
-  const subscription = await subscribeBrowserToPush(registration, publicKey);
-  await postSubscriptionToBackend(subscription, token);
+  let subscription: PushSubscription;
+  try {
+    subscription = await subscribeBrowserToPush(registration, publicKey);
+  } catch (err) {
+    // pushManager.subscribe can throw on iOS Safari even after the
+    // permission grant — most often a malformed VAPID key or an APNS
+    // handshake failure. Surface the underlying message so the prompt
+    // can show something better than a generic line.
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new PushUnavailableError(
+      "subscribe_failed",
+      `The browser couldn't subscribe to push: ${detail}`,
+      err,
+    );
+  }
+  try {
+    await postSubscriptionToBackend(subscription, token);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new PushUnavailableError(
+      "subscribe_post_failed",
+      `Saving the subscription failed: ${detail}`,
+      err,
+    );
+  }
   return subscription;
 }
 
