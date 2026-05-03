@@ -269,7 +269,7 @@ function WelcomePrompt({
           Connect Tidal
         </Link>
         <Link
-          href="/welcome"
+          href="/welcome?step=taste&return=/"
           className="rounded-md border border-border bg-bg-white px-4 py-2 text-sm font-semibold text-text-primary hover:border-green-primary"
         >
           Browse artists to follow →
@@ -297,7 +297,7 @@ function ThinSignalPrompt(): JSX.Element {
           Connect Apple Music
         </Link>
         <Link
-          href="/welcome"
+          href="/welcome?step=taste&return=/"
           className="rounded-md border border-border bg-bg-white px-4 py-2 text-sm font-semibold text-text-primary hover:border-green-primary"
         >
           Browse artists →
