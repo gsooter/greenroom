@@ -13,6 +13,16 @@
  * which is the correct value for both anonymous visitors (who
  * haven't set the preference) and crawlers (who shouldn't see a
  * stripped layout).
+ *
+ * Cold-start default is viewport-aware: a mobile viewport (the
+ * Tailwind ``sm`` breakpoint at 640 px and below) defaults to
+ * compact because the comfortable layout's vertical hero-image
+ * cards stack uncomfortably on a 5-inch screen. Desktop defaults
+ * to comfortable. Once the user toggles, the explicit choice is
+ * persisted and the viewport default is ignored on subsequent
+ * loads — including a desktop user who flips to compact and later
+ * resizes, and a mobile user who flips to comfortable and later
+ * loads on iPad.
  */
 
 "use client";
@@ -22,20 +32,46 @@ import { useEffect, useState } from "react";
 const STORAGE_KEY = "greenroom.home.compact";
 const CHANGE_EVENT = "greenroom:home-compact-change";
 
+/** Tailwind's ``sm`` breakpoint — anything narrower is "mobile" here. */
+const MOBILE_MAX_WIDTH_PX = 639;
+
 /**
- * Read the current compact-mode preference from ``localStorage``.
+ * Return whether the current viewport is mobile-sized.
  *
- * Returns ``false`` outside of a browser, when the key is missing,
- * or when the stored value is anything other than the literal
- * ``"true"`` — defensive against legacy values left over from
- * earlier iterations.
+ * Used as the cold-start default for compact mode. Returns ``false``
+ * outside a browser so SSR renders the desktop layout (which is what
+ * crawlers should index regardless of phone-vs-laptop user agents).
+ */
+function isMobileViewport(): boolean {
+  if (typeof window === "undefined") return false;
+  if (typeof window.matchMedia === "function") {
+    return window.matchMedia(`(max-width: ${MOBILE_MAX_WIDTH_PX}px)`).matches;
+  }
+  return (window.innerWidth ?? Number.POSITIVE_INFINITY) <= MOBILE_MAX_WIDTH_PX;
+}
+
+/**
+ * Read the current compact-mode preference.
+ *
+ * Resolution order:
+ *
+ *   1. Stored ``"true"`` → compact.
+ *   2. Stored ``"false"`` → comfortable. (Honors a deliberate opt-out.)
+ *   3. No stored value → viewport-aware default (mobile = compact,
+ *      desktop = comfortable).
+ *
+ * Returns ``false`` outside a browser so server components render the
+ * desktop layout consistently (crawlers don't get a stripped grid).
  */
 export function readCompact(): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === "true";
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (stored === "true") return true;
+    if (stored === "false") return false;
+    return isMobileViewport();
   } catch {
-    return false;
+    return isMobileViewport();
   }
 }
 

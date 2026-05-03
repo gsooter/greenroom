@@ -13,6 +13,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 
 import {
@@ -21,24 +22,66 @@ import {
   writeCompact,
 } from "@/lib/home-preferences";
 
+const realMatchMedia = window.matchMedia;
+
+function setViewport(matchesMobile: boolean): void {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: matchesMobile && /max-width:\s*\d+px/.test(query),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 beforeEach(() => {
   window.localStorage.clear();
+  setViewport(false);
 });
 
 afterEach(() => {
   window.localStorage.clear();
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: realMatchMedia,
+  });
 });
 
 describe("readCompact", () => {
-  it("returns false when no value is stored", () => {
+  it("falls back to comfortable on a desktop viewport when nothing is stored", () => {
+    setViewport(false);
     expect(readCompact()).toBe(false);
   });
 
-  it("returns true only for the literal string 'true'", () => {
+  it("falls back to compact on a mobile viewport when nothing is stored", () => {
+    setViewport(true);
+    expect(readCompact()).toBe(true);
+  });
+
+  it("honors a stored 'true' regardless of viewport", () => {
+    setViewport(false);
     window.localStorage.setItem("greenroom.home.compact", "true");
     expect(readCompact()).toBe(true);
+  });
+
+  it("honors a stored 'false' on mobile (explicit opt-out wins)", () => {
+    setViewport(true);
+    window.localStorage.setItem("greenroom.home.compact", "false");
+    expect(readCompact()).toBe(false);
+  });
+
+  it("treats unknown stored values as 'no preference' (viewport default)", () => {
+    setViewport(false);
     window.localStorage.setItem("greenroom.home.compact", "1");
     expect(readCompact()).toBe(false);
+    setViewport(true);
+    expect(readCompact()).toBe(true);
   });
 });
 
