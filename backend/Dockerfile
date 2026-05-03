@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 #
 # Greenroom backend image — Flask API + Celery tasks.
 #
