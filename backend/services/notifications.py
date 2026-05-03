@@ -31,10 +31,12 @@ from backend.core.config import get_settings
 from backend.core.logging import get_logger
 from backend.data.repositories import email_digest_log as digest_log_repo
 from backend.data.repositories import events as events_repo
+from backend.data.repositories import notification_log as log_repo
 from backend.data.repositories import notification_preferences as prefs_repo
 from backend.data.repositories import users as users_repo
 from backend.recommendations import engine as rec_engine
 from backend.services import email as email_service
+from backend.services import email_structured_data
 
 logger = get_logger(__name__)
 
@@ -193,6 +195,10 @@ class WeeklyDigest:
         preheader: Pre-header text shown in the inbox preview.
         cta_url: "View all shows" link at the bottom of the email.
         shows: Pre-flattened show-card dicts ready for Jinja.
+        structured_data: List of Schema.org ``MusicEvent`` blobs
+            embedded in the rendered HTML's ``<head>`` so Gmail and
+            Apple Mail render rich actionable previews. Empty list
+            when the digest has no shows.
     """
 
     heading: str
@@ -200,6 +206,7 @@ class WeeklyDigest:
     preheader: str
     cta_url: str
     shows: list[dict[str, Any]]
+    structured_data: list[dict[str, Any]]
 
     def template_context(self) -> dict[str, Any]:
         """Return the dict the email template will render against.
@@ -213,6 +220,7 @@ class WeeklyDigest:
             "preheader": self.preheader,
             "cta_url": self.cta_url,
             "shows": self.shows,
+            "structured_data": self.structured_data,
         }
 
 
@@ -270,6 +278,12 @@ def assemble_weekly_digest(
     )
     top = ranked[:_MAX_DIGEST_SHOWS]
     cards = [_show_card(event, prefs) for event in top]
+    structured = [
+        email_structured_data.event_to_jsonld(
+            event, event_url=f"{_public_base()}/events/{event.slug}"
+        )
+        for event in top
+    ]
 
     show_word = "show" if len(cards) == 1 else "shows"
     has_recs = any(score_by_event_id.get(e.id, 0.0) > 0 for e in top)
@@ -287,6 +301,7 @@ def assemble_weekly_digest(
         preheader=f"{len(cards)} upcoming {show_word} we picked for you",
         cta_url=f"{_public_base()}/events",
         shows=cards,
+        structured_data=structured,
     )
 
 
@@ -391,6 +406,13 @@ def send_weekly_digest_to_user(
     if user is None:
         return False
 
+    if user.email_bounced_at is not None:
+        # The recipient's address bounced or generated a complaint.
+        # The Resend webhook handler set the flag; admin clears it
+        # after the user updates their address. Skip silently — the
+        # user already knows something is wrong with their inbox.
+        return False
+
     prefs = prefs_repo.get_or_create_for_user(session, user_id)
     if prefs.paused_at is not None or not prefs.weekly_digest:
         return False
@@ -403,6 +425,25 @@ def send_weekly_digest_to_user(
 
     digest = assemble_weekly_digest(session, user, prefs, now=now)
     if digest is None:
+        return False
+
+    # Claim a notification_log slot before sending. This makes the
+    # weekly digest visible to the unified dispatcher's "what did we
+    # send?" view alongside push notifications, and the unique
+    # constraint provides a second line of defense against a duplicate
+    # send within the same ISO week.
+    iso_year, iso_week, _ = now.isocalendar()
+    dedupe_key = f"{iso_year}-W{iso_week:02d}"
+    claimed = log_repo.claim(
+        session,
+        user_id=user_id,
+        notification_type="weekly_digest",
+        dedupe_key=dedupe_key,
+        channel="email",
+        payload={"show_count": len(digest.shows)},
+        now=now,
+    )
+    if not claimed:
         return False
 
     email_service.compose_email(

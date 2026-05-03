@@ -477,7 +477,7 @@ def _ingest_events(
         else:
             # Create new event
             slug = _generate_slug(raw.title, venue_slug, raw.starts_at, external_id)
-            events_repo.create_event(
+            new_event = events_repo.create_event(
                 session,
                 venue_id=venue.id,
                 title=raw.title,
@@ -500,8 +500,41 @@ def _ingest_events(
                 source_platform=source_platform,
             )
             created += 1
+            _enqueue_tour_announcement(new_event)
 
     return created, updated, skipped
+
+
+def _enqueue_tour_announcement(event: Event) -> None:
+    """Hand off tour-announcement fan-out to the notifications worker.
+
+    Uses ``celery_app.send_task`` rather than importing the task
+    directly so this scraper module does not violate the layer rule
+    that forbids ``scraper/`` from importing ``services/``. The task
+    is identified by its registered name; the worker-side module is
+    loaded from ``celery_app.include``.
+
+    Args:
+        event: The freshly-created :class:`Event` row.
+    """
+    if event is None or event.id is None:
+        return
+    try:
+        from backend.celery_app import celery_app
+
+        celery_app.send_task(
+            "backend.services.notification_tasks.dispatch_tour_announcements_for_event",
+            args=[str(event.id)],
+        )
+    except Exception:
+        # Notification fan-out failures must never block ingestion.
+        # The event is committed regardless; the worst case is no
+        # push for this row, which is reversible by re-running the
+        # dispatch manually from the admin endpoint.
+        logger.exception(
+            "tour_announcement_enqueue_failed",
+            extra={"event_id": str(event.id)},
+        )
 
 
 def _upsert_artists(session: Session, names: list[str]) -> None:
