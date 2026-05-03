@@ -317,6 +317,64 @@ describe("enablePush", () => {
     });
   });
 
+  it("wraps a pushManager.subscribe failure in subscribe_failed with the underlying message", async () => {
+    fetchJson.mockResolvedValueOnce({ data: { public_key: "BCp" } });
+    setNotification(
+      Object.assign(function MockNotification() {}, {
+        permission: "granted",
+        requestPermission: vi.fn(),
+      }),
+    );
+    setNavigatorServiceWorker({
+      getRegistration: vi.fn().mockResolvedValue({
+        active: { postMessage: vi.fn() },
+        pushManager: {
+          getSubscription: vi.fn().mockResolvedValue(null),
+          subscribe: vi.fn().mockRejectedValue(
+            new Error("AbortError: Registration failed - push service error"),
+          ),
+        },
+      }),
+      register: vi.fn(),
+    });
+    await expect(enablePush("tok-1")).rejects.toMatchObject({
+      reason: "subscribe_failed",
+      message: expect.stringContaining("push service error"),
+    });
+  });
+
+  it("wraps a backend POST failure in subscribe_post_failed with the underlying message", async () => {
+    fetchJson.mockImplementation((path: string) => {
+      if (path === "/api/v1/push/vapid-public-key") {
+        return Promise.resolve({ data: { public_key: "BCp" } });
+      }
+      return Promise.reject(new Error("422 unprocessable entity"));
+    });
+    setNotification(
+      Object.assign(function MockNotification() {}, {
+        permission: "granted",
+        requestPermission: vi.fn(),
+      }),
+    );
+    setNavigatorServiceWorker({
+      getRegistration: vi.fn().mockResolvedValue({
+        active: { postMessage: vi.fn() },
+        pushManager: {
+          getSubscription: vi.fn().mockResolvedValue({
+            endpoint: "https://push/abc",
+            toJSON: () => ({ endpoint: "https://push/abc", keys: { p256dh: "p", auth: "a" } }),
+          }),
+          subscribe: vi.fn(),
+        },
+      }),
+      register: vi.fn(),
+    });
+    await expect(enablePush("tok-1")).rejects.toMatchObject({
+      reason: "subscribe_post_failed",
+      message: expect.stringContaining("422"),
+    });
+  });
+
   it("re-uses an already-granted permission without re-prompting", async () => {
     const requestPermission = vi.fn();
     fetchJson.mockImplementation((path: string) => {
