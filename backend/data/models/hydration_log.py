@@ -13,19 +13,15 @@ hydration leaderboard come from this table, not from
 recommendation engine (if those ever exist) do not skew the cap.
 """
 
-from __future__ import annotations
-
 import uuid
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.database import Base
-
-if TYPE_CHECKING:
-    from datetime import datetime
 
 
 class HydrationLog(Base):
