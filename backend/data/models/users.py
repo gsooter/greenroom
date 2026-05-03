@@ -93,6 +93,14 @@ class User(TimestampMixin, Base):
             finished the post-signup onboarding flow (Phase 4 genre
             picker). Null means the app should show onboarding on next
             visit; a non-null value means skip/don't re-show.
+        last_home_visit_at: Most recent home page load by this user.
+            Read on every home page render to compute the "new since
+            your last visit" section, then asynchronously updated to
+            ``now()`` so subsequent visits advance the window.
+            Null for users who have never loaded the home page since
+            the column was introduced — the home service treats null
+            as a 30-day lookback so the section is populated on a
+            first visit rather than empty.
         music_connections: Relationship to connected music services.
         saved_events: Relationship to user's saved events.
         recommendations: Relationship to user's recommendations.
@@ -166,6 +174,9 @@ class User(TimestampMixin, Base):
     )
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    last_home_visit_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
     )
 
     # Relationships
