@@ -607,16 +607,16 @@ def _build_match_reasons(breakdown: dict[str, Any]) -> list[dict[str, Any]]:
             seen_artist_names.add(name.lower())
             match_kind = matched.get("match_kind", "lastfm")
             if match_kind == "tag_overlap":
-                kind = "tag_overlap"
-                label = f"Shares tags with {anchor_name}"
+                similar_kind = "tag_overlap"
+                similar_label = f"Shares tags with {anchor_name}"
             else:
-                kind = "similar_artist"
-                label = f"Similar to {anchor_name}"
+                similar_kind = "similar_artist"
+                similar_label = f"Similar to {anchor_name}"
             reasons.append(
                 {
                     "scorer": "similar_artist",
-                    "kind": kind,
-                    "label": label,
+                    "kind": similar_kind,
+                    "label": similar_label,
                     "artist_name": name,
                     "anchor_name": anchor_name,
                 }
