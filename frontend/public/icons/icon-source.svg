@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Greenroom PWA icon, 1024x1024 source.
+
+    Renders as the green dot on a blush background — the wordmark
+    is too narrow to read at icon sizes, so the icon uses just the
+    mark. Background fills edge-to-edge so the maskable variant
+    (cropped by Android adaptive icons) still has color around the
+    safe area; the dot itself fits inside the maskable safe zone
+    (a centered 80%-radius circle).
+
+    Colors mirror src/lib/brand.ts; keep them in lockstep with the
+    CSS tokens in styles/globals.css.
+  -->
+  <rect width="1024" height="1024" fill="#F7F0EE"/>
+  <circle cx="512" cy="512" r="220" fill="#2D5A3D"/>
+  <circle cx="512" cy="512" r="120" fill="#1E3D2A"/>
+</svg>
