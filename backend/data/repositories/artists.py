@@ -458,6 +458,69 @@ def mark_artist_genres_normalized(
     return artist
 
 
+def list_artists_for_lastfm_similar_enrichment(
+    session: Session,
+    *,
+    limit: int,
+    stale_after: timedelta | None = None,
+) -> list[Artist]:
+    """Return artists that need a Last.fm similar-artists enrichment pass.
+
+    Selects artists whose ``lastfm_similar_enriched_at`` is NULL — the
+    primary backfill case — or whose timestamp is older than
+    ``stale_after`` if a refresh interval is provided. Ordered by
+    creation time so older artists drain first.
+
+    Args:
+        session: Active SQLAlchemy session.
+        limit: Maximum number of artists to return.
+        stale_after: Optional age threshold; rows enriched longer ago
+            than this are considered for re-enrichment. ``None`` (the
+            default) selects only rows that have never been enriched.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows due for similarity
+        enrichment.
+    """
+    condition: ColumnElement[bool]
+    if stale_after is None:
+        condition = Artist.lastfm_similar_enriched_at.is_(None)
+    else:
+        cutoff = datetime.now(UTC) - stale_after
+        condition = or_(
+            Artist.lastfm_similar_enriched_at.is_(None),
+            Artist.lastfm_similar_enriched_at < cutoff,
+        )
+    stmt = (
+        select(Artist).where(condition).order_by(Artist.created_at.asc()).limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def mark_artist_lastfm_similar_enriched(
+    session: Session,
+    artist: Artist,
+) -> Artist:
+    """Stamp the Last.fm similarity enrichment timestamp on an artist row.
+
+    Called on every enrichment attempt — including no-match outcomes —
+    so the nightly task does not re-search the same row on its next
+    pass. The actual similarity rows are written by
+    :func:`backend.services.artist_similarity.store_similar_artists`;
+    this helper only flips the gating column.
+
+    Args:
+        session: Active SQLAlchemy session.
+        artist: The :class:`Artist` row being updated.
+
+    Returns:
+        The updated :class:`Artist` row (same instance, for convenience).
+    """
+    artist.lastfm_similar_enriched_at = datetime.now(UTC)
+    session.flush()
+    return artist
+
+
 def mark_artist_enriched(
     session: Session,
     artist: Artist,

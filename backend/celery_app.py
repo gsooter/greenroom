@@ -41,6 +41,7 @@ def _build_app() -> Celery:
             "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
             "backend.services.genre_normalization_tasks",
+            "backend.services.lastfm_similarity_tasks",
             "backend.services.lastfm_tasks",
             "backend.services.musicbrainz_tasks",
             "backend.services.notification_tasks",
@@ -119,6 +120,32 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
         "backfill-lastfm-enrichment-nightly": {
             "task": "backend.services.lastfm_tasks.backfill_lastfm_enrichment",
             "schedule": crontab(hour=4, minute=45),
+            "options": {"expires": 60 * 60 * 3},
+        },
+        # Drains the Last.fm similar-artists enrichment backlog. Runs at
+        # 05:00 ET, after both MusicBrainz (04:30) and Last.fm tag
+        # enrichment (04:45) have landed; the MBID-first lookup needs
+        # ``musicbrainz_id`` to be set when possible. Paced at 250ms by
+        # the same Redis lock the tag enrichment uses (shared API key).
+        "backfill-lastfm-similarity-enrichment-nightly": {
+            "task": (
+                "backend.services.lastfm_similarity_tasks"
+                ".backfill_lastfm_similarity_enrichment"
+            ),
+            "schedule": crontab(hour=5, minute=0),
+            "options": {"expires": 60 * 60 * 3},
+        },
+        # Resolves any ``artist_similarity`` rows that were inserted
+        # before a matching artist row existed in the database. Runs at
+        # 05:30 ET, after the similarity backfill has finished writing,
+        # so the cleanup pass sees the freshest scraper-introduced
+        # artists.
+        "resolve-unlinked-similarity-rows-nightly": {
+            "task": (
+                "backend.services.lastfm_similarity_tasks"
+                ".resolve_unlinked_similarity_rows"
+            ),
+            "schedule": crontab(hour=5, minute=30),
             "options": {"expires": 60 * 60 * 3},
         },
         # Normalizes per-source MusicBrainz + Last.fm signals into the
