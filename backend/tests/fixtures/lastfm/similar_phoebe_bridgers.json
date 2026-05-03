@@ -1,0 +1,44 @@
+{
+  "similarartists": {
+    "artist": [
+      {
+        "name": "Lucy Dacus",
+        "mbid": "f8a06d20-5fc6-4ad0-9ce4-69e3d6dee3da",
+        "match": "1.000000",
+        "url": "https://www.last.fm/music/Lucy+Dacus",
+        "image": [
+          {"#text": "https://lastfm.freetls.fastly.net/i/u/34s/lucy.png", "size": "small"},
+          {"#text": "https://lastfm.freetls.fastly.net/i/u/300x300/lucy.png", "size": "extralarge"}
+        ],
+        "streamable": "0"
+      },
+      {
+        "name": "Julien Baker",
+        "mbid": "9d40e8d8-ec61-4ee4-9c84-2d12dee6cc8b",
+        "match": "0.957143",
+        "url": "https://www.last.fm/music/Julien+Baker",
+        "image": [
+          {"#text": "https://lastfm.freetls.fastly.net/i/u/300x300/julien.png", "size": "extralarge"}
+        ],
+        "streamable": "0"
+      },
+      {
+        "name": "boygenius",
+        "mbid": "9c0bd8b6-1c1d-49ec-9cb3-0fd9f9d6b3e3",
+        "match": "0.821414",
+        "url": "https://www.last.fm/music/boygenius",
+        "image": [],
+        "streamable": "0"
+      },
+      {
+        "name": "Soccer Mommy",
+        "mbid": "",
+        "match": "0.612933",
+        "url": "https://www.last.fm/music/Soccer+Mommy",
+        "image": [],
+        "streamable": "0"
+      }
+    ],
+    "@attr": {"artist": "Phoebe Bridgers"}
+  }
+}
