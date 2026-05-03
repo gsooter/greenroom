@@ -9,6 +9,13 @@ why a show was recommended and we can analyze scorer impact later
 Current scorers:
 
 * :class:`backend.recommendations.scorers.artist_match.ArtistMatchScorer`
+* :class:`backend.recommendations.scorers.followed_artist.FollowedArtistScorer`
+* :class:`backend.recommendations.scorers.similar_artist.SimilarArtistScorer`
+  — slots between exact artist matches and the genre-overlap fallback;
+  derives "you might like X because they're similar to Y" from the
+  Last.fm ``artist_similarity`` table.
+* :class:`backend.recommendations.scorers.followed_venue.FollowedVenueScorer`
+* :class:`backend.recommendations.scorers.venue_affinity.VenueAffinityScorer`
 
 Adding a new scorer is a matter of implementing the protocol below and
 adding it to ``_build_scorers`` — no other file changes.
@@ -29,6 +36,13 @@ from backend.data.repositories import users as users_repo
 from backend.recommendations.scorers.artist_match import ArtistMatchScorer
 from backend.recommendations.scorers.followed_artist import FollowedArtistScorer
 from backend.recommendations.scorers.followed_venue import FollowedVenueScorer
+from backend.recommendations.scorers.similar_artist import (
+    DIRECT_FOLLOW_WEIGHT,
+    MINIMUM_SIMILARITY_SCORE,
+    RECENT_LISTEN_WEIGHT,
+    TOP_ARTIST_WEIGHT,
+    SimilarArtistScorer,
+)
 from backend.recommendations.scorers.venue_affinity import VenueAffinityScorer
 
 if TYPE_CHECKING:
@@ -117,12 +131,19 @@ def generate_for_user(
 
     events = _fetch_scoreable_events(session)
     artist_canonical_genres = _fetch_artist_canonical_genres(session, events)
+    anchor_signals, similar_by_anchor = _fetch_similar_artist_signals(
+        session,
+        user=user,
+        followed_artists=followed_artists,
+    )
     scorers = _build_scorers(
         user,
         venue_affinity,
         followed_artists=followed_artists,
         followed_venues=followed_venues,
         artist_canonical_genres=artist_canonical_genres,
+        anchor_signals=anchor_signals,
+        similar_by_anchor=similar_by_anchor,
     )
 
     scored: list[tuple[float, dict[str, Any], Event]] = []
@@ -191,6 +212,8 @@ def _build_scorers(
     followed_artists: dict[str, Any] | None = None,
     followed_venues: dict[Any, str] | None = None,
     artist_canonical_genres: dict[str, list[str]] | None = None,
+    anchor_signals: dict[str, tuple[str, float]] | None = None,
+    similar_by_anchor: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[Scorer]:
     """Instantiate the active scorer set for a user.
 
@@ -223,6 +246,10 @@ def _build_scorers(
     return [
         ArtistMatchScorer(user, artist_canonical_genres=artist_canonical_genres or {}),
         FollowedArtistScorer(followed_artists or {}),
+        SimilarArtistScorer(
+            anchor_signals=anchor_signals or {},
+            similar_by_anchor=similar_by_anchor or {},
+        ),
         FollowedVenueScorer(followed_venues or {}),
         VenueAffinityScorer(venue_affinity),
     ]
@@ -255,6 +282,119 @@ def _fetch_artist_canonical_genres(
     if not names:
         return {}
     return artists_repo.get_canonical_genres_by_normalized_name(session, sorted(names))
+
+
+def _fetch_similar_artist_signals(
+    session: Session,
+    *,
+    user: User,
+    followed_artists: dict[str, Any],
+) -> tuple[dict[str, tuple[str, float]], dict[str, list[dict[str, Any]]]]:
+    """Build the anchor signal map and similarity lookup for the scorer.
+
+    Anchors come from three sources in priority order:
+
+    1. Artists the user explicitly follows
+       (:data:`DIRECT_FOLLOW_WEIGHT`).
+    2. Top artists from any connected music service
+       (:data:`TOP_ARTIST_WEIGHT`).
+    3. Recently-played artists from Spotify
+       (:data:`RECENT_LISTEN_WEIGHT`).
+
+    For each anchor, we resolve a UUID against the ``artists`` table by
+    normalized name and fetch any ``artist_similarity`` rows in one
+    batched query. Anchors without a matching artist row contribute no
+    similarity data — the similarity table is keyed on real artists.
+
+    Args:
+        session: Active SQLAlchemy session.
+        user: The user we're generating recommendations for.
+        followed_artists: Output of
+            :func:`follows_repo.list_followed_artist_signals`.
+
+    Returns:
+        A tuple of ``(anchor_signals, similar_by_anchor)``:
+
+            * ``anchor_signals``: ``{normalized_anchor_name: (display,
+              weight)}`` covering every anchor with a matching artist
+              row.
+            * ``similar_by_anchor``: ``{normalized_anchor_name:
+              [{similar_artist_name, similarity_score}, ...]}``.
+    """
+    # Build candidate (normalized name → (display, weight)) honoring the
+    # priority order: a name that appears as both followed and top
+    # keeps the higher (followed) weight.
+    candidates: dict[str, tuple[str, float]] = {}
+
+    follow_names = followed_artists.get("names") if followed_artists else None
+    if isinstance(follow_names, dict):
+        for normalized, display in follow_names.items():
+            if isinstance(normalized, str) and isinstance(display, str):
+                candidates[normalized] = (display, DIRECT_FOLLOW_WEIGHT)
+
+    top_sources: list[list[dict[str, Any]] | None] = [
+        user.spotify_top_artists,
+        user.tidal_top_artists,
+        user.apple_top_artists,
+    ]
+    for source in top_sources:
+        for entry in source or []:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            normalized = _normalize(name)
+            if not normalized or normalized in candidates:
+                continue
+            candidates[normalized] = (name, TOP_ARTIST_WEIGHT)
+
+    for entry in user.spotify_recent_artists or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        normalized = _normalize(name)
+        if not normalized or normalized in candidates:
+            continue
+        candidates[normalized] = (name, RECENT_LISTEN_WEIGHT)
+
+    if not candidates:
+        return {}, {}
+
+    name_to_artist_id = artists_repo.list_artist_ids_by_normalized_names(
+        session, list(candidates.keys())
+    )
+    if not name_to_artist_id:
+        return {}, {}
+
+    artist_id_to_anchor_key: dict[Any, str] = {}
+    anchor_signals: dict[str, tuple[str, float]] = {}
+    for normalized, (display, weight) in candidates.items():
+        artist_id = name_to_artist_id.get(normalized)
+        if artist_id is None:
+            continue
+        artist_id_to_anchor_key[artist_id] = normalized
+        anchor_signals[normalized] = (display, weight)
+
+    if not anchor_signals:
+        return {}, {}
+
+    edges = artists_repo.list_similar_artists_for_anchors(
+        session,
+        list(artist_id_to_anchor_key.keys()),
+        minimum_score=MINIMUM_SIMILARITY_SCORE,
+    )
+    similar_by_anchor: dict[str, list[dict[str, Any]]] = {}
+    for source_id, similar_name, score in edges:
+        anchor_key = artist_id_to_anchor_key.get(source_id)
+        if anchor_key is None:
+            continue
+        similar_by_anchor.setdefault(anchor_key, []).append(
+            {"similar_artist_name": similar_name, "similarity_score": score}
+        )
+    return anchor_signals, similar_by_anchor
 
 
 def _dedupe_by_show(
@@ -347,6 +487,28 @@ def _build_match_reasons(breakdown: dict[str, Any]) -> list[dict[str, Any]]:
                     "kind": "followed_artist",
                     "label": f"You follow {name}",
                     "artist_name": name,
+                }
+            )
+
+    similar_artist = breakdown.get("similar_artist")
+    if isinstance(similar_artist, dict):
+        for matched in similar_artist.get("matched_similar_artists", []) or []:
+            if not isinstance(matched, dict):
+                continue
+            name = matched.get("name")
+            anchor_name = matched.get("anchor_name")
+            if not name or name.lower() in seen_artist_names:
+                continue
+            if not anchor_name:
+                continue
+            seen_artist_names.add(name.lower())
+            reasons.append(
+                {
+                    "scorer": "similar_artist",
+                    "kind": "similar_artist",
+                    "label": f"Similar to {anchor_name}",
+                    "artist_name": name,
+                    "anchor_name": anchor_name,
                 }
             )
 
