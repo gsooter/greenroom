@@ -5,6 +5,7 @@ Settings. The app fails loudly at startup if a required variable is missing.
 No other module should read os.environ directly.
 """
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -217,6 +218,30 @@ class Settings(BaseSettings):
     knuckles_url: str = ""
     knuckles_client_id: str = ""
     knuckles_client_secret: str = ""
+
+    @field_validator("vapid_public_key", "vapid_private_key", mode="before")
+    @classmethod
+    def _strip_vapid_key_whitespace(cls, value: object) -> object:
+        """Strip leading/trailing whitespace from VAPID key env vars.
+
+        Deploy dashboards (Railway, Vercel, etc.) routinely paste a
+        trailing newline onto secret values, which corrupts both the
+        single-line base64url public key and pywebpush's parser when
+        applied to a base64url private key. PEM-formatted private keys
+        keep their internal newlines because ``.strip()`` only trims
+        the ends.
+
+        Args:
+            value: The raw env-var value (string when set, ``None``
+                when missing).
+
+        Returns:
+            The trimmed string, or the value unchanged when not a
+            string (Pydantic's own validation handles type errors).
+        """
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
     def spotify_beta_email_set(self) -> frozenset[str]:
         """Parse :attr:`spotify_beta_emails` into a normalized set.
