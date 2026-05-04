@@ -2895,6 +2895,79 @@ plus a one-week idempotency window. Both channels write to the same
 
 ---
 
+### 067 — Admin-Triggered Artist Catalog Hydration
+
+**Date:** 2026-05-03
+**Status:** Decided
+
+**Decision:** Grow the artists table by letting an admin click "hydrate"
+on an existing artist; new rows come from that artist's Last.fm
+similarity edges. Four hard-coded controls — depth ≤ 2, similarity ≥
+0.5, ≤ 5 per call, ≤ 100 per 24-hour window — bound the growth.
+
+**Rationale:**
+The catalog currently grows only when scrapers ingest events. That works
+for popular artists already touring DC but leaves recommendations cold
+for users whose taste has limited DMV overlap. We need a way to add
+similar-but-not-yet-touring artists so the recommendation engine has
+more candidates to score against, without cracking the door wide enough
+for an enthusiastic admin to flood the database.
+
+The four controls each address a specific failure mode:
+
+- **Depth limit of 2** keeps every artist within two hops of a real
+  DMV-scraped seed. Without this, hydrating hydrated artists could
+  drift into entirely unrelated genres in 4–5 generations. Two hops
+  preserves the "people who like artists touring DC also like…"
+  semantics that gives the catalog its local relevance.
+- **Daily cap of 100** respects the Last.fm enrichment rate limit:
+  every new artist queues four enrichment passes (MusicBrainz,
+  Last.fm tags, Last.fm similar, Spotify), and Last.fm's free tier
+  allows roughly 5 requests/second. 100 new artists per day produces
+  ~400 enrichment calls, which fits comfortably under the limit.
+- **Minimum similarity 0.5** drops Last.fm's long tail of weak
+  matches. Below 0.5 the matches are mostly genre-adjacent or
+  noisy collaborative-filtering artifacts; above 0.5 the matches
+  are usually meaningful.
+- **Per-call cap of 5** keeps the operator in control of catalog
+  shape — bulk additions go through `hydrate-bulk` which iterates
+  per-source, not by widening any single call.
+
+The audit log (`hydration_log`) records every attempt, including
+blocked ones. The daily-cap math reads from there rather than from
+`artists.hydration_source` so any future background hydrations
+(recommendation-engine batch, etc.) do not consume the operator-facing
+cap.
+
+**Alternatives considered:**
+- *Auto-hydrate during enrichment.* Rejected. Removes operator
+  visibility and can produce silent catalog explosions when a
+  popular artist with hundreds of similars is added.
+- *Per-tenant cap instead of global cap.* No tenants; single-deployment
+  app. A global cap is the right level.
+- *Soft cap with a warning instead of a hard cap.* Rejected. Once we
+  cross the Last.fm rate limit the enrichment backlog can take days
+  to drain. A hard stop is cheaper than catching up.
+- *No depth tracking, prevent hydration of "non-original" artists by
+  flag.* Conceptually similar but loses the analytic value of
+  knowing how many hops away each artist sits.
+
+**Consequences:**
+- The dashboard's "Most hydrated" leaderboard reads from
+  `hydration_log`, not from `artists.hydration_source` — every
+  attempt is captured, regardless of whether the cap clipped it.
+- New artists are searchable immediately but their genres and similar
+  artists populate over the next few hours as the four enrichment
+  passes complete. The modal's "(enriching…)" copy sets that
+  expectation explicitly.
+- **Revisit trigger:** if catalog growth feels too slow, raise the
+  daily cap. If irrelevant artists appear in search results, raise
+  the similarity threshold or lower the depth limit. If operator
+  fatigue with the modal becomes an issue, raise the per-call cap
+  toward 10.
+
+---
+
 ## Deferred Decisions
 
 These are known future choices that do not need to be made yet.
