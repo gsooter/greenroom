@@ -342,6 +342,71 @@ export interface AdminHydrationResult {
   blocking_reason: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+export interface AdminCountBreakdown {
+  total: number;
+  breakdown: Record<string, number>;
+}
+
+export interface AdminActivityWindow {
+  label: string;
+  new_users: number;
+  new_events: number;
+  push_sends: number;
+  email_sends: number;
+  hydrations_run: number;
+  hydration_artists_added: number;
+}
+
+export type AdminHealthStatus = "green" | "yellow" | "red";
+
+export interface AdminHealthSignal {
+  label: string;
+  value: string;
+  status: AdminHealthStatus;
+  detail: string | null;
+}
+
+export interface AdminLeaderboardArtist {
+  artist_id: string;
+  artist_name: string;
+  hydration_count: number;
+}
+
+export interface AdminHydrationCandidateArtist {
+  artist_id: string;
+  artist_name: string;
+  candidate_count: number;
+  top_candidate_name: string | null;
+}
+
+export interface AdminDashboardSnapshot {
+  users: AdminCountBreakdown;
+  artists: AdminCountBreakdown;
+  events: AdminCountBreakdown;
+  venues: AdminCountBreakdown;
+  music_connections: Record<string, number>;
+  push_subscriptions: { active: number; disabled: number };
+  email_enabled_users: number;
+  activity: AdminActivityWindow[];
+  health: AdminHealthSignal[];
+  most_hydrated: AdminLeaderboardArtist[];
+  best_candidates: AdminHydrationCandidateArtist[];
+  daily_hydration_remaining: number;
+}
+
+export async function getAdminDashboard(
+  adminKey: string,
+): Promise<AdminDashboardSnapshot> {
+  const res = await adminFetch<AdminDashboardSnapshot>("/dashboard", {
+    adminKey,
+  });
+  return res.data;
+}
+
 export async function searchAdminArtists(
   adminKey: string,
   params: { search?: string; limit?: number } = {},

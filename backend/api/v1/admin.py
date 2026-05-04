@@ -27,6 +27,10 @@ from backend.core.exceptions import (
     ValidationError,
 )
 from backend.services import admin as admin_service
+from backend.services.admin_dashboard import (
+    build_dashboard_snapshot,
+    serialize_dashboard_snapshot,
+)
 from backend.services.artist_hydration import (
     execute_hydration,
     preview_hydration,
@@ -266,6 +270,19 @@ def delete_user(user_id: str) -> tuple[dict[str, Any], int]:
     parsed = _parse_user_uuid(user_id)
     admin_service.delete_user(session, parsed)
     return {"data": {"id": str(parsed), "deleted": True}}, 200
+
+
+@api_v1.route("/admin/dashboard", methods=["GET"])
+@require_admin
+def get_dashboard() -> tuple[dict[str, Any], int]:
+    """Return the assembled admin dashboard snapshot.
+
+    Returns:
+        Tuple of JSON response body and HTTP 200 status code.
+    """
+    session = get_db()
+    snapshot = build_dashboard_snapshot(session)
+    return {"data": serialize_dashboard_snapshot(snapshot)}, 200
 
 
 @api_v1.route("/admin/artists", methods=["GET"])
