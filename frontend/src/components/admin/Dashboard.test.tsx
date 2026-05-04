@@ -18,6 +18,7 @@ vi.mock("@/lib/api/admin", async () => {
     getAdminDashboard: vi.fn(),
     getHydrationPreview: vi.fn(),
     executeHydration: vi.fn(),
+    triggerMassHydration: vi.fn(),
   };
 });
 
@@ -25,6 +26,7 @@ const mocked = adminApi as unknown as {
   getAdminDashboard: ReturnType<typeof vi.fn>;
   getHydrationPreview: ReturnType<typeof vi.fn>;
   executeHydration: ReturnType<typeof vi.fn>;
+  triggerMassHydration: ReturnType<typeof vi.fn>;
 };
 
 const SNAPSHOT: adminApi.AdminDashboardSnapshot = {
@@ -109,6 +111,8 @@ describe("Dashboard", () => {
     mocked.getAdminDashboard.mockReset();
     mocked.getHydrationPreview.mockReset();
     mocked.executeHydration.mockReset();
+    mocked.triggerMassHydration.mockReset();
+    window.localStorage.clear();
   });
 
   it("renders all four sections from the snapshot", async () => {
@@ -178,5 +182,50 @@ describe("Dashboard", () => {
     expect(
       await screen.findByRole("dialog", { name: /hydrate from phoebe bridgers/i }),
     ).toBeInTheDocument();
+  });
+
+  it("triggers mass hydration after prompt + confirm", async () => {
+    mocked.getAdminDashboard.mockResolvedValue(SNAPSHOT);
+    mocked.triggerMassHydration.mockResolvedValue({
+      task_id: "task-123",
+      status: "queued",
+      admin_email: "ops@greenroom.test",
+    });
+    const promptSpy = vi
+      .spyOn(window, "prompt")
+      .mockReturnValue("ops@greenroom.test");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<Dashboard adminKey="key" signOut={() => {}} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /mass hydrate now/i }),
+    );
+
+    await waitFor(() => {
+      expect(mocked.triggerMassHydration).toHaveBeenCalledWith(
+        "key",
+        "ops@greenroom.test",
+      );
+    });
+    expect(
+      await screen.findByText(/mass hydration queued.*task-123/i),
+    ).toBeInTheDocument();
+    promptSpy.mockRestore();
+    confirmSpy.mockRestore();
+  });
+
+  it("disables mass-hydrate button when daily cap is exhausted", async () => {
+    mocked.getAdminDashboard.mockResolvedValue({
+      ...SNAPSHOT,
+      daily_hydration_remaining: 0,
+    });
+
+    render(<Dashboard adminKey="key" signOut={() => {}} />);
+
+    const button = await screen.findByRole("button", {
+      name: /daily cap reached/i,
+    });
+    expect(button).toBeDisabled();
   });
 });

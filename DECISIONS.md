@@ -84,6 +84,7 @@ the alternatives and reasoning months later.
 ## Admin & Operations
 
 068 — Admin dashboard reports system counts, recent activity, health signals, and hydration leaderboard for catalog growth operations.
+069 — Mass hydration runs unattended at 03:00 ET nightly and via an admin "Mass hydrate now" button; iterates the best-candidates leaderboard until the existing daily cap is hit.
 
 ## Pricing
 
