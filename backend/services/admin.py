@@ -16,6 +16,7 @@ from backend.core.exceptions import (
     ValidationError,
 )
 from backend.data.models.scraper import ScraperRun, ScraperRunStatus
+from backend.data.repositories import artists as artists_repo
 from backend.data.repositories import scraper_runs as runs_repo
 from backend.data.repositories import users as users_repo
 from backend.scraper.config.venues import (
@@ -31,7 +32,13 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from backend.data.models.artists import Artist
     from backend.data.models.users import User
+    from backend.services.artist_hydration import (
+        HydrationCandidate,
+        HydrationPreview,
+        HydrationResult,
+    )
 
 
 def list_scraper_runs(
@@ -373,6 +380,127 @@ def send_test_alert(session: Session) -> dict[str, Any]:
         "email_configured": email_configured,
         "title": title,
         "severity": "info",
+    }
+
+
+def search_artists_for_admin(
+    session: Session, *, search: str, limit: int = 20
+) -> list[Artist]:
+    """List artists by name for the admin hydration UI.
+
+    Returns matching :class:`Artist` rows, ordered by display name.
+    An empty query returns the most recently created artists so the
+    operator has something to work with on first page load.
+
+    Args:
+        session: Active SQLAlchemy session.
+        search: Case-insensitive name substring. Empty string returns
+            the most recently scraped artists.
+        limit: Maximum results to return.
+
+    Returns:
+        Up to ``limit`` :class:`Artist` rows.
+    """
+    if search:
+        return artists_repo.search_artists(session, query=search, limit=limit)
+    # Empty-search fallback — newest first so the operator can scan
+    # what just got scraped overnight.
+    from sqlalchemy import select
+
+    from backend.data.models.artists import Artist as _Artist
+
+    stmt = select(_Artist).order_by(_Artist.created_at.desc()).limit(limit)
+    return list(session.execute(stmt).scalars().all())
+
+
+def serialize_artist_summary(artist: Artist) -> dict[str, Any]:
+    """Serialize an :class:`Artist` for admin payloads.
+
+    Slimmer than the public-facing artist serializer used elsewhere —
+    includes the lineage columns added in Decision 067 so the admin UI
+    can show "depth", "hydrated from", and so on without a second
+    fetch.
+
+    Args:
+        artist: The artist row to serialize.
+
+    Returns:
+        Dictionary representation suitable for the admin API.
+    """
+    return {
+        "id": str(artist.id),
+        "name": artist.name,
+        "normalized_name": artist.normalized_name,
+        "hydration_source": artist.hydration_source,
+        "hydration_depth": artist.hydration_depth,
+        "hydrated_from_artist_id": (
+            str(artist.hydrated_from_artist_id)
+            if artist.hydrated_from_artist_id
+            else None
+        ),
+        "hydrated_at": (artist.hydrated_at.isoformat() if artist.hydrated_at else None),
+    }
+
+
+def serialize_hydration_candidate(candidate: HydrationCandidate) -> dict[str, Any]:
+    """Serialize a :class:`HydrationCandidate` for the preview payload.
+
+    Args:
+        candidate: The candidate to serialize.
+
+    Returns:
+        Dictionary representation suitable for the admin API.
+    """
+    return {
+        "similar_artist_name": candidate.similar_artist_name,
+        "similar_artist_mbid": candidate.similar_artist_mbid,
+        "similarity_score": candidate.similarity_score,
+        "status": candidate.status,
+        "existing_artist_id": (
+            str(candidate.existing_artist_id) if candidate.existing_artist_id else None
+        ),
+    }
+
+
+def serialize_hydration_preview(preview: HydrationPreview) -> dict[str, Any]:
+    """Serialize a :class:`HydrationPreview` for the admin API.
+
+    Args:
+        preview: The preview to serialize.
+
+    Returns:
+        Dictionary representation. The ``source_artist`` key carries
+        the lineage-aware artist summary so the modal can show "depth N"
+        next to the source name without a second round trip.
+    """
+    return {
+        "source_artist": serialize_artist_summary(preview.source_artist),
+        "candidates": [serialize_hydration_candidate(c) for c in preview.candidates],
+        "eligible_count": preview.eligible_count,
+        "would_add_count": preview.would_add_count,
+        "daily_cap_remaining": preview.daily_cap_remaining,
+        "can_proceed": preview.can_proceed,
+        "blocking_reason": preview.blocking_reason,
+    }
+
+
+def serialize_hydration_result(result: HydrationResult) -> dict[str, Any]:
+    """Serialize a :class:`HydrationResult` for the admin API.
+
+    Args:
+        result: The hydration result to serialize.
+
+    Returns:
+        Dictionary representation.
+    """
+    return {
+        "source_artist_id": str(result.source_artist_id),
+        "added_artists": [serialize_artist_summary(a) for a in result.added_artists],
+        "added_count": result.added_count,
+        "skipped_count": result.skipped_count,
+        "filtered_count": result.filtered_count,
+        "daily_cap_hit": result.daily_cap_hit,
+        "blocking_reason": result.blocking_reason,
     }
 
 

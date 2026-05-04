@@ -293,3 +293,162 @@ export async function setAdminFeedbackResolved(
   );
   return res.data;
 }
+
+// ---------------------------------------------------------------------------
+// Hydration
+// ---------------------------------------------------------------------------
+
+export type AdminHydrationCandidateStatus =
+  | "eligible"
+  | "already_exists"
+  | "below_threshold"
+  | "depth_exceeded";
+
+export interface AdminArtistSummary {
+  id: string;
+  name: string;
+  normalized_name: string;
+  hydration_source: string | null;
+  hydration_depth: number;
+  hydrated_from_artist_id: string | null;
+  hydrated_at: string | null;
+}
+
+export interface AdminHydrationCandidate {
+  similar_artist_name: string;
+  similar_artist_mbid: string | null;
+  similarity_score: number;
+  status: AdminHydrationCandidateStatus;
+  existing_artist_id: string | null;
+}
+
+export interface AdminHydrationPreview {
+  source_artist: AdminArtistSummary;
+  candidates: AdminHydrationCandidate[];
+  eligible_count: number;
+  would_add_count: number;
+  daily_cap_remaining: number;
+  can_proceed: boolean;
+  blocking_reason: string | null;
+}
+
+export interface AdminHydrationResult {
+  source_artist_id: string;
+  added_artists: AdminArtistSummary[];
+  added_count: number;
+  skipped_count: number;
+  filtered_count: number;
+  daily_cap_hit: boolean;
+  blocking_reason: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+export interface AdminCountBreakdown {
+  total: number;
+  breakdown: Record<string, number>;
+}
+
+export interface AdminActivityWindow {
+  label: string;
+  new_users: number;
+  new_events: number;
+  push_sends: number;
+  email_sends: number;
+  hydrations_run: number;
+  hydration_artists_added: number;
+}
+
+export type AdminHealthStatus = "green" | "yellow" | "red";
+
+export interface AdminHealthSignal {
+  label: string;
+  value: string;
+  status: AdminHealthStatus;
+  detail: string | null;
+}
+
+export interface AdminLeaderboardArtist {
+  artist_id: string;
+  artist_name: string;
+  hydration_count: number;
+}
+
+export interface AdminHydrationCandidateArtist {
+  artist_id: string;
+  artist_name: string;
+  candidate_count: number;
+  top_candidate_name: string | null;
+}
+
+export interface AdminDashboardSnapshot {
+  users: AdminCountBreakdown;
+  artists: AdminCountBreakdown;
+  events: AdminCountBreakdown;
+  venues: AdminCountBreakdown;
+  music_connections: Record<string, number>;
+  push_subscriptions: { active: number; disabled: number };
+  email_enabled_users: number;
+  activity: AdminActivityWindow[];
+  health: AdminHealthSignal[];
+  most_hydrated: AdminLeaderboardArtist[];
+  best_candidates: AdminHydrationCandidateArtist[];
+  daily_hydration_remaining: number;
+}
+
+export async function getAdminDashboard(
+  adminKey: string,
+): Promise<AdminDashboardSnapshot> {
+  const res = await adminFetch<AdminDashboardSnapshot>("/dashboard", {
+    adminKey,
+  });
+  return res.data;
+}
+
+export async function searchAdminArtists(
+  adminKey: string,
+  params: { search?: string; limit?: number } = {},
+): Promise<AdminArtistSummary[]> {
+  const res = await adminFetch<AdminArtistSummary[]>("/artists", {
+    adminKey,
+    query: { search: params.search, limit: params.limit },
+  });
+  return res.data;
+}
+
+export async function getHydrationPreview(
+  adminKey: string,
+  artistId: string,
+): Promise<AdminHydrationPreview> {
+  const res = await adminFetch<AdminHydrationPreview>(
+    `/artists/${encodeURIComponent(artistId)}/hydration-preview`,
+    { adminKey },
+  );
+  return res.data;
+}
+
+export async function executeHydration(
+  adminKey: string,
+  artistId: string,
+  params: {
+    adminEmail: string;
+    confirmedCandidates: string[];
+    immediate?: boolean;
+  },
+): Promise<AdminHydrationResult> {
+  const res = await adminFetch<AdminHydrationResult>(
+    `/artists/${encodeURIComponent(artistId)}/hydrate`,
+    {
+      method: "POST",
+      adminKey,
+      body: {
+        admin_email: params.adminEmail,
+        confirmed_candidates: params.confirmedCandidates,
+        immediate: params.immediate ?? false,
+      },
+    },
+  );
+  return res.data;
+}

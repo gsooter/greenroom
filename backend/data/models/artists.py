@@ -17,7 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Integer, Numeric, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -110,6 +110,22 @@ class Artist(TimestampMixin, Base):
             consolidated. Set on every attempt so the nightly task can
             skip already-consolidated rows whose source data has not
             changed.
+        hydration_source: Lineage tag (Decision 067) — ``None`` for
+            original rows seeded by the scraper, ``"similar_artist"``
+            for rows added via the admin hydration tool. Other values
+            are reserved for future hydration sources.
+        hydrated_from_artist_id: When this row was created via
+            hydration, the parent artist whose similar-artists list
+            contributed it. Nullable for original rows. ``ON DELETE
+            SET NULL`` so deleting a parent does not cascade away
+            hydrated descendants.
+        hydration_depth: 0 for originals, 1 for first-generation
+            hydrations, 2 for second-generation, etc. Hard-capped at
+            :data:`backend.services.artist_hydration.MAX_HYDRATION_DEPTH`
+            to keep the catalog within a couple of hops of a real
+            DMV-scraped seed artist.
+        hydrated_at: When this row was created via hydration. ``None``
+            on original rows.
     """
 
     __tablename__ = "artists"
@@ -136,6 +152,12 @@ class Artist(TimestampMixin, Base):
         Index(
             "idx_artists_granular_tags_consolidated_at",
             "granular_tags_consolidated_at",
+        ),
+        Index("idx_artists_hydration_depth", "hydration_depth"),
+        Index(
+            "idx_artists_hydrated_from",
+            "hydrated_from_artist_id",
+            postgresql_where=text("hydrated_from_artist_id IS NOT NULL"),
         ),
     )
 
@@ -201,6 +223,21 @@ class Artist(TimestampMixin, Base):
         server_default="{}",
     )
     granular_tags_consolidated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    hydration_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    hydrated_from_artist_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("artists.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    hydration_depth: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    hydrated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
