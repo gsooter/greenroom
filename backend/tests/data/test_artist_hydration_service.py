@@ -1,10 +1,10 @@
 """Tests for :mod:`backend.services.artist_hydration`.
 
-Lives under ``tests/services`` but actually exercises the database — the
-hydration service is heavily SQL-bound (depth lineage, daily-cap counts
-from the audit log, atomic adds on transaction failure). The shared
-``session`` fixture from :mod:`backend.tests.data.conftest` is reused so
-each test runs inside a rolled-back transaction.
+Lives under ``tests/data`` because the service is heavily SQL-bound —
+depth lineage, daily-cap counts from the audit log, atomic adds on
+transaction failure. The shared ``session`` fixture from
+:mod:`backend.tests.data.conftest` runs each test inside a rolled-back
+transaction.
 """
 
 from __future__ import annotations
@@ -30,9 +30,6 @@ from backend.services.artist_hydration import (
     get_daily_hydration_count,
     preview_hydration,
 )
-
-# Reuse the real-Postgres session fixture from the data layer.
-pytest_plugins = ["backend.tests.data.conftest"]
 
 # ---------------------------------------------------------------------------
 # Test fixtures local to this module

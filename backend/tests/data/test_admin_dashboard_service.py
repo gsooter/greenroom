@@ -27,8 +27,6 @@ from backend.services.admin_dashboard import (
     serialize_dashboard_snapshot,
 )
 
-pytest_plugins = ["backend.tests.data.conftest"]
-
 
 def _make_artist(
     session: Session,
