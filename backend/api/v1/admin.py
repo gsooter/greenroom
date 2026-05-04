@@ -24,8 +24,13 @@ from backend.core.exceptions import (
     ForbiddenError,
     NotFoundError,
     UnauthorizedError,
+    ValidationError,
 )
 from backend.services import admin as admin_service
+from backend.services.artist_hydration import (
+    execute_hydration,
+    preview_hydration,
+)
 
 
 def require_admin[F: Callable[..., Any]](func: F) -> F:
@@ -261,6 +266,134 @@ def delete_user(user_id: str) -> tuple[dict[str, Any], int]:
     parsed = _parse_user_uuid(user_id)
     admin_service.delete_user(session, parsed)
     return {"data": {"id": str(parsed), "deleted": True}}, 200
+
+
+@api_v1.route("/admin/artists", methods=["GET"])
+@require_admin
+def list_artists() -> tuple[dict[str, Any], int]:
+    """Search artists by name for the admin hydration UI.
+
+    Query parameters:
+        search: required string — case-insensitive name substring.
+        limit: int — maximum results to return (default 20, max 50).
+
+    Returns:
+        Tuple of JSON response body and HTTP 200 status code.
+    """
+    session = get_db()
+    search = request.args.get("search", "").strip()
+    limit = min(int(request.args.get("limit", 20)), 50)
+    artists = admin_service.search_artists_for_admin(
+        session, search=search, limit=limit
+    )
+    return {"data": [admin_service.serialize_artist_summary(a) for a in artists]}, 200
+
+
+@api_v1.route("/admin/artists/<artist_id>/hydration-preview", methods=["GET"])
+@require_admin
+def get_hydration_preview(artist_id: str) -> tuple[dict[str, Any], int]:
+    """Return what hydrating ``artist_id`` would do, without modifying state.
+
+    Args:
+        artist_id: UUID of the seed artist whose similar-artists list
+            would be hydrated.
+
+    Returns:
+        Tuple of JSON response body and HTTP 200 status code.
+
+    Raises:
+        NotFoundError: If ``artist_id`` is malformed or no artist exists.
+    """
+    parsed = _parse_artist_uuid(artist_id)
+    session = get_db()
+    preview = preview_hydration(session, parsed)
+    if preview is None:
+        raise NotFoundError(
+            code="ARTIST_NOT_FOUND",
+            message=f"No artist found with id {artist_id}",
+        )
+    return {"data": admin_service.serialize_hydration_preview(preview)}, 200
+
+
+@api_v1.route("/admin/artists/<artist_id>/hydrate", methods=["POST"])
+@require_admin
+def trigger_hydration(artist_id: str) -> tuple[dict[str, Any], int]:
+    """Execute a confirmed hydration for ``artist_id``.
+
+    Expects a JSON body of shape::
+
+        {
+          "admin_email": "ops@greenroom.test",
+          "confirmed_candidates": ["Mt. Joy", "Wild Rivers"],
+          "immediate": false
+        }
+
+    ``immediate`` is optional; when True the per-artist enrichment
+    tasks are queued for immediate execution instead of waiting for
+    the nightly schedule.
+
+    Args:
+        artist_id: UUID of the seed artist.
+
+    Returns:
+        Tuple of JSON response body and HTTP 200 status code. Note that
+        a 200 with ``added_count == 0`` and ``blocking_reason`` set is
+        the contract for "no-op" cases (depth exhausted, daily cap hit
+        between modal open and confirm); the request itself succeeded
+        even though no artists were added.
+
+    Raises:
+        NotFoundError: If ``artist_id`` is malformed.
+        ValidationError: If the JSON body is missing or malformed.
+    """
+    parsed = _parse_artist_uuid(artist_id)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ValidationError("Request body must be a JSON object.")
+    admin_email = body.get("admin_email")
+    if not isinstance(admin_email, str) or not admin_email.strip():
+        raise ValidationError("admin_email is required.")
+    confirmed = body.get("confirmed_candidates", [])
+    if not isinstance(confirmed, list) or any(
+        not isinstance(c, str) for c in confirmed
+    ):
+        raise ValidationError("confirmed_candidates must be a list of strings.")
+    immediate = bool(body.get("immediate", False))
+
+    session = get_db()
+    result = execute_hydration(
+        session,
+        parsed,
+        admin_email=admin_email.strip(),
+        confirmed_candidates=confirmed,
+        immediate=immediate,
+    )
+    return {"data": admin_service.serialize_hydration_result(result)}, 200
+
+
+def _parse_artist_uuid(value: str) -> uuid.UUID:
+    """Parse a path-segment UUID or raise a 404 for malformed input.
+
+    Symmetric with :func:`_parse_user_uuid`. Hydration endpoints prefer
+    the same "treat malformed as not-found" contract so the dashboard
+    only has to handle one error path.
+
+    Args:
+        value: Raw path segment from the URL.
+
+    Returns:
+        Parsed UUID.
+
+    Raises:
+        NotFoundError: If ``value`` is not a valid UUID.
+    """
+    try:
+        return uuid.UUID(value)
+    except ValueError as exc:
+        raise NotFoundError(
+            code="ARTIST_NOT_FOUND",
+            message=f"No artist found with id {value}",
+        ) from exc
 
 
 def _parse_user_uuid(value: str) -> uuid.UUID:

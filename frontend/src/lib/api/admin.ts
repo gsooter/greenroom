@@ -293,3 +293,97 @@ export async function setAdminFeedbackResolved(
   );
   return res.data;
 }
+
+// ---------------------------------------------------------------------------
+// Hydration
+// ---------------------------------------------------------------------------
+
+export type AdminHydrationCandidateStatus =
+  | "eligible"
+  | "already_exists"
+  | "below_threshold"
+  | "depth_exceeded";
+
+export interface AdminArtistSummary {
+  id: string;
+  name: string;
+  normalized_name: string;
+  hydration_source: string | null;
+  hydration_depth: number;
+  hydrated_from_artist_id: string | null;
+  hydrated_at: string | null;
+}
+
+export interface AdminHydrationCandidate {
+  similar_artist_name: string;
+  similar_artist_mbid: string | null;
+  similarity_score: number;
+  status: AdminHydrationCandidateStatus;
+  existing_artist_id: string | null;
+}
+
+export interface AdminHydrationPreview {
+  source_artist: AdminArtistSummary;
+  candidates: AdminHydrationCandidate[];
+  eligible_count: number;
+  would_add_count: number;
+  daily_cap_remaining: number;
+  can_proceed: boolean;
+  blocking_reason: string | null;
+}
+
+export interface AdminHydrationResult {
+  source_artist_id: string;
+  added_artists: AdminArtistSummary[];
+  added_count: number;
+  skipped_count: number;
+  filtered_count: number;
+  daily_cap_hit: boolean;
+  blocking_reason: string | null;
+}
+
+export async function searchAdminArtists(
+  adminKey: string,
+  params: { search?: string; limit?: number } = {},
+): Promise<AdminArtistSummary[]> {
+  const res = await adminFetch<AdminArtistSummary[]>("/artists", {
+    adminKey,
+    query: { search: params.search, limit: params.limit },
+  });
+  return res.data;
+}
+
+export async function getHydrationPreview(
+  adminKey: string,
+  artistId: string,
+): Promise<AdminHydrationPreview> {
+  const res = await adminFetch<AdminHydrationPreview>(
+    `/artists/${encodeURIComponent(artistId)}/hydration-preview`,
+    { adminKey },
+  );
+  return res.data;
+}
+
+export async function executeHydration(
+  adminKey: string,
+  artistId: string,
+  params: {
+    adminEmail: string;
+    confirmedCandidates: string[];
+    immediate?: boolean;
+  },
+): Promise<AdminHydrationResult> {
+  const res = await adminFetch<AdminHydrationResult>(
+    `/artists/${encodeURIComponent(artistId)}/hydrate`,
+    {
+      method: "POST",
+      adminKey,
+      body: {
+        admin_email: params.adminEmail,
+        confirmed_candidates: params.confirmedCandidates,
+        immediate: params.immediate ?? false,
+      },
+    },
+  );
+  return res.data;
+}
