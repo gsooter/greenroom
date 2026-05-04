@@ -240,7 +240,7 @@ def preview_hydration(
             f"Source artist is at hydration depth {source.hydration_depth}; "
             f"cannot hydrate beyond depth {MAX_HYDRATION_DEPTH}."
         )
-        candidates = [
+        depth_blocked: list[HydrationCandidate] = [
             HydrationCandidate(
                 similar_artist_name=edge.similar_artist_name,
                 similar_artist_mbid=edge.similar_artist_mbid,
@@ -252,7 +252,7 @@ def preview_hydration(
         ]
         return HydrationPreview(
             source_artist=source,
-            candidates=candidates,
+            candidates=depth_blocked,
             eligible_count=0,
             would_add_count=0,
             daily_cap_remaining=cap_remaining,
