@@ -418,6 +418,24 @@ export async function searchAdminArtists(
   return res.data;
 }
 
+export interface AdminMassHydrationQueued {
+  task_id: string;
+  status: "queued";
+  admin_email: string;
+}
+
+export async function triggerMassHydration(
+  adminKey: string,
+  adminEmail: string,
+): Promise<AdminMassHydrationQueued> {
+  const res = await adminFetch<AdminMassHydrationQueued>("/hydrate-mass", {
+    method: "POST",
+    adminKey,
+    body: { admin_email: adminEmail },
+  });
+  return res.data;
+}
+
 export async function getHydrationPreview(
   adminKey: string,
   artistId: string,

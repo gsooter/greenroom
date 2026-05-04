@@ -145,6 +145,33 @@ class HydrationPreview:
 
 
 @dataclass
+class MassHydrationResult:
+    """Return value of :func:`mass_hydrate`.
+
+    Attributes:
+        sources_processed: Source artists for which a hydration was
+            actually attempted (preview said ``can_proceed``).
+        sources_skipped: Source artists the loop iterated past without
+            attempting — typically depth-blocked or already exhausted
+            of eligible candidates.
+        artists_added: Total new artist rows the call produced.
+        daily_cap_reached: True when the loop stopped because the
+            global daily cap (:data:`DAILY_HYDRATION_CAP`) was hit.
+        audit_log_ids: UUIDs of every :class:`HydrationLog` row this
+            call produced. Useful for replay / debugging.
+        per_source: Per-source dicts (``artist_id``, ``artist_name``,
+            ``added_count``) so the trigger UI can render a summary.
+    """
+
+    sources_processed: int = 0
+    sources_skipped: int = 0
+    artists_added: int = 0
+    daily_cap_reached: bool = False
+    audit_log_ids: list[uuid.UUID] = field(default_factory=list)
+    per_source: list[dict[str, object]] = field(default_factory=list)
+
+
+@dataclass
 class HydrationResult:
     """Return value of :func:`execute_hydration`.
 
@@ -471,6 +498,108 @@ def execute_hydration(
         },
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Mass hydration
+# ---------------------------------------------------------------------------
+
+
+# Default ceiling on the source artists a single mass-hydrate call will
+# walk. Each source can contribute up to MAX_ARTISTS_PER_HYDRATION new
+# artists, so 50 is enough headroom to land the daily cap without
+# iterating forever when the leaderboard is sparse.
+DEFAULT_MAX_SOURCES: int = 50
+
+
+def mass_hydrate(
+    session: Session,
+    *,
+    admin_email: str,
+    max_sources: int = DEFAULT_MAX_SOURCES,
+) -> MassHydrationResult:
+    """Run the largest safe set of hydrations in a single pass.
+
+    Walks
+    :func:`backend.services.admin_dashboard.best_hydration_candidates`
+    from highest-priority source down, calling
+    :func:`execute_hydration` on each until the daily cap is reached
+    or the candidate list is exhausted. "Safe" means: every existing
+    guardrail (depth, similarity threshold, per-call cap, daily cap)
+    is enforced unchanged — this function adds no new permission, just
+    automation of a sequence of single-artist hydrations.
+
+    Designed to be safe to run unattended on the nightly Celery beat
+    schedule: re-running mid-day after a manual hydration produces
+    fewer additions (the cap math reads from the audit log) but never
+    over-fills.
+
+    Args:
+        session: Active SQLAlchemy session. The caller owns the
+            transaction; ``execute_hydration`` commits each per-source
+            chunk so partial progress survives a mid-run failure.
+        admin_email: Email recorded in every audit log row this call
+            produces. The nightly task passes
+            ``"scheduler@greenroom.local"``; the manual button passes
+            the operator's email.
+        max_sources: Cap on iteration so a pathological similarity
+            graph cannot keep the loop running.
+
+    Returns:
+        A populated :class:`MassHydrationResult`.
+    """
+    # Local import — avoids a circular dependency, since the dashboard
+    # service already pulls hydration constants from this module.
+    from backend.services.admin_dashboard import best_hydration_candidates
+
+    candidates = best_hydration_candidates(session, limit=max_sources)
+    summary = MassHydrationResult()
+
+    for candidate in candidates:
+        cap_remaining = max(0, DAILY_HYDRATION_CAP - get_daily_hydration_count(session))
+        if cap_remaining == 0:
+            summary.daily_cap_reached = True
+            break
+
+        preview = preview_hydration(session, candidate.artist_id)
+        if preview is None or not preview.can_proceed:
+            summary.sources_skipped += 1
+            continue
+
+        confirmed_names = [
+            c.similar_artist_name for c in preview.candidates if c.status == "eligible"
+        ][:MAX_ARTISTS_PER_HYDRATION]
+
+        result = execute_hydration(
+            session,
+            candidate.artist_id,
+            admin_email=admin_email,
+            confirmed_candidates=confirmed_names,
+        )
+        summary.sources_processed += 1
+        summary.artists_added += result.added_count
+        summary.per_source.append(
+            {
+                "artist_id": str(candidate.artist_id),
+                "artist_name": candidate.artist_name,
+                "added_count": result.added_count,
+            }
+        )
+        if result.daily_cap_hit:
+            summary.daily_cap_reached = True
+            break
+
+    logger.info(
+        "mass_hydration_completed",
+        extra={
+            "admin_email": admin_email,
+            "sources_processed": summary.sources_processed,
+            "sources_skipped": summary.sources_skipped,
+            "artists_added": summary.artists_added,
+            "daily_cap_reached": summary.daily_cap_reached,
+        },
+    )
+    return summary
 
 
 # ---------------------------------------------------------------------------

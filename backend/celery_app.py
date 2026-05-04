@@ -40,6 +40,7 @@ def _build_app() -> Celery:
             "backend.scraper.watchdogs.dc9_dice_widget",
             "backend.services.apple_music_tasks",
             "backend.services.artist_enrichment_tasks",
+            "backend.services.artist_hydration_tasks",
             "backend.services.genre_normalization_tasks",
             "backend.services.home_tasks",
             "backend.services.lastfm_similarity_tasks",
@@ -215,6 +216,17 @@ def _beat_schedule() -> dict[str, dict[str, object]]:
             "task": "backend.services.notification_tasks.dispatch_show_reminders",
             "schedule": crontab(minute=5),
             "options": {"expires": 60 * 50},
+        },
+        # Unattended catalog growth (Decision 069). Runs at 03:00 ET so
+        # newly-hydrated artists land before the 04:00 scraper pass and
+        # naturally pick up the morning's enrichment cycle (MusicBrainz
+        # at 04:30, Last.fm at 04:45, similar-artist at 05:00). The
+        # daily cap (100 new artists / 24h) is enforced inside the
+        # service, so re-running mid-day is harmless — it just adds 0.
+        "mass-hydrate-artist-catalog-nightly": {
+            "task": "backend.services.artist_hydration_tasks.mass_hydrate_task",
+            "schedule": crontab(hour=3, minute=0),
+            "options": {"expires": 60 * 60 * 2},
         },
     }
 

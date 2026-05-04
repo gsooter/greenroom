@@ -22,7 +22,10 @@ import {
   AdminHydrationCandidateArtist,
   AdminLeaderboardArtist,
   getAdminDashboard,
+  triggerMassHydration,
 } from "@/lib/api/admin";
+
+const ADMIN_EMAIL_STORAGE_KEY = "greenroom.adminEmail";
 
 interface Props {
   adminKey: string;
@@ -45,6 +48,8 @@ export default function Dashboard({ adminKey, signOut }: Props): JSX.Element {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [hydrating, setHydrating] = useState<ActiveHydration | null>(null);
+  const [massHydrating, setMassHydrating] = useState<boolean>(false);
+  const [massStatus, setMassStatus] = useState<string | null>(null);
 
   const handleAuthError = useCallback(
     (err: unknown): boolean => {
@@ -74,6 +79,52 @@ export default function Dashboard({ adminKey, signOut }: Props): JSX.Element {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const onMassHydrate = useCallback(async (): Promise<void> => {
+    if (massHydrating) return;
+    let adminEmail = "";
+    try {
+      adminEmail = window.localStorage.getItem(ADMIN_EMAIL_STORAGE_KEY) ?? "";
+    } catch {
+      /* ignore */
+    }
+    const promptValue = window.prompt(
+      "Email to record on every hydration audit row:",
+      adminEmail,
+    );
+    if (!promptValue || !promptValue.trim()) return;
+    const trimmedEmail = promptValue.trim();
+    if (
+      !window.confirm(
+        "Run mass hydration now? This iterates the best candidates and adds " +
+          "artists until the daily cap of 100 is hit.",
+      )
+    ) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(ADMIN_EMAIL_STORAGE_KEY, trimmedEmail);
+    } catch {
+      /* ignore */
+    }
+    setMassHydrating(true);
+    setMassStatus(null);
+    try {
+      const queued = await triggerMassHydration(adminKey, trimmedEmail);
+      setMassStatus(
+        `Mass hydration queued (task ${queued.task_id}). Refresh in a minute to see additions.`,
+      );
+    } catch (err) {
+      if (handleAuthError(err)) return;
+      setMassStatus(
+        err instanceof Error
+          ? `Mass hydration failed: ${err.message}`
+          : "Mass hydration failed.",
+      );
+    } finally {
+      setMassHydrating(false);
+    }
+  }, [adminKey, handleAuthError, massHydrating]);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
@@ -121,6 +172,9 @@ export default function Dashboard({ adminKey, signOut }: Props): JSX.Element {
             onHydrate={(artist) =>
               setHydrating({ artistId: artist.artist_id, artistName: artist.artist_name })
             }
+            onMassHydrate={() => void onMassHydrate()}
+            massHydrating={massHydrating}
+            massStatus={massStatus}
           />
         </>
       )}
@@ -342,15 +396,43 @@ function HealthSignals({
 function HydrationLeaderboard({
   snap,
   onHydrate,
+  onMassHydrate,
+  massHydrating,
+  massStatus,
 }: {
   snap: AdminDashboardSnapshot;
   onHydrate: (artist: AdminHydrationCandidateArtist) => void;
+  onMassHydrate: () => void;
+  massHydrating: boolean;
+  massStatus: string | null;
 }): JSX.Element {
   return (
     <section className="mt-8" aria-label="Hydration leaderboard">
-      <h2 className="text-lg font-semibold text-text-primary">
-        Hydration leaderboard
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-text-primary">
+          Hydration leaderboard
+        </h2>
+        <button
+          type="button"
+          onClick={onMassHydrate}
+          disabled={massHydrating || snap.daily_hydration_remaining === 0}
+          className="rounded-md bg-green-primary px-3 py-2 text-sm font-medium text-text-inverse disabled:opacity-50"
+        >
+          {massHydrating
+            ? "Queueing…"
+            : snap.daily_hydration_remaining === 0
+              ? "Daily cap reached"
+              : `Mass hydrate now (up to ${snap.daily_hydration_remaining})`}
+        </button>
+      </div>
+      {massStatus && (
+        <p
+          role="status"
+          className="mt-2 rounded-md bg-bg-surface px-3 py-2 text-sm text-text-primary"
+        >
+          {massStatus}
+        </p>
+      )}
       <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="rounded-md border border-border bg-bg-white p-4">
           <h3 className="text-sm font-semibold text-text-primary">

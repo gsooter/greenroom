@@ -170,6 +170,47 @@ def send_test_alert() -> tuple[dict[str, Any], int]:
     return {"data": admin_service.send_test_alert(session)}, 200
 
 
+@api_v1.route("/admin/hydrate-mass", methods=["POST"])
+@require_admin
+def trigger_mass_hydration() -> tuple[dict[str, Any], int]:
+    """Enqueue the mass-hydrate Celery task and return immediately.
+
+    Expects a JSON body of shape ``{"admin_email": "ops@..."}``. The
+    body is required even though the email is also captured in the
+    audit log — the gate alone (X-Admin-Key) does not identify the
+    operator. The task itself is fire-and-forget; results land in the
+    Celery result backend and the dashboard's "Most hydrated" leader-
+    board on the next page load.
+
+    Returns:
+        Tuple of JSON response body and HTTP 202 status code.
+
+    Raises:
+        ValidationError: If the JSON body is missing or malformed.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ValidationError("Request body must be a JSON object.")
+    admin_email = body.get("admin_email")
+    if not isinstance(admin_email, str) or not admin_email.strip():
+        raise ValidationError("admin_email is required.")
+
+    # send_task by name keeps this route module free of a Celery import.
+    from backend.celery_app import celery_app
+
+    async_result = celery_app.send_task(
+        "backend.services.artist_hydration_tasks.mass_hydrate_task",
+        args=[admin_email.strip()],
+    )
+    return {
+        "data": {
+            "task_id": async_result.id,
+            "status": "queued",
+            "admin_email": admin_email.strip(),
+        }
+    }, 202
+
+
 @api_v1.route("/admin/users", methods=["GET"])
 @require_admin
 def list_users() -> tuple[dict[str, Any], int]:
