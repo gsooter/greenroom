@@ -69,6 +69,31 @@ describe("TasteStep", () => {
     unfollowArtist.mockResolvedValue(undefined);
   });
 
+  it("renders a condensed description below the heading without the StepIntro callout", async () => {
+    render(
+      <TasteStep
+        token="jwt"
+        user={user()}
+        onDone={vi.fn()}
+        onSkip={vi.fn()}
+        onRefreshUser={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+    // The previous subtitle and the redundant StepIntro have been
+    // collapsed into a single short subtitle. Assert the new copy
+    // shows and the old verbose phrases are gone so the regression
+    // gate stays firm.
+    expect(
+      screen.getByText(/pick a few favorites/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/we use both to surface shows/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/no music service needed/i),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the genre catalog pulled from the server", async () => {
     render(
       <TasteStep
