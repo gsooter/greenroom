@@ -19,10 +19,78 @@ from backend.data.repositories import events as events_repo
 from backend.data.repositories import follows as follows_repo
 
 _ET_ZONE = ZoneInfo("America/New_York")
+_DEFAULT_TZ_NAME = "America/New_York"
 
 NearMeWindow = Literal["tonight", "week"]
 _NEAR_ME_WINDOWS: frozenset[str] = frozenset({"tonight", "week"})
 _EARTH_RADIUS_KM = 6371.0088
+
+
+class TodayWindow:
+    """A UTC-aware ``[start, end)`` interval representing one local calendar day.
+
+    ``start`` is the UTC instant of local midnight at the head of the
+    requested day; ``end`` is the UTC instant of the next local midnight.
+    Half-open at the end so events at exactly the next local midnight
+    fall into the following day, matching wall-clock intuition.
+    """
+
+    __slots__ = ("end", "start")
+
+    def __init__(self, start: datetime, end: datetime) -> None:
+        """Build a TodayWindow.
+
+        Args:
+            start: UTC datetime of local midnight at the day's head.
+            end: UTC datetime of the next local midnight (exclusive).
+        """
+        self.start = start
+        self.end = end
+
+    def __repr__(self) -> str:
+        """Return a debug-friendly string representation.
+
+        Returns:
+            String describing the window's UTC bounds.
+        """
+        return (
+            f"TodayWindow(start={self.start.isoformat()}, end={self.end.isoformat()})"
+        )
+
+
+def compute_today_utc_window(
+    *,
+    timezone_name: str | None = None,
+    now_utc: datetime | None = None,
+) -> TodayWindow:
+    """Compute the UTC bounds of "today" in the requested timezone.
+
+    Args:
+        timezone_name: IANA timezone name (e.g. ``"America/New_York"``).
+            None falls back to America/New_York — the DMV default.
+        now_utc: Clock anchor. Defaults to ``datetime.now(UTC)``; tests
+            inject a fixed instant to exercise day-boundary behavior.
+
+    Returns:
+        A :class:`TodayWindow` whose ``[start, end)`` half-open interval
+        is exactly 24 hours in wall-clock terms (with DST exceptions).
+
+    Raises:
+        ValidationError: If ``timezone_name`` does not resolve to a real
+            IANA zone.
+    """
+    name = timezone_name or _DEFAULT_TZ_NAME
+    try:
+        zone = ZoneInfo(name)
+    except Exception as exc:  # ZoneInfoNotFoundError is the typical case
+        raise ValidationError(f"Unknown timezone: '{name}'") from exc
+    anchor = (now_utc or datetime.now(UTC)).astimezone(zone)
+    today_start_local = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start_local = today_start_local + timedelta(days=1)
+    return TodayWindow(
+        start=today_start_local.astimezone(UTC),
+        end=tomorrow_start_local.astimezone(UTC),
+    )
 
 
 def get_event(session: Session, event_id: uuid.UUID) -> Event:
@@ -81,6 +149,9 @@ def list_events(
     venue_ids: list[uuid.UUID] | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    today: bool = False,
+    timezone_name: str | None = None,
+    now_utc: datetime | None = None,
     genres: list[str] | None = None,
     artist_ids: list[uuid.UUID] | None = None,
     artist_search: str | None = None,
@@ -107,8 +178,19 @@ def list_events(
         city_id: Filter to events in a specific city.
         region: Filter to events in cities in this region (e.g., "DMV").
         venue_ids: Filter to specific venues.
-        date_from: Start of date range.
+        date_from: Start of date range. When set, takes precedence over
+            ``today`` so an explicit historical query is never overridden.
         date_to: End of date range.
+        today: When True and ``date_from`` is None, narrows the result
+            to events whose ``starts_at`` falls within the caller's
+            local calendar day (computed in ``timezone_name``). Resolves
+            the day-boundary timezone bug — see Fix #1 in the bug-fix
+            sprint.
+        timezone_name: IANA timezone for the ``today`` window. None
+            falls back to ``America/New_York`` (the DMV default) so
+            anonymous DMV callers still get the correct boundary.
+        now_utc: Clock anchor for the ``today`` window. Tests inject a
+            fixed instant; production defaults to ``datetime.now(UTC)``.
         genres: Filter by genre overlap.
         artist_ids: Filter to events whose Spotify artist IDs overlap
             those of the supplied :class:`Artist` UUIDs. Artists without
@@ -247,6 +329,16 @@ def list_events(
     if effective_sort == "for_you" and user_id is None:
         effective_sort = "date"
 
+    # Resolve the timezone-aware today window once. Explicit ``date_from``
+    # always wins so a historical query (``date_from=2025-01-01``) is
+    # never silently clipped by the today flag.
+    starts_at_ge: datetime | None = None
+    starts_at_lt: datetime | None = None
+    if today and date_from is None:
+        window = compute_today_utc_window(timezone_name=timezone_name, now_utc=now_utc)
+        starts_at_ge = window.start
+        starts_at_lt = window.end
+
     return events_repo.list_events(
         session,
         city_id=city_id,
@@ -254,6 +346,8 @@ def list_events(
         venue_ids=effective_venue_ids,
         date_from=date_from,
         date_to=date_to,
+        starts_at_ge=starts_at_ge,
+        starts_at_lt=starts_at_lt,
         genres=genres,
         spotify_artist_ids=effective_spotify_ids,
         artist_search=artist_search,

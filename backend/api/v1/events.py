@@ -14,6 +14,7 @@ from backend.api.v1 import api_v1
 from backend.core.auth import try_get_current_user
 from backend.core.database import get_db
 from backend.data.repositories import events as events_repo
+from backend.data.repositories import notification_preferences as prefs_repo
 from backend.services import events as events_service
 from backend.services import tickets as tickets_service
 
@@ -73,9 +74,17 @@ def list_events() -> tuple[dict[str, Any], int]:
     free_only = _parse_bool(request.args.get("free_only"))
     available_only = _parse_bool(request.args.get("available_only"))
     raw_date_from = request.args.get("date_from")
-    date_from = (
-        _parse_date(raw_date_from) if raw_date_from is not None else date.today()
-    )
+    today_flag = _parse_bool(request.args.get("today"))
+    requested_timezone = request.args.get("timezone")
+    if raw_date_from is not None:
+        date_from: date | None = _parse_date(raw_date_from)
+    elif today_flag:
+        # The today=true filter computes its own UTC bounds in the
+        # service layer; leave date_from None so the service knows to
+        # use the timezone-aware path.
+        date_from = None
+    else:
+        date_from = date.today()
     date_to = _parse_date(request.args.get("date_to"))
     genres = request.args.getlist("genre") or None
     event_type = request.args.get("event_type")
@@ -90,8 +99,19 @@ def list_events() -> tuple[dict[str, Any], int]:
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
 
-    needs_user = sort == "for_you" or followed_venues_only or followed_artists_only
+    needs_user = (
+        sort == "for_you" or followed_venues_only or followed_artists_only or today_flag
+    )
     user = try_get_current_user() if needs_user else None
+
+    # Timezone resolution: explicit ``timezone`` param wins; otherwise
+    # the authenticated caller's stored preference is used; otherwise
+    # the service falls back to America/New_York.
+    timezone_name = requested_timezone
+    if today_flag and timezone_name is None and user is not None:
+        prefs = prefs_repo.get_for_user(session, user.id)
+        if prefs is not None and prefs.timezone:
+            timezone_name = prefs.timezone
 
     events, total = events_service.list_events(
         session,
@@ -100,6 +120,8 @@ def list_events() -> tuple[dict[str, Any], int]:
         venue_ids=venue_ids,
         date_from=date_from,
         date_to=date_to,
+        today=today_flag,
+        timezone_name=timezone_name,
         genres=genres,
         artist_ids=artist_ids,
         artist_search=artist_search,
