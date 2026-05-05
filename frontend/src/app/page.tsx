@@ -90,7 +90,7 @@ export default async function HomePage() {
         items={[{ name: "Home", url: absolutePageUrl("/") }]}
       />
 
-      <section className="flex flex-col gap-4 py-8 sm:py-12">
+      <section className="flex flex-col gap-4 pb-8 pt-2 sm:pb-12 sm:pt-4">
         <p className="text-sm font-semibold uppercase tracking-widest text-accent">
           DMV · DC · MD · VA
         </p>

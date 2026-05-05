@@ -22,7 +22,7 @@ export default function AppShell({ children }: AppShellProps) {
     <div className="flex min-h-screen flex-col">
       <TopNav />
       <OnboardingBanner />
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-6 sm:pb-10">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-2 sm:pb-10 sm:pt-3">
         {children}
       </main>
       <footer className="border-t border-border bg-surface/40 pb-20 sm:pb-0">

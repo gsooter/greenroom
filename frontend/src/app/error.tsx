@@ -11,8 +11,6 @@
 
 import { useEffect } from "react";
 
-import * as Sentry from "@sentry/nextjs";
-
 interface ErrorBoundaryProps {
   error: Error & { digest?: string };
   reset: () => void;
@@ -20,7 +18,16 @@ interface ErrorBoundaryProps {
 
 export default function ErrorBoundary({ error, reset }: ErrorBoundaryProps) {
   useEffect(() => {
-    Sentry.captureException(error);
+    // Sentry is loaded lazily so the bundler doesn't need to resolve
+    // `@sentry/nextjs` when no DSN is configured (local dev). The
+    // DefinePlugin replaces the env check with the literal at build
+    // time, so the entire branch is dead-code-eliminated when DSN is
+    // empty and the dynamic import is dropped from the bundle.
+    if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
+      void import("@sentry/nextjs").then((Sentry) => {
+        Sentry.captureException(error);
+      });
+    }
   }, [error]);
 
   return (

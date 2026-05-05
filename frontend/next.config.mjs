@@ -132,7 +132,8 @@ const nextConfig = {
 };
 
 // Wrap with Sentry only when a DSN is configured. Avoids dragging the
-// Sentry build plugin into local dev where contributors don't need it.
+// Sentry build plugin into local dev where contributors don't need it
+// (and where it has historically caused React-duplication issues).
 const sentryConfigured = Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN);
 let exportedConfig = nextConfig;
 if (sentryConfigured) {

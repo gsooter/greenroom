@@ -12,8 +12,6 @@
 
 import { useEffect } from "react";
 
-import * as Sentry from "@sentry/nextjs";
-
 interface GlobalErrorProps {
   error: Error & { digest?: string };
   reset: () => void;
@@ -21,7 +19,13 @@ interface GlobalErrorProps {
 
 export default function GlobalError({ error, reset }: GlobalErrorProps) {
   useEffect(() => {
-    Sentry.captureException(error);
+    // See app/error.tsx for why this guard exists — webpack drops the
+    // dynamic import entirely when NEXT_PUBLIC_SENTRY_DSN is empty.
+    if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
+      void import("@sentry/nextjs").then((Sentry) => {
+        Sentry.captureException(error);
+      });
+    }
   }, [error]);
 
   return (
