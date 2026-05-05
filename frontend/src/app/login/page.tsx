@@ -47,7 +47,7 @@ export default function LoginPage(): JSX.Element {
   }, [isAuthenticated, isLoading, router]);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6">
+    <div className="mx-auto flex w-full max-w-md flex-col items-center px-2 py-8 sm:py-12">
       <div className="w-full rounded-2xl border border-border bg-bg-surface p-8 shadow-sm">
         <header className="text-center">
           <h1 className="text-2xl font-semibold text-text-primary">
@@ -89,7 +89,7 @@ export default function LoginPage(): JSX.Element {
           without an account.
         </p>
       </div>
-    </main>
+    </div>
   );
 }
 

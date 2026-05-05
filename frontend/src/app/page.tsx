@@ -22,6 +22,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 import BrowseCardGrid from "@/components/home/BrowseCardGrid";
+import BrowseFooterCta from "@/components/home/BrowseFooterCta";
 import PersonalizedHome from "@/components/home/PersonalizedHome";
 import EmptyState from "@/components/ui/EmptyState";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
@@ -174,7 +175,10 @@ export default async function HomePage() {
             description="The overnight scraper will populate events shortly. Check back soon."
           />
         ) : (
-          <BrowseCardGrid events={upcoming} />
+          <>
+            <BrowseCardGrid events={upcoming} />
+            <BrowseFooterCta />
+          </>
         )}
       </section>
     </>

@@ -50,8 +50,9 @@ export default function EventPricingPanel({
 
   return (
     <section
+      id="tickets"
       aria-label="Ticket sources"
-      className="flex flex-col gap-4 rounded-lg border border-border bg-bg-surface/60 p-4"
+      className="flex scroll-mt-24 flex-col gap-4 rounded-lg border border-border bg-bg-surface/60 p-4"
     >
       <header className="flex flex-col">
         <h2 className="text-base font-semibold text-text-primary">

@@ -132,7 +132,14 @@ export default async function EventDetailPage({
               </div>
             ) : null}
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              {event.ticket_url ? (
+              {(event.pricing?.sources?.length ?? 0) > 0 ? (
+                <a
+                  href="#tickets"
+                  className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground hover:opacity-90"
+                >
+                  Get tickets
+                </a>
+              ) : event.ticket_url ? (
                 <a
                   href={event.ticket_url}
                   target="_blank"

@@ -107,8 +107,15 @@ function ComfortableEventCard({ event }: { event: EventSummary }): JSX.Element {
         ) : null}
 
         <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-foreground">
-            {venue ? <span className="font-medium">{venue.name}</span> : null}
+          <div className="relative z-20 flex flex-wrap items-center gap-2 text-sm text-foreground">
+            {venue ? (
+              <Link
+                href={`/venues/${venue.slug}`}
+                className="relative z-20 font-medium hover:text-accent hover:underline"
+              >
+                {venue.name}
+              </Link>
+            ) : null}
             {venue ? <RegionBadge city={venue.city} /> : null}
           </div>
           {price ? (
@@ -180,9 +187,16 @@ function CompactEventCard({ event }: { event: EventSummary }): JSX.Element {
           {event.title}
         </h3>
 
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
+        <div className="relative z-20 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
           {artists ? <span className="line-clamp-1">{artists}</span> : null}
-          {venue ? <span className="font-medium text-foreground">{venue.name}</span> : null}
+          {venue ? (
+            <Link
+              href={`/venues/${venue.slug}`}
+              className="relative z-20 font-medium text-foreground hover:text-accent hover:underline"
+            >
+              {venue.name}
+            </Link>
+          ) : null}
           {price ? (
             <span className="text-foreground">{price}</span>
           ) : null}

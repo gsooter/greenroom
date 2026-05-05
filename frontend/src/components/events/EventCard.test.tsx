@@ -71,10 +71,10 @@ function summary(overrides: Partial<EventSummary> = {}): EventSummary {
 
 describe("EventCard", () => {
   it("links to /events/<slug> with the title as aria-label", () => {
-    const { container } = render(<EventCard event={summary()} />);
-    const link = container.querySelector("a");
-    expect(link?.getAttribute("href")).toBe("/events/fake-show");
-    expect(link?.getAttribute("aria-label")).toBe("Fake Show");
+    render(<EventCard event={summary()} />);
+    const link = screen.getByRole("link", { name: "Fake Show" });
+    expect(link).toHaveAttribute("href", "/events/fake-show");
+    expect(link).toHaveAttribute("aria-label", "Fake Show");
   });
 
   it("renders title, venue, artists, and a price range", () => {
@@ -156,12 +156,12 @@ describe("EventCard", () => {
   });
 
   it("renders title, venue, price, and the link in the compact layout", () => {
-    const { container } = render(<EventCard event={summary()} compact />);
+    render(<EventCard event={summary()} compact />);
     expect(screen.getByText("Fake Show")).toBeInTheDocument();
     expect(screen.getByText("Black Cat")).toBeInTheDocument();
     expect(screen.getByText("$25–$55")).toBeInTheDocument();
-    const link = container.querySelector("a");
-    expect(link?.getAttribute("href")).toBe("/events/fake-show");
+    const link = screen.getByRole("link", { name: "Fake Show" });
+    expect(link).toHaveAttribute("href", "/events/fake-show");
     expect(screen.getByTestId("save-btn")).toBeInTheDocument();
   });
 
@@ -171,5 +171,26 @@ describe("EventCard", () => {
     );
     const bg = container.querySelector('[role="presentation"]') as HTMLElement;
     expect(bg.style.backgroundImage).toBe("");
+  });
+
+  it("renders the venue name as a link to the venue page on the comfortable card", () => {
+    render(<EventCard event={summary()} />);
+    const venueLink = screen.getByRole("link", { name: /^black cat$/i });
+    expect(venueLink).toHaveAttribute("href", "/venues/black-cat");
+  });
+
+  it("renders the venue name as a link to the venue page on the compact card", () => {
+    render(<EventCard event={summary()} compact />);
+    const venueLink = screen.getByRole("link", { name: /^black cat$/i });
+    expect(venueLink).toHaveAttribute("href", "/venues/black-cat");
+  });
+
+  it("stacks the venue link above the card-wide link so clicks land on the venue", () => {
+    render(<EventCard event={summary()} />);
+    const venueLink = screen.getByRole("link", { name: /^black cat$/i });
+    // The card-wide overlay link sits at z-10. The venue tag must beat
+    // that to win the click — z-20 mirrors the SaveEventButton overlay
+    // pattern.
+    expect(venueLink.className).toMatch(/\bz-20\b/);
   });
 });

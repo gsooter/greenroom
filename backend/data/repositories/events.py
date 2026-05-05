@@ -135,6 +135,8 @@ def list_events(
     venue_ids: list[uuid.UUID] | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    starts_at_ge: datetime | None = None,
+    starts_at_lt: datetime | None = None,
     genres: list[str] | None = None,
     spotify_artist_ids: list[str] | None = None,
     artist_search: str | None = None,
@@ -162,6 +164,14 @@ def list_events(
         venue_ids: Filter to specific venues. None means all venues.
         date_from: Start of date range (inclusive). None means no lower bound.
         date_to: End of date range (inclusive). None means no upper bound.
+        starts_at_ge: Lower bound on ``starts_at`` as a UTC-aware
+            datetime. Half-open in pair with ``starts_at_lt``: ``ge``
+            is inclusive. Used by the timezone-aware ``today`` filter
+            in the service layer; bypasses the naive ``date`` combine
+            path which always produces a UTC midnight regardless of
+            the caller's local zone.
+        starts_at_lt: Upper bound on ``starts_at`` as a UTC-aware
+            datetime, exclusive — paired with ``starts_at_ge``.
         genres: Filter to events matching any of these genres (overlap).
         spotify_artist_ids: Filter to events whose ``spotify_artist_ids``
             array overlaps any of these IDs. An empty list short-circuits
@@ -226,12 +236,16 @@ def list_events(
     if venue_ids is not None:
         base = base.where(Event.venue_id.in_(venue_ids))
 
-    if date_from is not None:
+    if starts_at_ge is not None:
+        base = base.where(Event.starts_at >= starts_at_ge)
+    elif date_from is not None:
         base = base.where(
             Event.starts_at >= datetime.combine(date_from, datetime.min.time())
         )
 
-    if date_to is not None:
+    if starts_at_lt is not None:
+        base = base.where(Event.starts_at < starts_at_lt)
+    elif date_to is not None:
         base = base.where(
             Event.starts_at <= datetime.combine(date_to, datetime.max.time())
         )

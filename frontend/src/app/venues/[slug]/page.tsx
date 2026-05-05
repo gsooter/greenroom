@@ -12,6 +12,7 @@ import type { Metadata } from "next";
 
 import EventCard from "@/components/events/EventCard";
 import EmptyState from "@/components/ui/EmptyState";
+import ExternalLinkIcon from "@/components/ui/ExternalLinkIcon";
 import RegionBadge from "@/components/ui/RegionBadge";
 import BreadcrumbStructuredData from "@/components/seo/BreadcrumbStructuredData";
 import VenueStructuredData from "@/components/seo/VenueStructuredData";
@@ -142,9 +143,10 @@ export default async function VenueDetailPage({
                   href={venue.website_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-block w-fit rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:border-accent hover:text-accent"
+                  className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:border-accent hover:text-accent"
                 >
-                  Visit website →
+                  Visit website
+                  <ExternalLinkIcon />
                 </a>
               ) : null}
             </div>
