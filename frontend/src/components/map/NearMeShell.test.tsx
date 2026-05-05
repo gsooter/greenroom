@@ -263,7 +263,52 @@ describe("NearMeShell", () => {
     expect(
       screen.getByRole("button", { name: /try again/i }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open tonight's dc map/i }))
+      .toHaveAttribute("href", "/map");
     expect(getNearMeEventsMock).not.toHaveBeenCalled();
+  });
+
+  it("re-invokes geolocation when the user clicks Try again after a denial", async () => {
+    const geo = installGeolocation();
+    render(<NearMeShell />);
+    fireEvent.click(screen.getByRole("button", { name: /use my location/i }));
+    await act(async () => {
+      geo.deny();
+    });
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders the denied fallback (not a crash) when getCurrentPosition throws synchronously", async () => {
+    // Some PWA / OS-blocked configurations cause getCurrentPosition to
+    // throw synchronously instead of firing the error callback. The shell
+    // must catch this and surface the same denied UI rather than
+    // bubbling an unhandled exception.
+    const getCurrentPosition = vi.fn(() => {
+      throw new Error("OS-level permission denied");
+    });
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true,
+      value: { getCurrentPosition },
+    });
+    const onUnhandledRejection = vi.fn();
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+
+    render(<NearMeShell />);
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: /use my location/i }),
+      );
+    });
+
+    expect(
+      screen.getByRole("heading", { name: /location permission denied/i }),
+    ).toBeInTheDocument();
+    expect(getNearMeEventsMock).not.toHaveBeenCalled();
+    expect(onUnhandledRejection).not.toHaveBeenCalled();
+    window.removeEventListener("unhandledrejection", onUnhandledRejection);
   });
 
   it("renders an unsupported fallback when the Geolocation API is missing", () => {
@@ -274,5 +319,7 @@ describe("NearMeShell", () => {
         name: /location isn't available in this browser/i,
       }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open tonight's dc map/i }))
+      .toHaveAttribute("href", "/map");
   });
 });

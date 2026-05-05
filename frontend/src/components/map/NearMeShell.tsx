@@ -151,24 +151,35 @@ export default function NearMeShell({
     }
     setPermission("pending");
     setCoordsError(null);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCoords({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
-        setPermission("granted");
-      },
-      (error) => {
-        setPermission("denied");
-        setCoordsError(describeGeolocationError(error));
-      },
-      {
-        enableHighAccuracy: false,
-        maximumAge: 60_000,
-        timeout: 10_000,
-      },
-    );
+    // Some browsers (notably installed iOS PWAs with location blocked at
+    // the OS level) throw synchronously from getCurrentPosition instead
+    // of firing the error callback. Wrap the call so that path lands on
+    // the same denied UI rather than escaping as an unhandled error.
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setCoords({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+          setPermission("granted");
+        },
+        (error) => {
+          setPermission("denied");
+          setCoordsError(describeGeolocationError(error));
+        },
+        {
+          enableHighAccuracy: false,
+          maximumAge: 60_000,
+          timeout: 10_000,
+        },
+      );
+    } catch {
+      setPermission("denied");
+      setCoordsError(
+        "Location access is blocked for this site. Enable it in your browser or device settings and try again.",
+      );
+    }
   }, []);
 
   useEffect(() => {
