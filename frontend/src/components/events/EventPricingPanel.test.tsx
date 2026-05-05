@@ -114,6 +114,15 @@ describe("EventPricingPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("exposes id='tickets' on the panel so the top CTA can anchor-scroll to it", () => {
+    const { container } = render(<EventPricingPanel initial={state()} />);
+    const section = container.querySelector("section#tickets");
+    expect(section).not.toBeNull();
+    // Anchored sections that scroll into view should leave a little
+    // breathing room under any sticky/transparent top nav.
+    expect(section?.className).toMatch(/scroll-mt-/);
+  });
+
   it("falls back to a humanized source slug when no label is mapped", () => {
     render(
       <EventPricingPanel
